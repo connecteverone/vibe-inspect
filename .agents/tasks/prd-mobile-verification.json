@@ -394,7 +394,7 @@
     {
       "id": "US-010",
       "title": "VNC viewer for quick UI verification",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002",
         "US-006"
@@ -407,13 +407,13 @@
         "Negative case: VNC stream failure shows a clear recovery action"
       ],
       "startedAt": "2026-01-27T22:35:34.777681+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T22:35:34.777804+00:00"
+      "completedAt": "2026-01-27T23:08:35.698029+00:00",
+      "updatedAt": "2026-01-27T23:08:35.697936+00:00"
     },
     {
       "id": "US-011",
       "title": "Export and import local data",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-005"
       ],
@@ -423,7 +423,10 @@
         "Import validates bundle version and merges data",
         "Example: importing a bundle restores timeline history",
         "Negative case: invalid bundle schema is rejected with a clear error"
-      ]
+      ],
+      "startedAt": "2026-01-27T23:08:37.800667+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T23:08:37.800791+00:00"
     },
     {
       "id": "US-012",

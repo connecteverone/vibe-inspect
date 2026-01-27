@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
@@ -196,6 +197,10 @@ class _PairingScreenState extends State<PairingScreen> {
   List<ToolSession> _toolSessions = [];
   bool _isHistoryLoading = true;
   String? _historyError;
+  String? _exportStatus;
+  bool _exportStatusIsError = false;
+  String? _importStatus;
+  bool _importStatusIsError = false;
 
   @override
   void initState() {
@@ -307,6 +312,15 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _recordPairingEvent(PairingPayload payload) async {
     try {
       final now = DateTime.now();
+      final connection = ConnectionRecord(
+        id: createStorageId(),
+        token: payload.token,
+        status: 'connected',
+        connectedAt: now,
+        tunnelUrl: payload.tunnelUrl,
+        tunnelError: payload.tunnelError,
+        lastSeenAt: now,
+      );
       final session = ToolSession(
         id: createStorageId(),
         type: 'pairing',
@@ -326,6 +340,7 @@ class _PairingScreenState extends State<PairingScreen> {
         },
         createdAt: now,
       );
+      await widget.storage.insertConnection(connection);
       await widget.storage.insertToolSession(session);
       await widget.storage.insertTimelineEvent(event);
       await _loadHistory();
@@ -340,6 +355,199 @@ class _PairingScreenState extends State<PairingScreen> {
           ),
         ),
       );
+    }
+  }
+
+  Future<void> _exportBundle() async {
+    setState(() {
+      _exportStatus = null;
+      _exportStatusIsError = false;
+    });
+    try {
+      final connections = await widget.storage.fetchConnections();
+      final sessions = await widget.storage.fetchToolSessions();
+      final events = await widget.storage.fetchTimelineEvents();
+      final bundle = ExportBundle(
+        version: ExportBundle.currentVersion,
+        deviceName: _resolveDeviceName(),
+        exportedAt: DateTime.now().toUtc(),
+        connections: connections,
+        toolSessions: sessions,
+        timelineEvents: events,
+      );
+      final exportJson =
+          const JsonEncoder.withIndent('  ').convert(bundle.toJson());
+      if (!mounted) {
+        return;
+      }
+      await _showExportDialog(exportJson);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _exportStatus =
+            'Exported ${connections.length} connections, ${events.length} events, '
+            '${sessions.length} sessions.';
+        _exportStatusIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _exportStatus = 'Export failed: ${error.toString()}';
+        _exportStatusIsError = true;
+      });
+    }
+  }
+
+  Future<void> _showExportDialog(String exportJson) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Export bundle'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: SelectableText(exportJson),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: exportJson));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Export JSON copied.')),
+                );
+              },
+              child: const Text('Copy JSON'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openImportDialog() async {
+    final controller = TextEditingController();
+    final payload = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Import bundle'),
+          content: TextField(
+            controller: controller,
+            maxLines: 10,
+            decoration: const InputDecoration(
+              hintText: 'Paste export bundle JSON',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('Import'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (payload == null || payload.trim().isEmpty) {
+      return;
+    }
+    await _importBundle(payload);
+  }
+
+  Future<void> _importBundle(String raw) async {
+    setState(() {
+      _importStatus = null;
+      _importStatusIsError = false;
+    });
+    ExportBundle bundle;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const FormatException('Bundle must be a JSON object.');
+      }
+      bundle = ExportBundle.fromJson(Map<String, dynamic>.from(decoded));
+    } on FormatException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _importStatus = 'Import failed: ${error.message}';
+        _importStatusIsError = true;
+      });
+      return;
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _importStatus = 'Import failed: ${error.toString()}';
+        _importStatusIsError = true;
+      });
+      return;
+    }
+
+    try {
+      for (final connection in bundle.connections) {
+        await widget.storage.insertConnection(connection);
+      }
+      for (final session in bundle.toolSessions) {
+        await widget.storage.insertToolSession(session);
+      }
+      for (final event in bundle.timelineEvents) {
+        await widget.storage.insertTimelineEvent(event);
+      }
+      await _loadHistory();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _importStatus =
+            'Imported ${bundle.connections.length} connections, '
+            '${bundle.timelineEvents.length} events, '
+            '${bundle.toolSessions.length} sessions.';
+        _importStatusIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _importStatus = 'Import failed: ${error.toString()}';
+        _importStatusIsError = true;
+      });
+    }
+  }
+
+  String _resolveDeviceName() {
+    if (kIsWeb) {
+      return 'Web';
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'Android';
+      case TargetPlatform.iOS:
+        return 'iOS';
+      case TargetPlatform.macOS:
+        return 'macOS';
+      case TargetPlatform.windows:
+        return 'Windows';
+      case TargetPlatform.linux:
+        return 'Linux';
+      case TargetPlatform.fuchsia:
+        return 'Fuchsia';
     }
   }
 
@@ -935,6 +1143,49 @@ class _PairingScreenState extends State<PairingScreen> {
                       isLoading: _isHistoryLoading,
                       errorMessage: _historyError,
                       sessions: _toolSessions,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  PairingStepCard(
+                    title: 'Export and import',
+                    description:
+                        'Move connections and timeline history between devices.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            FilledButton.icon(
+                              key: const Key('exportBundleButton'),
+                              onPressed: _exportBundle,
+                              icon: const Icon(Icons.upload_file),
+                              label: const Text('Export bundle'),
+                            ),
+                            OutlinedButton.icon(
+                              key: const Key('importBundleButton'),
+                              onPressed: _openImportDialog,
+                              icon: const Icon(Icons.download),
+                              label: const Text('Import bundle'),
+                            ),
+                          ],
+                        ),
+                        if (_exportStatus != null) ...[
+                          const SizedBox(height: 12),
+                          _InlineStatus(
+                            message: _exportStatus!,
+                            isError: _exportStatusIsError,
+                          ),
+                        ],
+                        if (_importStatus != null) ...[
+                          const SizedBox(height: 12),
+                          _InlineStatus(
+                            message: _importStatus!,
+                            isError: _importStatusIsError,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
