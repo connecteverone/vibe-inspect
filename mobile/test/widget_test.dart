@@ -154,7 +154,7 @@ void main() {
 
     expect(find.text('API Explorer'), findsOneWidget);
     expect(find.text('POST'), findsWidgets);
-    expect(find.text('https://api.example.com/login'), findsOneWidget);
+    expect(find.text('https://api.example.com/login'), findsWidgets);
     expect(find.textContaining('Status 500'), findsOneWidget);
   });
 
@@ -200,6 +200,33 @@ void main() {
     expect(find.text('Terminal Session'), findsOneWidget);
     expect(find.text('Build logs'), findsOneWidget);
     expect(find.text('npm test'), findsWidgets);
+  });
+
+  testWidgets('API Explorer blocks invalid JSON body', (tester) async {
+    await tester.pumpWidget(
+      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('commandBarField')),
+      'POST https://api.example.com/login',
+    );
+    final runButton = find.byKey(const Key('commandRunButton'));
+    await tester.ensureVisible(runButton);
+    await tester.tap(runButton);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('apiBodyField')),
+      '{ invalid json',
+    );
+    final sendButton = find.byKey(const Key('apiSendButton'));
+    await tester.ensureVisible(sendButton);
+    await tester.tap(sendButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Body must be valid JSON.'), findsOneWidget);
   });
 
   testWidgets('Timeline event with missing context shows error state',

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
 
 void main() {
@@ -494,6 +495,8 @@ class _PairingScreenState extends State<PairingScreen> {
           ApiExplorerScreen(
             event: event,
             context: apiContext,
+            storage: widget.storage,
+            agentBaseUrl: _connection?.tunnelUrl,
           ),
         );
         return;
@@ -600,6 +603,8 @@ class _PairingScreenState extends State<PairingScreen> {
         ApiExplorerScreen(
           event: event,
           context: apiContext,
+          storage: widget.storage,
+          agentBaseUrl: _connection?.tunnelUrl,
         ),
       );
       return;
@@ -693,9 +698,13 @@ class _PairingScreenState extends State<PairingScreen> {
   }
 
   void _pushContextScreen(Widget screen) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => screen),
-    );
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => screen))
+        .then((_) {
+      if (mounted) {
+        _loadHistory();
+      }
+    });
   }
 
   void _openContextError({
@@ -1792,6 +1801,216 @@ class _CodeBlock extends StatelessWidget {
   }
 }
 
+class _JsonTreeView extends StatelessWidget {
+  const _JsonTreeView({
+    required this.data,
+    required this.changedPaths,
+  });
+
+  final dynamic data;
+  final Set<String> changedPaths;
+
+  @override
+  Widget build(BuildContext context) {
+    return _JsonTreeNode(
+      label: 'JSON',
+      value: data,
+      path: '',
+      depth: 0,
+      changedPaths: changedPaths,
+      initiallyExpanded: true,
+    );
+  }
+}
+
+class _JsonTreeNode extends StatelessWidget {
+  const _JsonTreeNode({
+    required this.label,
+    required this.value,
+    required this.path,
+    required this.depth,
+    required this.changedPaths,
+    this.initiallyExpanded = false,
+  });
+
+  final String label;
+  final dynamic value;
+  final String path;
+  final int depth;
+  final Set<String> changedPaths;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasChildren = value is Map || value is List;
+    final hasChanges = _hasChanges(path, changedPaths);
+    if (hasChildren) {
+      final entries = <_JsonTreeEntry>[];
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value as Map);
+        final keys = map.keys.toList()..sort();
+        for (final key in keys) {
+          entries.add(
+            _JsonTreeEntry(
+              label: key,
+              pathKey: key,
+              value: map[key],
+            ),
+          );
+        }
+      } else if (value is List) {
+        final list = value as List;
+        for (var index = 0; index < list.length; index += 1) {
+          entries.add(
+            _JsonTreeEntry(
+              label: '[$index]',
+              pathKey: index.toString(),
+              value: list[index],
+            ),
+          );
+        }
+      }
+      final countLabel =
+          value is List ? '${entries.length} items' : '${entries.length} fields';
+      return Padding(
+        padding: EdgeInsets.only(left: depth * 12),
+        child: Theme(
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(left: 12),
+            initiallyExpanded: initiallyExpanded,
+            title: Row(
+              children: [
+                Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  countLabel,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF94A3B8),
+                  ),
+                ),
+                if (hasChanges) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFEDD5),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'changed',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF9A3412),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            children: [
+              for (final entry in entries)
+                _JsonTreeNode(
+                  label: entry.label,
+                  value: entry.value,
+                  path: _childJsonPath(path, entry.pathKey),
+                  depth: depth + 1,
+                  changedPaths: changedPaths,
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final isChanged = _isChangedPath(path, changedPaths);
+    return Padding(
+      padding: EdgeInsets.only(left: depth * 12, bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isChanged ? const Color(0xFFFFF7ED) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isChanged ? const Color(0xFFF59E0B) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: RichText(
+          text: TextSpan(
+            text: '$label: ',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF1E293B),
+              fontWeight: FontWeight.w600,
+            ),
+            children: [
+              TextSpan(
+                text: _formatJsonValue(value),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF0F172A),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _JsonTreeEntry {
+  const _JsonTreeEntry({
+    required this.label,
+    required this.pathKey,
+    required this.value,
+  });
+
+  final String label;
+  final String pathKey;
+  final dynamic value;
+}
+
+bool _hasChanges(String path, Set<String> changes) {
+  if (changes.isEmpty) {
+    return false;
+  }
+  if (path.isEmpty) {
+    return true;
+  }
+  return changes.any(
+    (entry) => entry == path || entry.startsWith('$path/'),
+  );
+}
+
+bool _isChangedPath(String path, Set<String> changes) {
+  if (path.isEmpty) {
+    return false;
+  }
+  return changes.contains(path);
+}
+
+String _formatJsonValue(dynamic value) {
+  if (value == null) {
+    return 'null';
+  }
+  if (value is String) {
+    return '"$value"';
+  }
+  if (value is num || value is bool) {
+    return value.toString();
+  }
+  return value.toString();
+}
+
 class _InfoPill extends StatelessWidget {
   const _InfoPill({
     required this.label,
@@ -1833,7 +2052,7 @@ class ApiRequestDetails {
   final String method;
   final String url;
   final Map<String, String> headers;
-  final String? body;
+  final dynamic body;
 
   factory ApiRequestDetails.fromPayload(Map<String, dynamic> payload) {
     final methodValue =
@@ -1843,7 +2062,7 @@ class ApiRequestDetails {
       method: methodValue?.toString().toUpperCase() ?? 'UNKNOWN',
       url: urlValue?.toString() ?? 'Unknown URL',
       headers: _parseHeaders(payload['headers']),
-      body: _stringifyBody(payload['body'] ?? payload['data']),
+      body: payload['body'] ?? payload['data'],
     );
   }
 }
@@ -1859,7 +2078,7 @@ class ApiResponseDetails {
   final int? status;
   final int? latencyMs;
   final Map<String, String> headers;
-  final String? body;
+  final dynamic body;
 
   factory ApiResponseDetails.fromPayload(Map<String, dynamic> payload) {
     final statusValue =
@@ -1874,20 +2093,26 @@ class ApiResponseDetails {
         latencyValue?.toString() ?? '',
       ),
       headers: _parseHeaders(payload['headers']),
-      body: _stringifyBody(payload['body'] ?? payload['data']),
+      body: payload['body'] ?? payload['data'],
     );
   }
 }
 
 class ApiEventContext {
-  const ApiEventContext({required this.request, required this.response});
+  const ApiEventContext({
+    required this.request,
+    required this.response,
+    this.previousResponse,
+  });
 
   final ApiRequestDetails request;
   final ApiResponseDetails response;
+  final ApiResponseDetails? previousResponse;
 
   static ApiEventContext? fromPayload(Map<String, dynamic> payload) {
     final rawRequest = payload['request'] ?? payload['api_request'];
     final rawResponse = payload['response'] ?? payload['api_response'];
+    final rawPrevious = payload['previous_response'] ?? payload['previousResponse'];
     if (rawRequest is! Map || rawResponse is! Map) {
       return null;
     }
@@ -1898,32 +2123,303 @@ class ApiEventContext {
       response: ApiResponseDetails.fromPayload(
         Map<String, dynamic>.from(rawResponse),
       ),
+      previousResponse: rawPrevious is Map
+          ? ApiResponseDetails.fromPayload(
+              Map<String, dynamic>.from(rawPrevious),
+            )
+          : null,
     );
   }
 }
 
-class ApiExplorerScreen extends StatelessWidget {
+class ApiExplorerScreen extends StatefulWidget {
   const ApiExplorerScreen({
     super.key,
     required this.event,
     required this.context,
+    required this.storage,
+    required this.agentBaseUrl,
   });
 
   final TimelineEvent event;
   final ApiEventContext context;
+  final StorageRepository storage;
+  final String? agentBaseUrl;
+
+  @override
+  State<ApiExplorerScreen> createState() => _ApiExplorerScreenState();
+}
+
+class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
+  static const List<String> _httpMethods = [
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'HEAD',
+    'OPTIONS',
+  ];
+
+  late String _method;
+  late TextEditingController _urlController;
+  late TextEditingController _bodyController;
+  late List<_HeaderEditor> _headerEditors;
+  ApiResponseDetails? _response;
+  ApiResponseDetails? _previousResponse;
+  Set<String> _changedPaths = {};
+  String? _bodyError;
+  String? _requestError;
+  bool _isSending = false;
+  http.Client? _httpClient;
+  AgentCommandClient? _agentClient;
+
+  @override
+  void initState() {
+    super.initState();
+    final request = widget.context.request;
+    final method = request.method.toUpperCase();
+    _method = _httpMethods.contains(method) ? method : _httpMethods.first;
+    _urlController = TextEditingController(text: request.url);
+    _bodyController = TextEditingController(
+      text: _stringifyBody(request.body) ?? '',
+    );
+    _headerEditors = _buildHeaderEditors(request.headers);
+    _response = widget.context.response;
+    _previousResponse = widget.context.previousResponse;
+    _changedPaths = _collectChangedPaths(
+      _response?.body,
+      _previousResponse?.body,
+    );
+    _configureAgentClient();
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _bodyController.dispose();
+    for (final header in _headerEditors) {
+      header.dispose();
+    }
+    _httpClient?.close();
+    super.dispose();
+  }
+
+  void _configureAgentClient() {
+    final baseUrl = widget.agentBaseUrl?.trim();
+    if (baseUrl == null || baseUrl.isEmpty) {
+      _agentClient = null;
+      return;
+    }
+    _httpClient = http.Client();
+    _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
+  }
+
+  List<_HeaderEditor> _buildHeaderEditors(Map<String, String> headers) {
+    if (headers.isEmpty) {
+      return [];
+    }
+    return headers.entries
+        .map(
+          (entry) => _HeaderEditor(
+            keyText: entry.key,
+            valueText: entry.value,
+          ),
+        )
+        .toList();
+  }
+
+  void _addHeader() {
+    setState(() {
+      _headerEditors.add(_HeaderEditor());
+    });
+  }
+
+  void _removeHeader(int index) {
+    setState(() {
+      final header = _headerEditors.removeAt(index);
+      header.dispose();
+    });
+  }
+
+  Map<String, String> _collectHeaders() {
+    final headers = <String, String>{};
+    for (final entry in _headerEditors) {
+      final key = entry.keyController.text.trim();
+      if (key.isEmpty) {
+        continue;
+      }
+      headers[key] = entry.valueController.text.trim();
+    }
+    return headers;
+  }
+
+  bool _hasResponse(ApiResponseDetails? response) {
+    if (response == null) {
+      return false;
+    }
+    final bodyText = _stringifyBody(response.body);
+    return response.status != null ||
+        response.latencyMs != null ||
+        response.headers.isNotEmpty ||
+        (bodyText != null && bodyText.trim().isNotEmpty);
+  }
+
+  Future<void> _sendRequest() async {
+    if (_isSending) {
+      return;
+    }
+
+    final url = _urlController.text.trim();
+    if (url.isEmpty) {
+      setState(() {
+        _requestError = 'Enter a request URL.';
+      });
+      return;
+    }
+
+    dynamic parsedBody;
+    final rawBody = _bodyController.text.trim();
+    if (rawBody.isNotEmpty) {
+      try {
+        parsedBody = jsonDecode(rawBody);
+      } catch (_) {
+        setState(() {
+          _bodyError = 'Body must be valid JSON.';
+          _requestError = null;
+        });
+        return;
+      }
+    }
+
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      setState(() {
+        _requestError =
+            'Connect to the desktop agent to send API requests.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSending = true;
+      _bodyError = null;
+      _requestError = null;
+    });
+
+    final headers = _collectHeaders();
+    try {
+      final result = await agentClient.sendApiCommand(
+        method: _method,
+        url: url,
+        headers: headers,
+        body: parsedBody,
+      );
+      if (!mounted) {
+        return;
+      }
+      final previousResponse = _response;
+      final response = result.response;
+      final changedPaths = _collectChangedPaths(
+        response.body,
+        previousResponse?.body,
+      );
+      setState(() {
+        _previousResponse = previousResponse;
+        _response = response;
+        _changedPaths = changedPaths;
+      });
+      await _persistApiEvent(
+        request: result.request,
+        response: response,
+        previousResponse: previousResponse,
+      );
+    } on AgentCommandFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _requestError = error.message;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _requestError = 'Request failed: ${error.toString()}';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _persistApiEvent({
+    required ApiRequestDetails request,
+    required ApiResponseDetails response,
+    required ApiResponseDetails? previousResponse,
+  }) async {
+    final payload = Map<String, dynamic>.from(widget.event.payload);
+    payload['request'] = {
+      'method': request.method,
+      'url': request.url,
+      'headers': request.headers,
+      'body': request.body,
+    };
+    payload['response'] = {
+      'status': response.status,
+      'latency_ms': response.latencyMs,
+      'headers': response.headers,
+      'body': response.body,
+    };
+    if (previousResponse != null && _hasResponse(previousResponse)) {
+      payload['previous_response'] = {
+        'status': previousResponse.status,
+        'latency_ms': previousResponse.latencyMs,
+        'headers': previousResponse.headers,
+        'body': previousResponse.body,
+      };
+    }
+
+    final updatedEvent = TimelineEvent(
+      id: widget.event.id,
+      sessionId: widget.event.sessionId,
+      type: widget.event.type,
+      title: widget.event.title,
+      payload: payload,
+      createdAt: widget.event.createdAt,
+    );
+    try {
+      await widget.storage.insertTimelineEvent(updatedEvent);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to save API response: ${error.toString()}',
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final responseStatus = this.context.response.status;
+    final response = _response;
+    final responseStatus = response?.status;
     final statusLabel =
         responseStatus == null ? 'Unknown' : responseStatus.toString();
     final statusColor = _statusPillColor(responseStatus);
-    final responseBody = this.context.response.body;
-    final hasResponse = responseStatus != null ||
-        this.context.response.latencyMs != null ||
-        this.context.response.headers.isNotEmpty ||
-        (responseBody != null && responseBody.trim().isNotEmpty);
+    final responseBody = response?.body;
+    final responseBodyText = _stringifyBody(responseBody);
+    final hasResponse = _hasResponse(response);
+    final hasDiff = _changedPaths.isNotEmpty;
 
     return _TimelineDetailScaffold(
       title: 'API Explorer',
@@ -1933,7 +2429,7 @@ class ApiExplorerScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              event.title,
+              widget.event.title,
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w700,
                 color: const Color(0xFF0F172A),
@@ -1941,7 +2437,7 @@ class ApiExplorerScreen extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Recorded ${_formatTimestamp(event.createdAt)}',
+              'Recorded ${_formatTimestamp(widget.event.createdAt)}',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: const Color(0xFF64748B),
               ),
@@ -1949,44 +2445,178 @@ class ApiExplorerScreen extends StatelessWidget {
             const SizedBox(height: 20),
             _ContextSectionCard(
               title: 'Request',
-              subtitle: 'Method, URL, headers, and payload',
+              subtitle: 'Method, URL, headers, and JSON body',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      _InfoPill(
-                        label: this.context.request.method,
-                        backgroundColor: const Color(0xFFE0F2FE),
-                        textColor: const Color(0xFF0369A1),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          this.context.request.url,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF0F172A),
-                          ),
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Method',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  _HeadersBlock(headers: this.context.request.headers),
-                  if (this.context.request.body != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      'Body',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF64748B),
-                        fontWeight: FontWeight.w600,
+                  const SizedBox(height: 6),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _method,
+                        isExpanded: true,
+                        items: _httpMethods
+                            .map(
+                              (method) => DropdownMenuItem<String>(
+                                value: method,
+                                child: Text(method),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _isSending
+                            ? null
+                            : (value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _method = value;
+                                });
+                              },
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    _CodeBlock(content: this.context.request.body!),
-                  ] else
-                    _EmptyHint(text: 'No request body recorded.'),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'URL',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    key: const Key('apiUrlField'),
+                    controller: _urlController,
+                    decoration: const InputDecoration(
+                      hintText: 'https://api.example.com/login',
+                      border: OutlineInputBorder(),
+                    ),
+                    textInputAction: TextInputAction.done,
+                    onChanged: (_) {
+                      if (_requestError != null) {
+                        setState(() {
+                          _requestError = null;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Headers',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_headerEditors.isEmpty)
+                    const _EmptyHint(text: 'No headers set.')
+                  else
+                    Column(
+                      children: [
+                        for (final entry in _headerEditors)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: entry.keyController,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Header',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    controller: entry.valueController,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Value',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: _isSending
+                                      ? null
+                                      : () => _removeHeader(
+                                            _headerEditors.indexOf(entry),
+                                          ),
+                                  icon: const Icon(Icons.close),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _isSending ? null : _addHeader,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add header'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Body',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    key: const Key('apiBodyField'),
+                    controller: _bodyController,
+                    maxLines: 6,
+                    decoration: InputDecoration(
+                      hintText: '{"email":"user@example.com"}',
+                      border: const OutlineInputBorder(),
+                      errorText: _bodyError,
+                    ),
+                    onChanged: (_) {
+                      if (_bodyError != null) {
+                        setState(() {
+                          _bodyError = null;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  if (_requestError != null) ...[
+                    _InlineStatus(
+                      message: _requestError!,
+                      isError: true,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  FilledButton.icon(
+                    key: const Key('apiSendButton'),
+                    onPressed: _isSending ? null : _sendRequest,
+                    icon: _isSending
+                        ? const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send),
+                    label: Text(_isSending ? 'Sending' : 'Send request'),
+                  ),
                 ],
               ),
             ),
@@ -2006,10 +2636,10 @@ class ApiExplorerScreen extends StatelessWidget {
                               backgroundColor: statusColor.background,
                               textColor: statusColor.foreground,
                             ),
-                            if (this.context.response.latencyMs != null) ...[
+                            if (response?.latencyMs != null) ...[
                               const SizedBox(width: 12),
                               _InfoPill(
-                                label: '${this.context.response.latencyMs} ms',
+                                label: '${response!.latencyMs} ms',
                                 backgroundColor: const Color(0xFFEDE9FE),
                                 textColor: const Color(0xFF6D28D9),
                               ),
@@ -2017,20 +2647,35 @@ class ApiExplorerScreen extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 16),
-                        _HeadersBlock(headers: this.context.response.headers),
-                        if (responseBody != null) ...[
-                          const SizedBox(height: 16),
+                        _HeadersBlock(headers: response!.headers),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Body',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF64748B),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (hasDiff) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            'Body',
+                            'Changed fields highlighted from previous run.',
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF64748B),
+                              color: const Color(0xFFB45309),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          _CodeBlock(content: responseBody),
-                        ] else
-                          _EmptyHint(text: 'No response body recorded.'),
+                        ],
+                        const SizedBox(height: 8),
+                        if (responseBody is Map || responseBody is List)
+                          _JsonTreeView(
+                            data: responseBody,
+                            changedPaths: _changedPaths,
+                          )
+                        else if (responseBodyText != null)
+                          _CodeBlock(content: responseBodyText)
+                        else
+                          const _EmptyHint(text: 'No response body recorded.'),
                       ],
                     )
                   : const _EmptyHint(text: 'No response recorded yet.'),
@@ -2039,6 +2684,20 @@ class ApiExplorerScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _HeaderEditor {
+  _HeaderEditor({String? keyText, String? valueText})
+      : keyController = TextEditingController(text: keyText ?? ''),
+        valueController = TextEditingController(text: valueText ?? '');
+
+  final TextEditingController keyController;
+  final TextEditingController valueController;
+
+  void dispose() {
+    keyController.dispose();
+    valueController.dispose();
   }
 }
 
@@ -2479,6 +3138,250 @@ String? _stringifyBody(dynamic raw) {
     return const JsonEncoder.withIndent('  ').convert(raw);
   } catch (_) {
     return raw.toString();
+  }
+}
+
+Set<String> _collectChangedPaths(dynamic current, dynamic previous) {
+  final changes = <String>{};
+  if (previous == null) {
+    return changes;
+  }
+  _diffJsonValues(current, previous, '', changes);
+  return changes;
+}
+
+void _diffJsonValues(
+  dynamic current,
+  dynamic previous,
+  String path,
+  Set<String> changes,
+) {
+  if (current is Map && previous is Map) {
+    final currentMap = Map<String, dynamic>.from(current);
+    final previousMap = Map<String, dynamic>.from(previous);
+    final keys = <String>{...currentMap.keys, ...previousMap.keys};
+    for (final key in keys) {
+      final childPath = _childJsonPath(path, key);
+      if (!currentMap.containsKey(key) || !previousMap.containsKey(key)) {
+        changes.add(childPath);
+        continue;
+      }
+      _diffJsonValues(currentMap[key], previousMap[key], childPath, changes);
+    }
+    return;
+  }
+  if (current is List && previous is List) {
+    final maxLength =
+        current.length > previous.length ? current.length : previous.length;
+    for (var index = 0; index < maxLength; index += 1) {
+      final childPath = _childJsonPath(path, index.toString());
+      if (index >= current.length || index >= previous.length) {
+        changes.add(childPath);
+        continue;
+      }
+      _diffJsonValues(current[index], previous[index], childPath, changes);
+    }
+    return;
+  }
+
+  if (!_jsonValueEquals(current, previous)) {
+    changes.add(path.isEmpty ? '/' : path);
+  }
+}
+
+bool _jsonValueEquals(dynamic left, dynamic right) {
+  if (left is Map && right is Map) {
+    final leftMap = Map<String, dynamic>.from(left);
+    final rightMap = Map<String, dynamic>.from(right);
+    if (leftMap.length != rightMap.length) {
+      return false;
+    }
+    for (final entry in leftMap.entries) {
+      if (!rightMap.containsKey(entry.key)) {
+        return false;
+      }
+      if (!_jsonValueEquals(entry.value, rightMap[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (!_jsonValueEquals(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
+}
+
+String _childJsonPath(String parent, String child) {
+  if (parent.isEmpty || parent == '/') {
+    return '/$child';
+  }
+  return '$parent/$child';
+}
+
+class AgentCommandFailure implements Exception {
+  const AgentCommandFailure(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class AgentApiResult {
+  const AgentApiResult({required this.request, required this.response});
+
+  final ApiRequestDetails request;
+  final ApiResponseDetails response;
+}
+
+class AgentCommandClient {
+  AgentCommandClient({required this.baseUrl, http.Client? client})
+      : _client = client ?? http.Client();
+
+  final String baseUrl;
+  final http.Client _client;
+
+  Future<AgentApiResult> sendApiCommand({
+    required String method,
+    required String url,
+    required Map<String, String> headers,
+    dynamic body,
+  }) async {
+    final response = await _sendCommand(
+      command: 'api',
+      payload: {
+        'method': method,
+        'url': url,
+        'headers': headers,
+        'body': body,
+      },
+    );
+    final payload = response.payload;
+    if (payload == null) {
+      throw const AgentCommandFailure('Agent response missing payload.');
+    }
+    final requestPayload = payload['request'];
+    final responsePayload = payload['response'];
+    if (requestPayload is! Map || responsePayload is! Map) {
+      throw const AgentCommandFailure(
+        'Agent response missing request or response details.',
+      );
+    }
+    return AgentApiResult(
+      request: ApiRequestDetails.fromPayload(
+        Map<String, dynamic>.from(requestPayload),
+      ),
+      response: ApiResponseDetails.fromPayload(
+        Map<String, dynamic>.from(responsePayload),
+      ),
+    );
+  }
+
+  Future<_AgentCommandResponse> _sendCommand({
+    required String command,
+    required Map<String, dynamic> payload,
+  }) async {
+    final uri = _commandUri();
+    final requestBody = jsonEncode({
+      'request_id': createStorageId(),
+      'command': command,
+      'payload': payload,
+    });
+    http.Response response;
+    try {
+      response = await _client.post(
+        uri,
+        headers: const {'Content-Type': 'application/json'},
+        body: requestBody,
+      );
+    } catch (error) {
+      throw AgentCommandFailure('Failed to reach desktop agent.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AgentCommandFailure(
+        'Desktop agent returned HTTP ${response.statusCode}.',
+      );
+    }
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } catch (_) {
+      throw const AgentCommandFailure('Agent response was not JSON.');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const AgentCommandFailure('Agent response was malformed.');
+    }
+    final parsed = _AgentCommandResponse.fromJson(decoded);
+    if (!parsed.isOk) {
+      throw AgentCommandFailure(
+        parsed.error?.message ?? 'Agent command failed.',
+      );
+    }
+    return parsed;
+  }
+
+  Uri _commandUri() {
+    final base = Uri.parse(baseUrl);
+    if (base.scheme.isEmpty) {
+      throw const AgentCommandFailure(
+        'Agent URL must include a scheme (https://).',
+      );
+    }
+    final basePath =
+        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final commandPath = basePath.isEmpty ? '/command' : '$basePath/command';
+    return base.replace(path: commandPath);
+  }
+}
+
+class _AgentCommandResponse {
+  const _AgentCommandResponse({
+    required this.status,
+    this.payload,
+    this.error,
+  });
+
+  final String status;
+  final Map<String, dynamic>? payload;
+  final _AgentCommandError? error;
+
+  bool get isOk => status.toLowerCase() == 'ok';
+
+  factory _AgentCommandResponse.fromJson(Map<String, dynamic> json) {
+    return _AgentCommandResponse(
+      status: json['status']?.toString() ?? 'error',
+      payload: json['payload'] is Map
+          ? Map<String, dynamic>.from(json['payload'] as Map)
+          : null,
+      error: json['error'] is Map
+          ? _AgentCommandError.fromJson(
+              Map<String, dynamic>.from(json['error'] as Map),
+            )
+          : null,
+    );
+  }
+}
+
+class _AgentCommandError {
+  const _AgentCommandError({required this.code, required this.message});
+
+  final String code;
+  final String message;
+
+  factory _AgentCommandError.fromJson(Map<String, dynamic> json) {
+    return _AgentCommandError(
+      code: json['code']?.toString() ?? 'unknown',
+      message: json['message']?.toString() ?? 'Agent error.',
+    );
   }
 }
 

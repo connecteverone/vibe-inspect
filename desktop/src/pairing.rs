@@ -1,7 +1,10 @@
+use crate::command::{handle_agent_command, AgentCommandRequest};
 use qrcode::render::svg;
 use qrcode::QrCode;
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
@@ -268,7 +271,7 @@ fn start_local_tunnel_server() -> Result<u16, std::io::Error> {
     thread::spawn(move || {
         for stream in listener.incoming() {
             if let Ok(stream) = stream {
-                handle_tunnel_probe(stream);
+                handle_tunnel_request(stream);
             }
         }
     });
@@ -276,17 +279,188 @@ fn start_local_tunnel_server() -> Result<u16, std::io::Error> {
     Ok(port)
 }
 
-fn handle_tunnel_probe(mut stream: TcpStream) {
-    let mut buffer = [0u8; 512];
-    let _ = stream.read(&mut buffer);
+fn handle_tunnel_request(mut stream: TcpStream) {
+    let request = match read_tunnel_http_request(&mut stream) {
+        Ok(request) => request,
+        Err(_) => {
+            let body = json!({
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Malformed HTTP request."
+                }
+            })
+            .to_string();
+            write_tunnel_response(&mut stream, 400, &body);
+            return;
+        }
+    };
 
-    let body = r#"{"status":"ok","message":"Vibe Inspect tunnel active"}"#;
+    if request.method.eq_ignore_ascii_case("OPTIONS") {
+        write_tunnel_empty_response(&mut stream, 204);
+        return;
+    }
+
+    if request.path.starts_with("/command") {
+        if !request.method.eq_ignore_ascii_case("POST") {
+            let body = json!({
+                "error": {
+                    "code": "method_not_allowed",
+                    "message": "Use POST to send agent commands."
+                }
+            })
+            .to_string();
+            write_tunnel_response(&mut stream, 405, &body);
+            return;
+        }
+
+        let command_request: AgentCommandRequest =
+            match serde_json::from_slice(&request.body) {
+                Ok(request) => request,
+                Err(error) => {
+                    let body = json!({
+                        "error": {
+                            "code": "invalid_payload",
+                            "message": format!("Invalid JSON payload: {error}")
+                        }
+                    })
+                    .to_string();
+                    write_tunnel_response(&mut stream, 400, &body);
+                    return;
+                }
+            };
+
+        let response = handle_agent_command(command_request);
+        let body = serde_json::to_string(&response).unwrap_or_else(|_| {
+            json!({
+                "error": {
+                    "code": "serialize_failed",
+                    "message": "Failed to serialize agent response."
+                }
+            })
+            .to_string()
+        });
+        write_tunnel_response(&mut stream, 200, &body);
+        return;
+    }
+
+    let body = json!({
+        "status": "ok",
+        "message": "Vibe Inspect tunnel active"
+    })
+    .to_string();
+    write_tunnel_response(&mut stream, 200, &body);
+}
+
+struct TunnelHttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+fn read_tunnel_http_request(
+    stream: &mut TcpStream,
+) -> Result<TunnelHttpRequest, std::io::Error> {
+    let mut buffer = Vec::new();
+    let mut temp = [0u8; 1024];
+    let mut header_end = None;
+
+    while header_end.is_none() {
+        let bytes_read = stream.read(&mut temp)?;
+        if bytes_read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&temp[..bytes_read]);
+        header_end = find_header_end(&buffer);
+        if buffer.len() > 1024 * 1024 {
+            break;
+        }
+    }
+
+    let header_end = header_end.ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing headers")
+    })?;
+
+    let header_text = String::from_utf8_lossy(&buffer[..header_end]);
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default().to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    let mut headers = HashMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            headers.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = buffer[header_end + 4..].to_vec();
+    while body.len() < content_length {
+        let bytes_read = stream.read(&mut temp)?;
+        if bytes_read == 0 {
+            break;
+        }
+        body.extend_from_slice(&temp[..bytes_read]);
+        if body.len() > content_length {
+            body.truncate(content_length);
+            break;
+        }
+    }
+    body.truncate(content_length);
+
+    Ok(TunnelHttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+}
+
+fn write_tunnel_response(stream: &mut TcpStream, status: u16, body: &str) {
+    let status_text = status_text(status);
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n{}",
+        status,
+        status_text,
         body.len(),
         body
     );
     let _ = stream.write_all(response.as_bytes());
+}
+
+fn write_tunnel_empty_response(stream: &mut TcpStream, status: u16) {
+    let status_text = status_text(status);
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n",
+        status,
+        status_text
+    );
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    }
 }
 
 fn start_cloudflared_tunnel(port: u16) -> Result<TunnelHandle, TunnelStartError> {
