@@ -472,3 +472,41 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered: Flutter web inputs may require direct textarea fills for automation.
   - Useful context: Response diff pills surface once a second agent response is stored.
 ---
+## [2026-01-28 06:25] - US-009: Multi-session terminal streaming
+Thread: 
+Run: 20260128-012433-59985 (iteration 8)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-8.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-8.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 429edcb feat(terminal): add multi-session streaming UI
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+  - Command: cd mobile && flutter build web -> PASS
+  - Command: cd mobile && flutter build web --no-web-resources-cdn -> PASS
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .codex/skills/dev-browser/profiles/browser-data/Default/Code Cache/wasm/75699a71b53d9f4e_0
+  - .codex/skills/dev-browser/profiles/browser-data/Default/Code Cache/wasm/f1d8632b8c9904b5_0
+  - .codex/skills/dev-browser/profiles/browser-data/Default/Code Cache/wasm/index-dir/the-real-index
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260128-012433-59985-iter-7.log
+  - .ralph/runs/run-20260128-012433-59985-iter-7.md
+  - .ralph/runs/run-20260128-012433-59985-iter-8.log
+  - mobile/lib/main.dart
+  - mobile/test/widget_test.dart
+  - mobile/web/index.html
+- What was implemented
+  Added a terminal workspace to create, switch, and close sessions with stdout/stderr streaming, simulated npm test output, and a reconnect prompt when the agent disconnects.
+- **Learnings for future iterations:**
+  - Patterns discovered: Terminal session state is easiest to restore by combining stored sessions with latest terminal events.
+  - Gotchas encountered: Flutter web automation needs keyboard typing for text fields to avoid empty submits.
+  - Useful context: Local web verification works with `flutter build web --no-web-resources-cdn` plus a CORS-enabled agent stub.
+---
