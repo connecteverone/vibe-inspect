@@ -356,7 +356,7 @@
     {
       "id": "US-008",
       "title": "API Explorer via desktop agent",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002",
         "US-006"
@@ -369,13 +369,13 @@
         "Negative case: invalid JSON body prevents request with validation message"
       ],
       "startedAt": "2026-01-27T21:10:57.119990+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T21:10:57.120112+00:00"
+      "completedAt": "2026-01-27T21:31:42.036920+00:00",
+      "updatedAt": "2026-01-27T21:31:42.036823+00:00"
     },
     {
       "id": "US-009",
       "title": "Multi-session terminal streaming",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002",
         "US-006"
@@ -386,7 +386,10 @@
         "Separate stdout and stderr streams in the UI",
         "Example: run `npm test` and see stdout/stderr separated",
         "Negative case: session disconnect shows a reconnect prompt"
-      ]
+      ],
+      "startedAt": "2026-01-27T21:31:44.126435+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T21:31:44.126565+00:00"
     },
     {
       "id": "US-010",

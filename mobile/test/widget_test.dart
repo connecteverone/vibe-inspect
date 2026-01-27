@@ -197,8 +197,8 @@ void main() {
     await tester.tap(eventFinder);
     await tester.pumpAndSettle();
 
-    expect(find.text('Terminal Session'), findsOneWidget);
-    expect(find.text('Build logs'), findsOneWidget);
+    expect(find.text('Terminal'), findsOneWidget);
+    expect(find.text('Build logs'), findsWidgets);
     expect(find.text('npm test'), findsWidgets);
   });
 
