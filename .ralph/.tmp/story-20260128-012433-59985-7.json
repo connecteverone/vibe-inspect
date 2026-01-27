@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 12,
+  "remaining": 5,
+  "quality_gates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "id": "US-008",
+  "title": "API Explorer via desktop agent"
+}

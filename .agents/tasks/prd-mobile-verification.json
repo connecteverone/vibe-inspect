@@ -368,9 +368,9 @@
         "Example: response diff highlights changed fields from previous run",
         "Negative case: invalid JSON body prevents request with validation message"
       ],
-      "startedAt": "2026-01-27T20:09:25.952974+00:00",
+      "startedAt": "2026-01-27T21:10:57.119990+00:00",
       "completedAt": null,
-      "updatedAt": "2026-01-27T20:09:25.953097+00:00"
+      "updatedAt": "2026-01-27T21:10:57.120112+00:00"
     },
     {
       "id": "US-009",
