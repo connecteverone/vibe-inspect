@@ -253,3 +253,29 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered
   - Useful context
 ---
+## [2026-01-28 01:52:12] - US-004: Cloudflared tunnel integration
+Thread: 
+Run: 20260128-012433-59985 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: d1193f2 feat(tunnel): add cloudflared pairing data
+- Post-commit status: .agents/tasks/prd-mobile-verification.json, .ralph/errors.log, .ralph/runs/run-20260128-012433-59985-iter-1.log, .ralph/.tmp/prompt-20260128-012433-59985-2.md, .ralph/.tmp/story-20260128-012433-59985-2.json, .ralph/.tmp/story-20260128-012433-59985-2.md, .ralph/runs/run-20260128-012433-59985-iter-1.md, .ralph/runs/run-20260128-012433-59985-iter-2.log
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+- Files changed:
+  - desktop/src/pairing.rs
+  - mobile/lib/main.dart
+  - mobile/test/widget_test.dart
+  - .ralph/activity.log
+- What was implemented
+  Added a local tunnel listener and cloudflared startup flow to embed tunnel URLs in pairing payloads with remediation messages, then persisted and displayed tunnel details in the Flutter pairing UI with new coverage tests.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Gotchas encountered
+  - Useful context
+---
