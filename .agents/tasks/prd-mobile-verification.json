@@ -375,7 +375,7 @@
     {
       "id": "US-009",
       "title": "Multi-session terminal streaming",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002",
         "US-006"
@@ -388,13 +388,13 @@
         "Negative case: session disconnect shows a reconnect prompt"
       ],
       "startedAt": "2026-01-27T21:31:44.126435+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T21:31:44.126565+00:00"
+      "completedAt": "2026-01-27T22:35:32.678792+00:00",
+      "updatedAt": "2026-01-27T22:35:32.678548+00:00"
     },
     {
       "id": "US-010",
       "title": "VNC viewer for quick UI verification",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002",
         "US-006"
@@ -405,7 +405,10 @@
         "Provide zoom bar with center-on-pointer behavior",
         "Example: open VNC from timeline event and exit with swipe down",
         "Negative case: VNC stream failure shows a clear recovery action"
-      ]
+      ],
+      "startedAt": "2026-01-27T22:35:34.777681+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T22:35:34.777804+00:00"
     },
     {
       "id": "US-011",
