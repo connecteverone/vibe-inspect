@@ -248,7 +248,7 @@
     {
       "id": "US-002",
       "title": "Desktop agent command channel and protocol",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -260,13 +260,13 @@
         "Negative case: unknown command returns a standardized error payload"
       ],
       "startedAt": "2026-01-27T15:22:00.693504+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T15:22:00.693627+00:00"
+      "completedAt": "2026-01-27T15:34:10.014028+00:00",
+      "updatedAt": "2026-01-27T15:34:10.013767+00:00"
     },
     {
       "id": "US-003",
       "title": "Pairing flow with QR token and shared secret",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002"
       ],
@@ -276,7 +276,10 @@
         "Mobile scans QR and confirms a shared secret before saving the connection",
         "Example: valid token + correct secret results in a connected state",
         "Negative case: expired token is rejected with a retry prompt"
-      ]
+      ],
+      "startedAt": "2026-01-27T15:34:12.116143+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T15:34:12.116264+00:00"
     },
     {
       "id": "US-004",

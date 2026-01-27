@@ -4,11 +4,289 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vibe Inspect Agent</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #0f172a;
+        --slate: #334155;
+        --stone: #e2e8f0;
+        --cream: #f8fafc;
+        --accent: #e07a5f;
+        --accent-dark: #be5a3c;
+        --mint: #d7f2e3;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Avenir Next", "Futura", "Trebuchet MS", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at top, #fef3c7 0%, #f8fafc 45%, #e2e8f0 100%);
+      }
+
+      .page {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 48px 32px 60px;
+      }
+
+      .hero {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 32px;
+      }
+
+      .hero h1 {
+        font-size: 2.3rem;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--slate);
+        max-width: 520px;
+        line-height: 1.5;
+      }
+
+      .panel {
+        display: grid;
+        grid-template-columns: minmax(220px, 280px) 1fr;
+        gap: 28px;
+        background: rgba(248, 250, 252, 0.85);
+        border-radius: 24px;
+        padding: 28px;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+      }
+
+      .qr-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        background: white;
+        border-radius: 18px;
+        border: 1px solid var(--stone);
+      }
+
+      .qr-card svg {
+        width: 220px;
+        height: 220px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 18px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 12px 24px rgba(224, 122, 95, 0.3);
+      }
+
+      .primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 30px rgba(224, 122, 95, 0.35);
+      }
+
+      .secondary {
+        background: var(--cream);
+        color: var(--ink);
+        border: 1px solid var(--stone);
+      }
+
+      .details {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .meta-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--slate);
+      }
+
+      .value {
+        font-size: 1.2rem;
+        font-weight: 600;
+      }
+
+      .payload {
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 0.82rem;
+        color: var(--slate);
+        background: var(--cream);
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px dashed var(--stone);
+        word-break: break-all;
+      }
+
+      .status {
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: var(--mint);
+        color: #0f5132;
+        font-weight: 600;
+      }
+
+      .status.error {
+        background: #fee2e2;
+        color: #7f1d1d;
+      }
+
+      @media (max-width: 720px) {
+        .panel {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
   </head>
   <body>
-    <main>
-      <h1>Vibe Inspect Agent</h1>
-      <p>Tauri desktop agent scaffold.</p>
+    <main class="page">
+      <header class="hero">
+        <h1>Secure pairing session</h1>
+        <p>
+          Generate a short-lived QR token and shared secret to pair your mobile app
+          with this desktop agent.
+        </p>
+      </header>
+
+      <section class="panel">
+        <div class="qr-card">
+          <div id="qr">Loading QR...</div>
+          <button class="secondary" id="copyPayload">Copy QR payload</button>
+        </div>
+        <div class="details">
+          <div class="meta-row">
+            <span class="label">Pairing token</span>
+            <span class="value" id="token">--</span>
+          </div>
+          <div class="meta-row">
+            <span class="label">Shared secret</span>
+            <span class="value" id="secret">--</span>
+          </div>
+          <div class="meta-row">
+            <span class="label">Expires in</span>
+            <span class="value" id="expires">--</span>
+          </div>
+          <div class="meta-row">
+            <span class="label">QR payload</span>
+            <div class="payload" id="payload">--</div>
+          </div>
+          <div class="actions">
+            <button class="primary" id="generate">Generate new token</button>
+            <div class="status" id="status">Waiting for mobile confirmation.</div>
+          </div>
+        </div>
+      </section>
     </main>
+
+    <script>
+      const invoke =
+        window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke || null;
+      const statusEl = document.getElementById("status");
+      const qrEl = document.getElementById("qr");
+      const tokenEl = document.getElementById("token");
+      const secretEl = document.getElementById("secret");
+      const expiresEl = document.getElementById("expires");
+      const payloadEl = document.getElementById("payload");
+      const copyBtn = document.getElementById("copyPayload");
+      const generateBtn = document.getElementById("generate");
+      let session = null;
+
+      function setStatus(message, isError = false) {
+        statusEl.textContent = message;
+        statusEl.classList.toggle("error", isError);
+      }
+
+      function formatExpiry(expiresAt) {
+        if (!expiresAt) return "--";
+        const remaining = expiresAt * 1000 - Date.now();
+        if (remaining <= 0) return "Expired";
+        const minutes = Math.floor(remaining / 60000);
+        const seconds = Math.floor((remaining % 60000) / 1000);
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s`;
+        }
+        return `${seconds}s`;
+      }
+
+      function renderSession(data) {
+        session = data;
+        tokenEl.textContent = data.token;
+        secretEl.textContent = data.secret;
+        payloadEl.textContent = data.qr_payload;
+        qrEl.innerHTML = data.qr_svg;
+        expiresEl.textContent = formatExpiry(data.expires_at);
+        setStatus("Waiting for mobile confirmation.");
+      }
+
+      async function createSession() {
+        if (!invoke) {
+          setStatus("Tauri bridge unavailable.", true);
+          return;
+        }
+        setStatus("Generating pairing token...");
+        try {
+          const data = await invoke("create_pairing_session");
+          renderSession(data);
+        } catch (error) {
+          setStatus("Failed to generate pairing token.", true);
+          console.error(error);
+        }
+      }
+
+      copyBtn.addEventListener("click", async () => {
+        if (!session) return;
+        try {
+          await navigator.clipboard.writeText(session.qr_payload);
+          setStatus("QR payload copied to clipboard.");
+        } catch (error) {
+          setStatus("Clipboard unavailable.", true);
+          console.error(error);
+        }
+      });
+
+      generateBtn.addEventListener("click", createSession);
+
+      setInterval(() => {
+        if (session) {
+          expiresEl.textContent = formatExpiry(session.expires_at);
+          if (session.expires_at * 1000 <= Date.now()) {
+            setStatus("Token expired. Generate a new token.", true);
+          }
+        }
+      }, 1000);
+
+      createSession();
+    </script>
   </body>
 </html>
