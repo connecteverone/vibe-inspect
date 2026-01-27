@@ -545,3 +545,41 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered: Matrix4 translate/scale APIs are deprecated; translateByDouble/scaleByDouble avoids analyzer failures.
   - Useful context: Browser verification captured the recovery state when no agent tunnel is connected.
 ---
+## [2026-01-28 07:31] - US-011: Export and import local data
+Thread: 
+Run: 20260128-012433-59985 (iteration 10)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-10.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-10.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 4090a63 feat(storage): add export/import bundles
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+  - Command: cd mobile && flutter build web -> PASS
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260128-012433-59985-iter-9.log
+  - .ralph/runs/run-20260128-012433-59985-iter-9.md
+  - .ralph/runs/run-20260128-012433-59985-iter-10.log
+  - mobile/lib/main.dart
+  - mobile/lib/storage/local_storage.dart
+  - .ralph/progress.md
+- What was implemented
+  Added export/import bundle support with a versioned JSON schema, connection
+  storage in the local database, and UI actions that surface validation feedback
+  during import.
+- **Learnings for future iterations:**
+  - Patterns discovered: Bundle parsing with FormatException keeps error
+    messages user-friendly.
+  - Gotchas encountered: Flutter web uses a semantics scrolling container when
+    the body scroll height is fixed.
+  - Useful context: dev-browser scrolls the flt-semantic-node-4 container to
+    reach lower cards in the web build.
+---
