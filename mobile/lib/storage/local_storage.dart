@@ -256,5 +256,5 @@ class TimelineEvent {
 String createStorageId() {
   final timestamp = DateTime.now().microsecondsSinceEpoch;
   final random = Random();
-  return '$timestamp-${random.nextInt(1 << 32)}';
+  return '$timestamp-${random.nextInt(0x7fffffff)}';
 }

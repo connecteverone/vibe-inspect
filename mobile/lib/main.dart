@@ -1,12 +1,20 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile/storage/local_storage.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const VibeInspectApp(storageInitializer: LocalStorageInitializer()));
+  GoogleFonts.config.allowRuntimeFetching = !kIsWeb;
+  if (kIsWeb) {
+    RendererBinding.instance.ensureSemantics();
+  }
+  final storageInitializer =
+      kIsWeb ? const MemoryStorageInitializer() : const LocalStorageInitializer();
+  runApp(VibeInspectApp(storageInitializer: storageInitializer));
 }
 
 class VibeInspectApp extends StatelessWidget {
@@ -356,6 +364,101 @@ class _PairingScreenState extends State<PairingScreen> {
     }
   }
 
+  Future<void> _handleTimelineEventTap(TimelineEvent event) async {
+    final eventType = event.type.toLowerCase();
+    if (eventType == 'api') {
+      final apiContext = ApiEventContext.fromPayload(event.payload);
+      if (apiContext == null) {
+        _openContextError(
+          title: 'Context unavailable',
+          message:
+              'This API event is missing request or response details needed to restore the explorer.',
+          event: event,
+        );
+        return;
+      }
+      _pushContextScreen(
+        ApiExplorerScreen(
+          event: event,
+          context: apiContext,
+        ),
+      );
+      return;
+    }
+
+    if (eventType == 'terminal') {
+      var session = _findSessionById(_toolSessions, event.sessionId);
+      if (session == null) {
+        try {
+          final sessions = await widget.storage.fetchToolSessions();
+          session = _findSessionById(sessions, event.sessionId);
+        } catch (_) {
+          session = null;
+        }
+      }
+      if (!mounted) {
+        return;
+      }
+      if (session == null) {
+        _openContextError(
+          title: 'Session missing',
+          message:
+              'The referenced terminal session could not be found in local history.',
+          event: event,
+        );
+        return;
+      }
+      _pushContextScreen(
+        TerminalSessionScreen(
+          event: event,
+          session: session,
+        ),
+      );
+      return;
+    }
+
+    _openContextError(
+      title: 'Context unavailable',
+      message: 'This event type does not yet support context restore.',
+      event: event,
+    );
+  }
+
+  ToolSession? _findSessionById(
+    List<ToolSession> sessions,
+    String sessionId,
+  ) {
+    for (final session in sessions) {
+      if (session.id == sessionId) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  void _pushContextScreen(Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => screen),
+    );
+  }
+
+  void _openContextError({
+    required String title,
+    required String message,
+    required TimelineEvent event,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    _pushContextScreen(
+      ContextMissingScreen(
+        title: title,
+        message: message,
+        event: event,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -455,6 +558,7 @@ class _PairingScreenState extends State<PairingScreen> {
                       isLoading: _isHistoryLoading,
                       errorMessage: _historyError,
                       events: _timelineEvents,
+                      onEventTap: _handleTimelineEventTap,
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -809,11 +913,13 @@ class _TimelineHistory extends StatelessWidget {
     required this.isLoading,
     required this.errorMessage,
     required this.events,
+    required this.onEventTap,
   });
 
   final bool isLoading;
   final String? errorMessage;
   final List<TimelineEvent> events;
+  final ValueChanged<TimelineEvent> onEventTap;
 
   @override
   Widget build(BuildContext context) {
@@ -847,7 +953,10 @@ class _TimelineHistory extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final event in visibleEvents) ...[
-          _TimelineEventRow(event: event),
+          _TimelineEventRow(
+            event: event,
+            onTap: () => onEventTap(event),
+          ),
           if (event != visibleEvents.last) const SizedBox(height: 12),
         ],
       ],
@@ -906,55 +1015,110 @@ class _ToolHistory extends StatelessWidget {
   }
 }
 
+class _EventVisuals {
+  const _EventVisuals({
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+}
+
+_EventVisuals _eventVisuals(String type) {
+  switch (type.toLowerCase()) {
+    case 'api':
+      return const _EventVisuals(
+        icon: Icons.http,
+        backgroundColor: Color(0xFFDBEAFE),
+        foregroundColor: Color(0xFF1D4ED8),
+      );
+    case 'terminal':
+      return const _EventVisuals(
+        icon: Icons.terminal,
+        backgroundColor: Color(0xFFDCFCE7),
+        foregroundColor: Color(0xFF166534),
+      );
+    case 'pairing':
+      return const _EventVisuals(
+        icon: Icons.link,
+        backgroundColor: Color(0xFFFFEDD5),
+        foregroundColor: Color(0xFF9A3412),
+      );
+    default:
+      return const _EventVisuals(
+        icon: Icons.timeline,
+        backgroundColor: Color(0xFFE2E8F0),
+        foregroundColor: Color(0xFF475569),
+      );
+  }
+}
+
 class _TimelineEventRow extends StatelessWidget {
-  const _TimelineEventRow({required this.event});
+  const _TimelineEventRow({required this.event, required this.onTap});
 
   final TimelineEvent event;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+    final visuals = _eventVisuals(event.type);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: Key('timelineEvent-${event.id}'),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            radius: 16,
-            backgroundColor: Color(0xFFE2E8F0),
-            child: Icon(
-              Icons.timeline,
-              size: 18,
-              color: Color(0xFF475569),
-            ),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.title,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF0F172A),
-                  ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: visuals.backgroundColor,
+                child: Icon(
+                  visuals.icon,
+                  size: 18,
+                  color: visuals.foregroundColor,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${event.type.toUpperCase()} • ${_formatTimestamp(event.createdAt)}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF64748B),
-                  ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.title,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${event.type.toUpperCase()} • ${_formatTimestamp(event.createdAt)}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                color: Color(0xFF94A3B8),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1011,6 +1175,688 @@ class _ToolSessionRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _TimelineDetailScaffold extends StatelessWidget {
+  const _TimelineDetailScaffold({
+    required this.title,
+    required this.body,
+  });
+
+  final String title;
+  final Widget body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      body: Stack(
+        children: [
+          const _PairingBackground(),
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(child: body),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ContextSectionCard extends StatelessWidget {
+  const _ContextSectionCard({
+    required this.title,
+    required this.child,
+    this.subtitle,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(12),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF0F172A),
+                ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF64748B),
+                  ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _KeyValueRow extends StatelessWidget {
+  const _KeyValueRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF64748B),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF0F172A),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CodeBlock extends StatelessWidget {
+  const _CodeBlock({required this.content});
+
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: SelectableText(
+        content,
+        style: GoogleFonts.spaceMono(
+          fontSize: 12,
+          color: const Color(0xFF0F172A),
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoPill extends StatelessWidget {
+  const _InfoPill({
+    required this.label,
+    required this.backgroundColor,
+    required this.textColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
+  }
+}
+
+class ApiRequestDetails {
+  const ApiRequestDetails({
+    required this.method,
+    required this.url,
+    required this.headers,
+    this.body,
+  });
+
+  final String method;
+  final String url;
+  final Map<String, String> headers;
+  final String? body;
+
+  factory ApiRequestDetails.fromPayload(Map<String, dynamic> payload) {
+    final methodValue =
+        payload['method'] ?? payload['http_method'] ?? payload['httpMethod'];
+    final urlValue = payload['url'] ?? payload['endpoint'] ?? payload['path'];
+    return ApiRequestDetails(
+      method: methodValue?.toString().toUpperCase() ?? 'UNKNOWN',
+      url: urlValue?.toString() ?? 'Unknown URL',
+      headers: _parseHeaders(payload['headers']),
+      body: _stringifyBody(payload['body'] ?? payload['data']),
+    );
+  }
+}
+
+class ApiResponseDetails {
+  const ApiResponseDetails({
+    required this.status,
+    required this.headers,
+    this.body,
+    this.latencyMs,
+  });
+
+  final int? status;
+  final int? latencyMs;
+  final Map<String, String> headers;
+  final String? body;
+
+  factory ApiResponseDetails.fromPayload(Map<String, dynamic> payload) {
+    final statusValue =
+        payload['status'] ?? payload['status_code'] ?? payload['statusCode'];
+    final latencyValue =
+        payload['latency_ms'] ?? payload['latencyMs'] ?? payload['latency'];
+    return ApiResponseDetails(
+      status: statusValue is num ? statusValue.toInt() : int.tryParse(
+        statusValue?.toString() ?? '',
+      ),
+      latencyMs: latencyValue is num ? latencyValue.toInt() : int.tryParse(
+        latencyValue?.toString() ?? '',
+      ),
+      headers: _parseHeaders(payload['headers']),
+      body: _stringifyBody(payload['body'] ?? payload['data']),
+    );
+  }
+}
+
+class ApiEventContext {
+  const ApiEventContext({required this.request, required this.response});
+
+  final ApiRequestDetails request;
+  final ApiResponseDetails response;
+
+  static ApiEventContext? fromPayload(Map<String, dynamic> payload) {
+    final rawRequest = payload['request'] ?? payload['api_request'];
+    final rawResponse = payload['response'] ?? payload['api_response'];
+    if (rawRequest is! Map || rawResponse is! Map) {
+      return null;
+    }
+    return ApiEventContext(
+      request: ApiRequestDetails.fromPayload(
+        Map<String, dynamic>.from(rawRequest),
+      ),
+      response: ApiResponseDetails.fromPayload(
+        Map<String, dynamic>.from(rawResponse),
+      ),
+    );
+  }
+}
+
+class ApiExplorerScreen extends StatelessWidget {
+  const ApiExplorerScreen({
+    super.key,
+    required this.event,
+    required this.context,
+  });
+
+  final TimelineEvent event;
+  final ApiEventContext context;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final responseStatus = this.context.response.status;
+    final statusLabel =
+        responseStatus == null ? 'Unknown' : responseStatus.toString();
+    final statusColor = _statusPillColor(responseStatus);
+
+    return _TimelineDetailScaffold(
+      title: 'API Explorer',
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              event.title,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Recorded ${_formatTimestamp(event.createdAt)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Request',
+              subtitle: 'Method, URL, headers, and payload',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _InfoPill(
+                        label: this.context.request.method,
+                        backgroundColor: const Color(0xFFE0F2FE),
+                        textColor: const Color(0xFF0369A1),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          this.context.request.url,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _HeadersBlock(headers: this.context.request.headers),
+                  if (this.context.request.body != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Body',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _CodeBlock(content: this.context.request.body!),
+                  ] else
+                    _EmptyHint(text: 'No request body recorded.'),
+                ],
+              ),
+            ),
+            _ContextSectionCard(
+              title: 'Response',
+              subtitle: 'Status, latency, headers, and body',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _InfoPill(
+                        label: 'Status $statusLabel',
+                        backgroundColor: statusColor.background,
+                        textColor: statusColor.foreground,
+                      ),
+                      if (this.context.response.latencyMs != null) ...[
+                        const SizedBox(width: 12),
+                        _InfoPill(
+                          label: '${this.context.response.latencyMs} ms',
+                          backgroundColor: const Color(0xFFEDE9FE),
+                          textColor: const Color(0xFF6D28D9),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _HeadersBlock(headers: this.context.response.headers),
+                  if (this.context.response.body != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Body',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _CodeBlock(content: this.context.response.body!),
+                  ] else
+                    _EmptyHint(text: 'No response body recorded.'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TerminalSessionScreen extends StatelessWidget {
+  const TerminalSessionScreen({
+    super.key,
+    required this.event,
+    required this.session,
+  });
+
+  final TimelineEvent event;
+  final ToolSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final command = event.payload['command']?.toString();
+    final outputPreview =
+        event.payload['output_preview'] ?? event.payload['output'];
+    final outputText = _stringifyBody(outputPreview);
+
+    return _TimelineDetailScaffold(
+      title: 'Terminal Session',
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              session.label,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Last updated ${_formatTimestamp(event.createdAt)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Session details',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _KeyValueRow(
+                    label: 'Status',
+                    value: session.status.toUpperCase(),
+                  ),
+                  _KeyValueRow(
+                    label: 'Created',
+                    value: _formatTimestamp(session.createdAt),
+                  ),
+                ],
+              ),
+            ),
+            if (command != null && command.trim().isNotEmpty)
+              _ContextSectionCard(
+                title: 'Last command',
+                child: _CodeBlock(content: command),
+              ),
+            if (outputText != null && outputText.trim().isNotEmpty)
+              _ContextSectionCard(
+                title: 'Output preview',
+                child: _CodeBlock(content: outputText),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ContextMissingScreen extends StatelessWidget {
+  const ContextMissingScreen({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.event,
+  });
+
+  final String title;
+  final String message;
+  final TimelineEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _TimelineDetailScaffold(
+      title: title,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEE2E2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFFCA5A5)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: Color(0xFFB91C1C),
+                    size: 28,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Context unavailable',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF7F1D1D),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          message,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF7F1D1D),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Event details',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _KeyValueRow(
+                    label: 'Type',
+                    value: event.type.toUpperCase(),
+                  ),
+                  _KeyValueRow(label: 'Title', value: event.title),
+                  _KeyValueRow(
+                    label: 'Timestamp',
+                    value: _formatTimestamp(event.createdAt),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeadersBlock extends StatelessWidget {
+  const _HeadersBlock({required this.headers});
+
+  final Map<String, String> headers;
+
+  @override
+  Widget build(BuildContext context) {
+    if (headers.isEmpty) {
+      return const _EmptyHint(text: 'No headers recorded.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: headers.entries
+          .map(
+            (entry) => _KeyValueRow(
+              label: entry.key,
+              value: entry.value,
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  const _EmptyHint({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF94A3B8),
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+}
+
+class _StatusPillColor {
+  const _StatusPillColor(this.background, this.foreground);
+
+  final Color background;
+  final Color foreground;
+}
+
+_StatusPillColor _statusPillColor(int? status) {
+  if (status == null) {
+    return const _StatusPillColor(
+      Color(0xFFE2E8F0),
+      Color(0xFF475569),
+    );
+  }
+  if (status >= 200 && status < 300) {
+    return const _StatusPillColor(
+      Color(0xFFDCFCE7),
+      Color(0xFF166534),
+    );
+  }
+  if (status >= 400) {
+    return const _StatusPillColor(
+      Color(0xFFFEE2E2),
+      Color(0xFFB91C1C),
+    );
+  }
+  return const _StatusPillColor(
+    Color(0xFFFEF3C7),
+    Color(0xFF92400E),
+  );
+}
+
+Map<String, String> _parseHeaders(dynamic raw) {
+  final headers = <String, String>{};
+  if (raw is Map) {
+    raw.forEach((key, value) {
+      if (key != null) {
+        headers[key.toString()] = value?.toString() ?? '';
+      }
+    });
+  } else if (raw is List) {
+    for (final entry in raw) {
+      if (entry is Map) {
+        final key = entry['name'] ?? entry['key'];
+        if (key != null) {
+          headers[key.toString()] = entry['value']?.toString() ?? '';
+        }
+      }
+    }
+  }
+  return headers;
+}
+
+String? _stringifyBody(dynamic raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (raw is String) {
+    final trimmed = raw.trim();
+    return trimmed.isEmpty ? null : raw;
+  }
+  try {
+    return const JsonEncoder.withIndent('  ').convert(raw);
+  } catch (_) {
+    return raw.toString();
   }
 }
 
