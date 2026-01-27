@@ -366,3 +366,45 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered: Flutter web inputs need explicit `fill` in automation.
   - Useful context: `flutter build web` + `http.server` for browser checks.
 ---
+## [2026-01-28 04:02] - US-007: Command Bar intent parsing and routing
+Thread: 
+Run: 20260128-012433-59985 (iteration 5)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-5.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-5.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: cd572e6 feat(command-bar): add intent parsing and routing
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+  - Command: cd mobile && flutter build web -> PASS
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .ralph/.tmp/prompt-20260128-012433-59985-5.md
+  - .ralph/.tmp/story-20260128-012433-59985-5.json
+  - .ralph/.tmp/story-20260128-012433-59985-5.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260128-012433-59985-iter-4.md
+  - .ralph/runs/run-20260128-012433-59985-iter-5.log
+  - mobile/lib/main.dart
+- What was implemented
+  - Added the command bar input with examples, validation, and feedback to
+    capture natural language or structured commands.
+  - Parsed commands into API, terminal, AI, and VNC intents with an
+    ambiguity picker and stored them as timeline events.
+  - Routed each intent to its tool screen with API request prefill and
+    placeholder response handling while the agent runs.
+- **Learnings for future iterations:**
+  - Patterns discovered: pair command intents with tool sessions for
+    consistent timeline restoration.
+  - Gotchas encountered: Flutter web automation works best with
+    `locator.type()` to avoid dropped characters.
+  - Useful context: `flutter build web` plus dev-browser coverage verifies
+    command bar routing end-to-end.
+---
