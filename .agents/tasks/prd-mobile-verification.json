@@ -231,7 +231,7 @@
     {
       "id": "US-001",
       "title": "Scaffold Flutter mobile app and Rust/Tauri desktop agent",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a developer, I want a clean project scaffold for both clients so local development is possible.",
       "acceptanceCriteria": [
@@ -242,13 +242,13 @@
         "Negative case: missing required dependency fails `flutter analyze` with a clear error"
       ],
       "startedAt": "2026-01-27T15:00:40.862515+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T15:00:40.862615+00:00"
+      "completedAt": "2026-01-27T15:21:58.594955+00:00",
+      "updatedAt": "2026-01-27T15:21:58.594857+00:00"
     },
     {
       "id": "US-002",
       "title": "Desktop agent command channel and protocol",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001"
       ],
@@ -258,7 +258,10 @@
         "Expose a local command handler in the agent for API, terminal, and VNC actions",
         "Example: mobile sends a ping command and receives a structured pong response",
         "Negative case: unknown command returns a standardized error payload"
-      ]
+      ],
+      "startedAt": "2026-01-27T15:22:00.693504+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T15:22:00.693627+00:00"
     },
     {
       "id": "US-003",

@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 12,
+  "remaining": 11,
+  "quality_gates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "id": "US-002",
+  "title": "Desktop agent command channel and protocol"
+}
