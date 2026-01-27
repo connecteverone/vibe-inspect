@@ -187,6 +187,9 @@ class _PairingScreenState extends State<PairingScreen> {
   String? _scanError;
   String? _secretError;
   final TextEditingController _secretController = TextEditingController();
+  final TextEditingController _commandController = TextEditingController();
+  String? _commandError;
+  String? _commandFeedback;
   List<TimelineEvent> _timelineEvents = [];
   List<ToolSession> _toolSessions = [];
   bool _isHistoryLoading = true;
@@ -201,6 +204,7 @@ class _PairingScreenState extends State<PairingScreen> {
   @override
   void dispose() {
     _secretController.dispose();
+    _commandController.dispose();
     super.dispose();
   }
 
@@ -337,6 +341,221 @@ class _PairingScreenState extends State<PairingScreen> {
     }
   }
 
+  Future<void> _handleCommandSubmit() async {
+    final command = _commandController.text.trim();
+    if (command.isEmpty) {
+      setState(() {
+        _commandError = 'Enter a command to run.';
+      });
+      return;
+    }
+
+    setState(() {
+      _commandError = null;
+      _commandFeedback = null;
+    });
+
+    final intent = await _resolveCommandIntent(command);
+    if (!mounted || intent == null) {
+      return;
+    }
+
+    await _routeCommandIntent(intent);
+  }
+
+  Future<CommandIntent?> _resolveCommandIntent(String command) async {
+    final parsed = _uniqueIntents(_parseCommandIntents(command));
+    if (parsed.length == 1) {
+      return parsed.first;
+    }
+
+    final options = parsed.isEmpty ? _buildFallbackIntents(command) : parsed;
+    options.sort((a, b) => a.tool.index.compareTo(b.tool.index));
+    if (!mounted) {
+      return null;
+    }
+
+    final dialogTitle = parsed.isEmpty
+        ? 'Choose a tool'
+        : 'Multiple tools matched';
+    final dialogSubtitle = parsed.isEmpty
+        ? 'We could not determine the right tool for:'
+        : 'Select the tool you meant for:';
+
+    return showDialog<CommandIntent>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(dialogTitle),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(dialogSubtitle),
+                  const SizedBox(height: 8),
+                  Text(
+                    '"$command"',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF475569),
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  for (final option in options) ...[
+                    _CommandChoiceTile(
+                      intent: option,
+                      onTap: () => Navigator.of(context).pop(option),
+                    ),
+                    if (option != options.last) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _routeCommandIntent(CommandIntent intent) async {
+    final now = DateTime.now();
+    final session = ToolSession(
+      id: createStorageId(),
+      type: intent.tool.storageKey,
+      label: intent.sessionLabel,
+      status: 'queued',
+      createdAt: now,
+    );
+    final event = TimelineEvent(
+      id: createStorageId(),
+      sessionId: session.id,
+      type: intent.tool.storageKey,
+      title: intent.title,
+      payload: intent.payload,
+      createdAt: now,
+    );
+
+    try {
+      await widget.storage.insertToolSession(session);
+      await widget.storage.insertTimelineEvent(event);
+      await _loadHistory();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to save command: ${error.toString()}',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _commandFeedback = 'Opened ${intent.tool.label}';
+      _commandController.clear();
+    });
+
+    _openIntentScreen(intent, event, session);
+  }
+
+  void _openIntentScreen(
+    CommandIntent intent,
+    TimelineEvent event,
+    ToolSession session,
+  ) {
+    switch (intent.tool) {
+      case CommandTool.api:
+        final apiContext = ApiEventContext.fromPayload(event.payload);
+        if (apiContext == null) {
+          _openContextError(
+            title: 'Context unavailable',
+            message:
+                'This API request is missing details needed to restore the explorer.',
+            event: event,
+          );
+          return;
+        }
+        _pushContextScreen(
+          ApiExplorerScreen(
+            event: event,
+            context: apiContext,
+          ),
+        );
+        return;
+      case CommandTool.terminal:
+        _pushContextScreen(
+          TerminalSessionScreen(
+            event: event,
+            session: session,
+          ),
+        );
+        return;
+      case CommandTool.ai:
+        _pushContextScreen(
+          AiInsightScreen(
+            event: event,
+            session: session,
+          ),
+        );
+        return;
+      case CommandTool.vnc:
+        _pushContextScreen(
+          VncSessionScreen(
+            event: event,
+            session: session,
+          ),
+        );
+        return;
+    }
+  }
+
+  Future<ToolSession?> _resolveSession(String sessionId) async {
+    var session = _findSessionById(_toolSessions, sessionId);
+    if (session != null) {
+      return session;
+    }
+    try {
+      final sessions = await widget.storage.fetchToolSessions();
+      session = _findSessionById(sessions, sessionId);
+    } catch (_) {
+      session = null;
+    }
+    return session;
+  }
+
+  void _applyCommandExample(String example) {
+    setState(() {
+      _commandController.text = example;
+      _commandController.selection =
+          TextSelection.collapsed(offset: example.length);
+      _commandError = null;
+      _commandFeedback = null;
+    });
+  }
+
+  void _clearCommandInput() {
+    setState(() {
+      _commandController.clear();
+      _commandError = null;
+      _commandFeedback = null;
+    });
+  }
+
   Future<void> _loadHistory() async {
     setState(() {
       _isHistoryLoading = true;
@@ -387,15 +606,7 @@ class _PairingScreenState extends State<PairingScreen> {
     }
 
     if (eventType == 'terminal') {
-      var session = _findSessionById(_toolSessions, event.sessionId);
-      if (session == null) {
-        try {
-          final sessions = await widget.storage.fetchToolSessions();
-          session = _findSessionById(sessions, event.sessionId);
-        } catch (_) {
-          session = null;
-        }
-      }
+      final session = await _resolveSession(event.sessionId);
       if (!mounted) {
         return;
       }
@@ -410,6 +621,51 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       _pushContextScreen(
         TerminalSessionScreen(
+          event: event,
+          session: session,
+        ),
+      );
+      return;
+    }
+
+    if (eventType == 'ai') {
+      final session = await _resolveSession(event.sessionId);
+      if (!mounted) {
+        return;
+      }
+      if (session == null) {
+        _openContextError(
+          title: 'Session missing',
+          message: 'The referenced AI session could not be found in history.',
+          event: event,
+        );
+        return;
+      }
+      _pushContextScreen(
+        AiInsightScreen(
+          event: event,
+          session: session,
+        ),
+      );
+      return;
+    }
+
+    if (eventType == 'vnc') {
+      final session = await _resolveSession(event.sessionId);
+      if (!mounted) {
+        return;
+      }
+      if (session == null) {
+        _openContextError(
+          title: 'Session missing',
+          message:
+              'The referenced VNC session could not be found in local history.',
+          event: event,
+        );
+        return;
+      }
+      _pushContextScreen(
+        VncSessionScreen(
           event: event,
           session: session,
         ),
@@ -548,6 +804,97 @@ class _PairingScreenState extends State<PairingScreen> {
                   _ConnectionStatusCard(
                     connection: _connection,
                     hasToken: _payload != null,
+                  ),
+                  const SizedBox(height: 20),
+                  PairingStepCard(
+                    title: 'Command bar',
+                    description:
+                        'Describe the action and the app will route it to API, terminal, AI, or VNC.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          key: const Key('commandBarField'),
+                          controller: _commandController,
+                          decoration: InputDecoration(
+                            labelText: 'Command',
+                            hintText:
+                                'POST /login, run npm test, analyze deploy error',
+                            errorText: _commandError,
+                          ),
+                          onChanged: (_) {
+                            if (_commandError != null ||
+                                _commandFeedback != null) {
+                              setState(() {
+                                _commandError = null;
+                                _commandFeedback = null;
+                              });
+                            }
+                          },
+                          onSubmitted: (_) => _handleCommandSubmit(),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            FilledButton.icon(
+                              key: const Key('commandRunButton'),
+                              onPressed: _handleCommandSubmit,
+                              icon: const Icon(Icons.bolt),
+                              label: const Text('Run command'),
+                            ),
+                            const SizedBox(width: 12),
+                            OutlinedButton(
+                              key: const Key('commandClearButton'),
+                              onPressed: _clearCommandInput,
+                              child: const Text('Clear'),
+                            ),
+                          ],
+                        ),
+                        if (_commandFeedback != null) ...[
+                          const SizedBox(height: 12),
+                          _InlineStatus(
+                            message: _commandFeedback!,
+                            isError: false,
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Text(
+                          'Examples',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: const Color(0xFF64748B),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _CommandExampleChip(
+                              label: 'POST /login',
+                              onTap: () => _applyCommandExample('POST /login'),
+                            ),
+                            _CommandExampleChip(
+                              label: 'run npm test',
+                              onTap: () =>
+                                  _applyCommandExample('run npm test'),
+                            ),
+                            _CommandExampleChip(
+                              label: 'ai summarize last error',
+                              onTap: () => _applyCommandExample(
+                                'ai summarize last error',
+                              ),
+                            ),
+                            _CommandExampleChip(
+                              label: 'vnc open login screen',
+                              onTap: () => _applyCommandExample(
+                                'vnc open login screen',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 20),
                   PairingStepCard(
@@ -722,6 +1069,26 @@ class PairingStepCard extends StatelessWidget {
           const SizedBox(height: 16),
           child,
         ],
+      ),
+    );
+  }
+}
+
+class _CommandExampleChip extends StatelessWidget {
+  const _CommandExampleChip({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      label: Text(label),
+      onPressed: onTap,
+      backgroundColor: const Color(0xFFF1F5F9),
+      side: const BorderSide(color: Color(0xFFE2E8F0)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(999),
       ),
     );
   }
@@ -1015,6 +1382,72 @@ class _ToolHistory extends StatelessWidget {
   }
 }
 
+class _CommandChoiceTile extends StatelessWidget {
+  const _CommandChoiceTile({
+    required this.intent,
+    required this.onTap,
+  });
+
+  final CommandIntent intent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final visuals = _eventVisuals(intent.tool.storageKey);
+    return Material(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: visuals.backgroundColor,
+                child: Icon(
+                  visuals.icon,
+                  size: 18,
+                  color: visuals.foregroundColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      intent.tool.label,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      intent.preview,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                color: Color(0xFF94A3B8),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _EventVisuals {
   const _EventVisuals({
     required this.icon,
@@ -1040,6 +1473,18 @@ _EventVisuals _eventVisuals(String type) {
         icon: Icons.terminal,
         backgroundColor: Color(0xFFDCFCE7),
         foregroundColor: Color(0xFF166534),
+      );
+    case 'ai':
+      return const _EventVisuals(
+        icon: Icons.auto_awesome,
+        backgroundColor: Color(0xFFEDE9FE),
+        foregroundColor: Color(0xFF6D28D9),
+      );
+    case 'vnc':
+      return const _EventVisuals(
+        icon: Icons.desktop_windows,
+        backgroundColor: Color(0xFFE0F2FE),
+        foregroundColor: Color(0xFF0E7490),
       );
     case 'pairing':
       return const _EventVisuals(
@@ -1474,6 +1919,11 @@ class ApiExplorerScreen extends StatelessWidget {
     final statusLabel =
         responseStatus == null ? 'Unknown' : responseStatus.toString();
     final statusColor = _statusPillColor(responseStatus);
+    final responseBody = this.context.response.body;
+    final hasResponse = responseStatus != null ||
+        this.context.response.latencyMs != null ||
+        this.context.response.headers.isNotEmpty ||
+        (responseBody != null && responseBody.trim().isNotEmpty);
 
     return _TimelineDetailScaffold(
       title: 'API Explorer',
@@ -1542,44 +1992,48 @@ class ApiExplorerScreen extends StatelessWidget {
             ),
             _ContextSectionCard(
               title: 'Response',
-              subtitle: 'Status, latency, headers, and body',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      _InfoPill(
-                        label: 'Status $statusLabel',
-                        backgroundColor: statusColor.background,
-                        textColor: statusColor.foreground,
-                      ),
-                      if (this.context.response.latencyMs != null) ...[
-                        const SizedBox(width: 12),
-                        _InfoPill(
-                          label: '${this.context.response.latencyMs} ms',
-                          backgroundColor: const Color(0xFFEDE9FE),
-                          textColor: const Color(0xFF6D28D9),
+              subtitle: hasResponse
+                  ? 'Status, latency, headers, and body'
+                  : 'Awaiting response from desktop agent',
+              child: hasResponse
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _InfoPill(
+                              label: 'Status $statusLabel',
+                              backgroundColor: statusColor.background,
+                              textColor: statusColor.foreground,
+                            ),
+                            if (this.context.response.latencyMs != null) ...[
+                              const SizedBox(width: 12),
+                              _InfoPill(
+                                label: '${this.context.response.latencyMs} ms',
+                                backgroundColor: const Color(0xFFEDE9FE),
+                                textColor: const Color(0xFF6D28D9),
+                              ),
+                            ],
+                          ],
                         ),
+                        const SizedBox(height: 16),
+                        _HeadersBlock(headers: this.context.response.headers),
+                        if (responseBody != null) ...[
+                          const SizedBox(height: 16),
+                          Text(
+                            'Body',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF64748B),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _CodeBlock(content: responseBody),
+                        ] else
+                          _EmptyHint(text: 'No response body recorded.'),
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _HeadersBlock(headers: this.context.response.headers),
-                  if (this.context.response.body != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      'Body',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF64748B),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _CodeBlock(content: this.context.response.body!),
-                  ] else
-                    _EmptyHint(text: 'No response body recorded.'),
-                ],
-              ),
+                    )
+                  : const _EmptyHint(text: 'No response recorded yet.'),
             ),
           ],
         ),
@@ -1654,6 +2108,174 @@ class TerminalSessionScreen extends StatelessWidget {
                 title: 'Output preview',
                 child: _CodeBlock(content: outputText),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AiInsightScreen extends StatelessWidget {
+  const AiInsightScreen({
+    super.key,
+    required this.event,
+    required this.session,
+  });
+
+  final TimelineEvent event;
+  final ToolSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final prompt = event.payload['prompt']?.toString();
+    final summary = event.payload['summary']?.toString();
+    final status = event.payload['status']?.toString() ?? session.status;
+    final promptText = prompt ?? '';
+    final summaryText = summary ?? '';
+    final hasSummary = summaryText.trim().isNotEmpty;
+    final hasPrompt = promptText.trim().isNotEmpty;
+
+    return _TimelineDetailScaffold(
+      title: 'AI Insight',
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              session.label,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Requested ${_formatTimestamp(event.createdAt)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Session status',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _KeyValueRow(
+                    label: 'Status',
+                    value: status.toUpperCase(),
+                  ),
+                  _KeyValueRow(
+                    label: 'Created',
+                    value: _formatTimestamp(session.createdAt),
+                  ),
+                ],
+              ),
+            ),
+            _ContextSectionCard(
+              title: 'Prompt',
+              child: hasPrompt
+                  ? _CodeBlock(content: promptText)
+                  : const _EmptyHint(text: 'No prompt recorded.'),
+            ),
+            _ContextSectionCard(
+              title: 'AI output',
+              subtitle: hasSummary
+                  ? 'Summary and structured output'
+                  : 'Awaiting AI response',
+              child: hasSummary
+                  ? _CodeBlock(content: summaryText)
+                  : const _EmptyHint(text: 'No AI output recorded yet.'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class VncSessionScreen extends StatelessWidget {
+  const VncSessionScreen({
+    super.key,
+    required this.event,
+    required this.session,
+  });
+
+  final TimelineEvent event;
+  final ToolSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final target = event.payload['target']?.toString();
+    final status = event.payload['status']?.toString() ?? session.status;
+    final resolution = event.payload['resolution']?.toString();
+    final targetText = target ?? '';
+    final resolutionText = resolution ?? '';
+    final hasTarget = targetText.trim().isNotEmpty;
+    final hasResolution = resolutionText.trim().isNotEmpty;
+
+    return _TimelineDetailScaffold(
+      title: 'VNC Viewer',
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              session.label,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Requested ${_formatTimestamp(event.createdAt)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Session status',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _KeyValueRow(
+                    label: 'Status',
+                    value: status.toUpperCase(),
+                  ),
+                  _KeyValueRow(
+                    label: 'Created',
+                    value: _formatTimestamp(session.createdAt),
+                  ),
+                ],
+              ),
+            ),
+            _ContextSectionCard(
+              title: 'Target',
+              child: hasTarget
+                  ? Text(
+                      targetText,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF0F172A),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )
+                  : const _EmptyHint(text: 'No target recorded.'),
+            ),
+            _ContextSectionCard(
+              title: 'Connection details',
+              child: hasResolution
+                  ? _KeyValueRow(
+                      label: 'Resolution',
+                      value: resolutionText,
+                    )
+                  : const _EmptyHint(text: 'No resolution recorded yet.'),
+            ),
           ],
         ),
       ),
@@ -1858,6 +2480,389 @@ String? _stringifyBody(dynamic raw) {
   } catch (_) {
     return raw.toString();
   }
+}
+
+enum CommandTool { api, terminal, ai, vnc }
+
+extension CommandToolMetadata on CommandTool {
+  String get label {
+    switch (this) {
+      case CommandTool.api:
+        return 'API Explorer';
+      case CommandTool.terminal:
+        return 'Terminal';
+      case CommandTool.ai:
+        return 'AI Insight';
+      case CommandTool.vnc:
+        return 'VNC Viewer';
+    }
+  }
+
+  String get storageKey {
+    switch (this) {
+      case CommandTool.api:
+        return 'api';
+      case CommandTool.terminal:
+        return 'terminal';
+      case CommandTool.ai:
+        return 'ai';
+      case CommandTool.vnc:
+        return 'vnc';
+    }
+  }
+}
+
+class CommandIntent {
+  const CommandIntent({
+    required this.tool,
+    required this.title,
+    required this.sessionLabel,
+    required this.payload,
+    required this.preview,
+  });
+
+  final CommandTool tool;
+  final String title;
+  final String sessionLabel;
+  final Map<String, dynamic> payload;
+  final String preview;
+}
+
+List<CommandIntent> _parseCommandIntents(String command) {
+  final trimmed = command.trim();
+  if (trimmed.isEmpty) {
+    return [];
+  }
+
+  final explicit = _parseExplicitIntent(trimmed);
+  if (explicit != null) {
+    return [explicit];
+  }
+
+  if (_leadingHttpMethod(trimmed) != null) {
+    return [_buildApiIntent(trimmed)];
+  }
+
+  final intents = <CommandIntent>[];
+  if (_looksLikeApi(trimmed)) {
+    intents.add(_buildApiIntent(trimmed));
+  }
+  if (_looksLikeTerminal(trimmed)) {
+    intents.add(_buildTerminalIntent(trimmed));
+  }
+  if (_looksLikeAi(trimmed)) {
+    intents.add(_buildAiIntent(trimmed));
+  }
+  if (_looksLikeVnc(trimmed)) {
+    intents.add(_buildVncIntent(trimmed));
+  }
+  return intents;
+}
+
+CommandIntent? _parseExplicitIntent(String command) {
+  final match = RegExp(
+    r'^(api|terminal|term|shell|bash|cmd|ai|vnc)\b[:\s-]*',
+    caseSensitive: false,
+  ).firstMatch(command);
+  if (match == null) {
+    return null;
+  }
+
+  final prefix = match.group(1)?.toLowerCase() ?? '';
+  final remainder = command.substring(match.end).trim();
+  switch (prefix) {
+    case 'api':
+      return _buildApiIntent(command, parseSource: remainder);
+    case 'terminal':
+    case 'term':
+    case 'shell':
+    case 'bash':
+    case 'cmd':
+      return _buildTerminalIntent(command, parseSource: remainder);
+    case 'ai':
+      return _buildAiIntent(command, parseSource: remainder);
+    case 'vnc':
+      return _buildVncIntent(command, parseSource: remainder);
+  }
+  return null;
+}
+
+List<CommandIntent> _uniqueIntents(List<CommandIntent> intents) {
+  final byTool = <CommandTool, CommandIntent>{};
+  for (final intent in intents) {
+    byTool[intent.tool] = intent;
+  }
+  return byTool.values.toList();
+}
+
+List<CommandIntent> _buildFallbackIntents(String command) {
+  return CommandTool.values
+      .map((tool) => _buildIntentForTool(tool, command))
+      .toList();
+}
+
+CommandIntent _buildIntentForTool(CommandTool tool, String command) {
+  switch (tool) {
+    case CommandTool.api:
+      return _buildApiIntent(command);
+    case CommandTool.terminal:
+      return _buildTerminalIntent(command);
+    case CommandTool.ai:
+      return _buildAiIntent(command);
+    case CommandTool.vnc:
+      return _buildVncIntent(command);
+  }
+}
+
+CommandIntent _buildApiIntent(String command, {String? parseSource}) {
+  final source =
+      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
+  final method = _extractHttpMethod(source);
+  final url = _extractUrl(_stripLeadingHttpMethod(source)) ?? '/unknown';
+  final displayUrl = url.isEmpty ? '/unknown' : url;
+  final title = 'API $method ${_truncate(displayUrl, 28)}';
+  final sessionLabel = 'API $method ${_truncate(displayUrl, 28)}';
+  final preview = '$method $displayUrl';
+  final payload = <String, dynamic>{
+    'command': command,
+    'request': {
+      'method': method,
+      'url': displayUrl,
+      'headers': <String, String>{},
+      'body': null,
+    },
+    'response': {
+      'status': null,
+      'headers': <String, String>{},
+      'body': null,
+      'latency_ms': null,
+    },
+  };
+  return CommandIntent(
+    tool: CommandTool.api,
+    title: title,
+    sessionLabel: sessionLabel,
+    payload: payload,
+    preview: preview,
+  );
+}
+
+CommandIntent _buildTerminalIntent(String command, {String? parseSource}) {
+  final source =
+      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
+  final extracted = _extractTerminalCommand(source);
+  final resolved = extracted.isEmpty ? command.trim() : extracted;
+  final normalized = resolved.isEmpty ? 'Pending command' : resolved;
+  final preview = _truncate(normalized, 48);
+  final label = _truncate(normalized, 28);
+  return CommandIntent(
+    tool: CommandTool.terminal,
+    title: 'Terminal: $label',
+    sessionLabel: 'Terminal: $label',
+    payload: {
+      'command': normalized,
+      'status': 'queued',
+    },
+    preview: preview,
+  );
+}
+
+CommandIntent _buildAiIntent(String command, {String? parseSource}) {
+  final source =
+      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
+  final extracted = _extractAiPrompt(source);
+  final resolved = extracted.isEmpty ? command.trim() : extracted;
+  final normalized = resolved.isEmpty ? 'Pending prompt' : resolved;
+  final preview = _truncate(normalized, 48);
+  final label = _truncate(normalized, 28);
+  return CommandIntent(
+    tool: CommandTool.ai,
+    title: 'AI: $label',
+    sessionLabel: 'AI: $label',
+    payload: {
+      'prompt': normalized,
+      'status': 'queued',
+    },
+    preview: preview,
+  );
+}
+
+CommandIntent _buildVncIntent(String command, {String? parseSource}) {
+  final source =
+      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
+  final extracted = _extractVncTarget(source);
+  final resolved = extracted.isEmpty ? 'Remote desktop' : extracted;
+  final preview = _truncate(resolved, 48);
+  final label = _truncate(resolved, 28);
+  return CommandIntent(
+    tool: CommandTool.vnc,
+    title: 'VNC: $label',
+    sessionLabel: 'VNC: $label',
+    payload: {
+      'target': resolved,
+      'status': 'queued',
+    },
+    preview: preview,
+  );
+}
+
+String? _leadingHttpMethod(String input) {
+  final match = RegExp(
+    r'^(get|post|put|patch|delete|head|options)\b',
+    caseSensitive: false,
+  ).firstMatch(input.trim());
+  return match?.group(1)?.toUpperCase();
+}
+
+String _extractHttpMethod(String input) {
+  final match = RegExp(
+    r'\b(get|post|put|patch|delete|head|options)\b',
+    caseSensitive: false,
+  ).firstMatch(input);
+  if (match != null) {
+    return match.group(1)!.toUpperCase();
+  }
+  final lowered = input.toLowerCase();
+  if (_containsKeyword(lowered, ['create', 'submit', 'post'])) {
+    return 'POST';
+  }
+  if (_containsKeyword(lowered, ['update', 'put'])) {
+    return 'PUT';
+  }
+  if (_containsKeyword(lowered, ['patch'])) {
+    return 'PATCH';
+  }
+  if (_containsKeyword(lowered, ['delete', 'remove'])) {
+    return 'DELETE';
+  }
+  return 'GET';
+}
+
+String _stripLeadingHttpMethod(String input) {
+  final trimmed = input.trim();
+  final match = RegExp(
+    r'^(get|post|put|patch|delete|head|options)\b',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (match == null) {
+    return trimmed;
+  }
+  return trimmed.substring(match.end).trim();
+}
+
+String? _extractUrl(String input) {
+  final urlMatch = RegExp(
+    r'(https?:\/\/[^\s]+)',
+    caseSensitive: false,
+  ).firstMatch(input);
+  if (urlMatch != null) {
+    return urlMatch.group(1);
+  }
+  final pathMatch = RegExp(r'(\/[^\s]+)').firstMatch(input);
+  return pathMatch?.group(1);
+}
+
+String _extractTerminalCommand(String input) {
+  final trimmed = input.trim();
+  final match = RegExp(
+    r'^(terminal|term|shell|bash|cmd|run|execute)\b[:\s-]*',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  var result = trimmed;
+  if (match != null) {
+    result = trimmed.substring(match.end).trim();
+  }
+  if (result.startsWith(r'$')) {
+    result = result.substring(1).trimLeft();
+  }
+  if (result.startsWith('>')) {
+    result = result.substring(1).trimLeft();
+  }
+  return result;
+}
+
+String _extractAiPrompt(String input) {
+  final trimmed = input.trim();
+  final match = RegExp(
+    r'^(ai|ask|explain|summarize|analyze|insight)\b[:\s-]*',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (match == null) {
+    return trimmed;
+  }
+  final result = trimmed.substring(match.end).trim();
+  return result.isEmpty ? trimmed : result;
+}
+
+String _extractVncTarget(String input) {
+  final trimmed = input.trim();
+  final match = RegExp(
+    r'^(vnc|screen|desktop|viewer)\b[:\s-]*',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (match == null) {
+    return trimmed;
+  }
+  final result = trimmed.substring(match.end).trim();
+  return result.isEmpty ? trimmed : result;
+}
+
+bool _looksLikeApi(String input) {
+  return _containsKeyword(input, ['api', 'endpoint', 'request', 'http']) ||
+      _containsKeyword(
+        input,
+        ['get', 'post', 'put', 'patch', 'delete'],
+      ) ||
+      _extractUrl(input) != null;
+}
+
+bool _looksLikeTerminal(String input) {
+  final trimmed = input.trimLeft();
+  if (trimmed.startsWith(r'$') || trimmed.startsWith('>')) {
+    return true;
+  }
+  return _containsKeyword(
+    input,
+    ['terminal', 'shell', 'bash', 'run', 'execute', 'cli'],
+  );
+}
+
+bool _looksLikeAi(String input) {
+  return _containsKeyword(
+    input,
+    ['ai', 'summarize', 'explain', 'analyze', 'insight', 'diagnose'],
+  );
+}
+
+bool _looksLikeVnc(String input) {
+  return _containsKeyword(
+    input,
+    ['vnc', 'screen', 'desktop', 'viewer', 'remote', 'ui'],
+  );
+}
+
+bool _containsKeyword(String input, List<String> keywords) {
+  for (final keyword in keywords) {
+    final expression = RegExp(
+      '\\b${RegExp.escape(keyword)}\\b',
+      caseSensitive: false,
+    );
+    if (expression.hasMatch(input)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+String _truncate(String input, int maxLength) {
+  final trimmed = input.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  if (maxLength <= 3) {
+    return trimmed.substring(0, maxLength);
+  }
+  return '${trimmed.substring(0, maxLength - 3)}...';
 }
 
 class PairingPayload {
