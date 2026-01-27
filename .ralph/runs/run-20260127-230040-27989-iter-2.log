@@ -5914,4 +5914,922 @@ thinking
 
 I'm staging the current changes and committing them using the commit skill as planned.
 exec
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
+
+file update:
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 82a839680d93cceb73eb0f6674e58e6238448f11..59badd6103bdf55485bdf7cefb60bf0d4460c0d2
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -5,6 +5,8 @@
+ 
+ [dependencies]
+ tauri = "2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
+ 
+ [build-dependencies]
+ tauri-build = "2"
+diff --git a/desktop/src/command.rs b/desktop/src/command.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..79054ed814b08726d6ca6031b7df6cbac696a797
+--- /dev/null
++++ b/desktop/src/command.rs
+@@ -0,0 +1,174 @@
++use serde::de::DeserializeOwned;
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandRequest {
++    pub request_id: String,
++    pub command: String,
++    pub payload: Option<Value>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandResponse {
++    pub request_id: String,
++    pub status: AgentCommandStatus,
++    pub payload: Option<Value>,
++    pub error: Option<AgentCommandError>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentCommandStatus {
++    Ok,
++    Error,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandError {
++    pub code: String,
++    pub message: String,
++    pub details: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ApiCommandPayload {
++    method: String,
++    url: String,
++    headers: Option<HashMap<String, String>>,
++    body: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct TerminalCommandPayload {
++    command: String,
++    args: Option<Vec<String>>,
++    working_dir: Option<String>,
++    env: Option<HashMap<String, String>>,
++}
++
++#[derive(Debug, Deserialize)]
++struct VncCommandPayload {
++    action: String,
++    session_id: Option<String>,
++    width: Option<u32>,
++    height: Option<u32>,
++}
++
++#[tauri::command]
++pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandResponse {
++    match request.command.as_str() {
++        "ping" => ok_response(&request.request_id, json!({ "message": "pong" })),
++        "api" => match parse_payload::<ApiCommandPayload>(
++            request.payload,
++            "api",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "api",
++                    "status": "accepted",
++                    "request": {
++                        "method": payload.method,
++                        "url": payload.url,
++                        "headers": payload.headers,
++                        "body": payload.body,
++                    }
++                }),
++            ),
++            Err(response) => response,
++        },
++        "terminal" => match parse_payload::<TerminalCommandPayload>(
++            request.payload,
++            "terminal",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "terminal",
++                    "status": "accepted",
++                    "command": payload.command,
++                    "args": payload.args,
++                    "working_dir": payload.working_dir,
++                    "env": payload.env,
++                }),
++            ),
++            Err(response) => response,
++        },
++        "vnc" => match parse_payload::<VncCommandPayload>(request.payload, "vnc", &request.request_id)
++        {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "vnc",
++                    "status": "accepted",
++                    "action": payload.action,
++                    "session_id": payload.session_id,
++                    "width": payload.width,
++                    "height": payload.height,
++                }),
++            ),
++            Err(response) => response,
++        },
++        _ => error_response(
++            &request.request_id,
++            "unknown_command",
++            format!("Unsupported command: {}", request.command),
++            Some(json!({ "command": request.command })),
++        ),
++    }
++}
++
++fn ok_response(request_id: &str, payload: Value) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Ok,
++        payload: Some(payload),
++        error: None,
++    }
++}
++
++fn error_response(
++    request_id: &str,
++    code: &str,
++    message: String,
++    details: Option<Value>,
++) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Error,
++        payload: None,
++        error: Some(AgentCommandError {
++            code: code.to_string(),
++            message,
++            details,
++        }),
++    }
++}
++
++fn parse_payload<T: DeserializeOwned>(
++    payload: Option<Value>,
++    command_name: &str,
++    request_id: &str,
++) -> Result<T, AgentCommandResponse> {
++    let payload = payload.ok_or_else(|| {
++        error_response(
++            request_id,
++            "missing_payload",
++            format!("Missing payload for {} command.", command_name),
++            Some(json!({ "command": command_name })),
++        )
++    })?;
++
++    serde_json::from_value(payload).map_err(|error| {
++        error_response(
++            request_id,
++            "invalid_payload",
++            format!("Invalid payload for {} command.", command_name),
++            Some(json!({ "command": command_name, "error": error.to_string() })),
++        )
++    })
++}
+diff --git a/desktop/src/main.rs b/desktop/src/main.rs
+index d387909276ac0405d00a47c695c65062f2724614..fcb34437ff54631aeceeee9decda26657dd9cb44
+--- a/desktop/src/main.rs
++++ b/desktop/src/main.rs
+@@ -1,7 +1,10 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
++mod command;
++
+ fn main() {
+     tauri::Builder::default()
++        .invoke_handler(tauri::generate_handler![command::handle_agent_command])
+         .run(tauri::generate_context!())
+         .expect("error while running tauri application");
+ }
+
+
+thinking
+**Committing progress logs**
+
+I'm finalizing the commit message as "chore(progress): update US-002 logs" to clearly reflect the update while adhering to the subject length limit and scope conventions.
+exec
+/bin/zsh -lc 'git commit -m "chore(progress): update US-002 logs"' in /Users/mac/codes/vibe-inspect succeeded in 48ms:
+[main eec1bdd] chore(progress): update US-002 logs
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 2079 insertions(+)
+file update:
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 82a839680d93cceb73eb0f6674e58e6238448f11..59badd6103bdf55485bdf7cefb60bf0d4460c0d2
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -5,6 +5,8 @@
+ 
+ [dependencies]
+ tauri = "2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
+ 
+ [build-dependencies]
+ tauri-build = "2"
+diff --git a/desktop/src/command.rs b/desktop/src/command.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..79054ed814b08726d6ca6031b7df6cbac696a797
+--- /dev/null
++++ b/desktop/src/command.rs
+@@ -0,0 +1,174 @@
++use serde::de::DeserializeOwned;
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandRequest {
++    pub request_id: String,
++    pub command: String,
++    pub payload: Option<Value>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandResponse {
++    pub request_id: String,
++    pub status: AgentCommandStatus,
++    pub payload: Option<Value>,
++    pub error: Option<AgentCommandError>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentCommandStatus {
++    Ok,
++    Error,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandError {
++    pub code: String,
++    pub message: String,
++    pub details: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ApiCommandPayload {
++    method: String,
++    url: String,
++    headers: Option<HashMap<String, String>>,
++    body: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct TerminalCommandPayload {
++    command: String,
++    args: Option<Vec<String>>,
++    working_dir: Option<String>,
++    env: Option<HashMap<String, String>>,
++}
++
++#[derive(Debug, Deserialize)]
++struct VncCommandPayload {
++    action: String,
++    session_id: Option<String>,
++    width: Option<u32>,
++    height: Option<u32>,
++}
++
++#[tauri::command]
++pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandResponse {
++    match request.command.as_str() {
++        "ping" => ok_response(&request.request_id, json!({ "message": "pong" })),
++        "api" => match parse_payload::<ApiCommandPayload>(
++            request.payload,
++            "api",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "api",
++                    "status": "accepted",
++                    "request": {
++                        "method": payload.method,
++                        "url": payload.url,
++                        "headers": payload.headers,
++                        "body": payload.body,
++                    }
++                }),
++            ),
++            Err(response) => response,
++        },
++        "terminal" => match parse_payload::<TerminalCommandPayload>(
++            request.payload,
++            "terminal",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "terminal",
++                    "status": "accepted",
++                    "command": payload.command,
++                    "args": payload.args,
++                    "working_dir": payload.working_dir,
++                    "env": payload.env,
++                }),
++            ),
++            Err(response) => response,
++        },
++        "vnc" => match parse_payload::<VncCommandPayload>(request.payload, "vnc", &request.request_id)
++        {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "vnc",
++                    "status": "accepted",
++                    "action": payload.action,
++                    "session_id": payload.session_id,
++                    "width": payload.width,
++                    "height": payload.height,
++                }),
++            ),
++            Err(response) => response,
++        },
++        _ => error_response(
++            &request.request_id,
++            "unknown_command",
++            format!("Unsupported command: {}", request.command),
++            Some(json!({ "command": request.command })),
++        ),
++    }
++}
++
++fn ok_response(request_id: &str, payload: Value) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Ok,
++        payload: Some(payload),
++        error: None,
++    }
++}
++
++fn error_response(
++    request_id: &str,
++    code: &str,
++    message: String,
++    details: Option<Value>,
++) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Error,
++        payload: None,
++        error: Some(AgentCommandError {
++            code: code.to_string(),
++            message,
++            details,
++        }),
++    }
++}
++
++fn parse_payload<T: DeserializeOwned>(
++    payload: Option<Value>,
++    command_name: &str,
++    request_id: &str,
++) -> Result<T, AgentCommandResponse> {
++    let payload = payload.ok_or_else(|| {
++        error_response(
++            request_id,
++            "missing_payload",
++            format!("Missing payload for {} command.", command_name),
++            Some(json!({ "command": command_name })),
++        )
++    })?;
++
++    serde_json::from_value(payload).map_err(|error| {
++        error_response(
++            request_id,
++            "invalid_payload",
++            format!("Invalid payload for {} command.", command_name),
++            Some(json!({ "command": command_name, "error": error.to_string() })),
++        )
++    })
++}
+diff --git a/desktop/src/main.rs b/desktop/src/main.rs
+index d387909276ac0405d00a47c695c65062f2724614..fcb34437ff54631aeceeee9decda26657dd9cb44
+--- a/desktop/src/main.rs
++++ b/desktop/src/main.rs
+@@ -1,7 +1,10 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
++mod command;
++
+ fn main() {
+     tauri::Builder::default()
++        .invoke_handler(tauri::generate_handler![command::handle_agent_command])
+         .run(tauri::generate_context!())
+         .expect("error while running tauri application");
+ }
+
+
+thinking
+**Verifying clean git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 43ms:
+ M .ralph/runs/run-20260127-230040-27989-iter-2.log
+file update:
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 82a839680d93cceb73eb0f6674e58e6238448f11..59badd6103bdf55485bdf7cefb60bf0d4460c0d2
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -5,6 +5,8 @@
+ 
+ [dependencies]
+ tauri = "2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
+ 
+ [build-dependencies]
+ tauri-build = "2"
+diff --git a/desktop/src/command.rs b/desktop/src/command.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..79054ed814b08726d6ca6031b7df6cbac696a797
+--- /dev/null
++++ b/desktop/src/command.rs
+@@ -0,0 +1,174 @@
++use serde::de::DeserializeOwned;
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandRequest {
++    pub request_id: String,
++    pub command: String,
++    pub payload: Option<Value>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandResponse {
++    pub request_id: String,
++    pub status: AgentCommandStatus,
++    pub payload: Option<Value>,
++    pub error: Option<AgentCommandError>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentCommandStatus {
++    Ok,
++    Error,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandError {
++    pub code: String,
++    pub message: String,
++    pub details: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ApiCommandPayload {
++    method: String,
++    url: String,
++    headers: Option<HashMap<String, String>>,
++    body: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct TerminalCommandPayload {
++    command: String,
++    args: Option<Vec<String>>,
++    working_dir: Option<String>,
++    env: Option<HashMap<String, String>>,
++}
++
++#[derive(Debug, Deserialize)]
++struct VncCommandPayload {
++    action: String,
++    session_id: Option<String>,
++    width: Option<u32>,
++    height: Option<u32>,
++}
++
++#[tauri::command]
++pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandResponse {
++    match request.command.as_str() {
++        "ping" => ok_response(&request.request_id, json!({ "message": "pong" })),
++        "api" => match parse_payload::<ApiCommandPayload>(
++            request.payload,
++            "api",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "api",
++                    "status": "accepted",
++                    "request": {
++                        "method": payload.method,
++                        "url": payload.url,
++                        "headers": payload.headers,
++                        "body": payload.body,
++                    }
++                }),
++            ),
++            Err(response) => response,
++        },
++        "terminal" => match parse_payload::<TerminalCommandPayload>(
++            request.payload,
++            "terminal",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "terminal",
++                    "status": "accepted",
++                    "command": payload.command,
++                    "args": payload.args,
++                    "working_dir": payload.working_dir,
++                    "env": payload.env,
++                }),
++            ),
++            Err(response) => response,
++        },
++        "vnc" => match parse_payload::<VncCommandPayload>(request.payload, "vnc", &request.request_id)
++        {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "vnc",
++                    "status": "accepted",
++                    "action": payload.action,
++                    "session_id": payload.session_id,
++                    "width": payload.width,
++                    "height": payload.height,
++                }),
++            ),
++            Err(response) => response,
++        },
++        _ => error_response(
++            &request.request_id,
++            "unknown_command",
++            format!("Unsupported command: {}", request.command),
++            Some(json!({ "command": request.command })),
++        ),
++    }
++}
++
++fn ok_response(request_id: &str, payload: Value) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Ok,
++        payload: Some(payload),
++        error: None,
++    }
++}
++
++fn error_response(
++    request_id: &str,
++    code: &str,
++    message: String,
++    details: Option<Value>,
++) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Error,
++        payload: None,
++        error: Some(AgentCommandError {
++            code: code.to_string(),
++            message,
++            details,
++        }),
++    }
++}
++
++fn parse_payload<T: DeserializeOwned>(
++    payload: Option<Value>,
++    command_name: &str,
++    request_id: &str,
++) -> Result<T, AgentCommandResponse> {
++    let payload = payload.ok_or_else(|| {
++        error_response(
++            request_id,
++            "missing_payload",
++            format!("Missing payload for {} command.", command_name),
++            Some(json!({ "command": command_name })),
++        )
++    })?;
++
++    serde_json::from_value(payload).map_err(|error| {
++        error_response(
++            request_id,
++            "invalid_payload",
++            format!("Invalid payload for {} command.", command_name),
++            Some(json!({ "command": command_name, "error": error.to_string() })),
++        )
++    })
++}
+diff --git a/desktop/src/main.rs b/desktop/src/main.rs
+index d387909276ac0405d00a47c695c65062f2724614..fcb34437ff54631aeceeee9decda26657dd9cb44
+--- a/desktop/src/main.rs
++++ b/desktop/src/main.rs
+@@ -1,7 +1,10 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
++mod command;
++
+ fn main() {
+     tauri::Builder::default()
++        .invoke_handler(tauri::generate_handler![command::handle_agent_command])
+         .run(tauri::generate_context!())
+         .expect("error while running tauri application");
+ }
+
+
+thinking
+**Investigating post-commit file modification**
+
+The run log file remains modified after commit, possibly due to logging or process updates triggered during or after the commit. I'll check its diff to identify what changes occur post-commit and clarify the cause.
+exec
+/bin/zsh -lc 'git diff /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-2.log' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+diff --git a/.ralph/runs/run-20260127-230040-27989-iter-2.log b/.ralph/runs/run-20260127-230040-27989-iter-2.log
+index c28cac3..c58aa38 100644
+--- a/.ralph/runs/run-20260127-230040-27989-iter-2.log
++++ b/.ralph/runs/run-20260127-230040-27989-iter-2.log
+@@ -5914,4 +5914,670 @@ thinking
+ 
+ I'm staging the current changes and committing them using the commit skill as planned.
+ exec
+-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+\ No newline at end of file
++/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
++
++file update:
++diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
++index 82a839680d93cceb73eb0f6674e58e6238448f11..59badd6103bdf55485bdf7cefb60bf0d4460c0d2
++--- a/desktop/Cargo.toml
+++++ b/desktop/Cargo.toml
++@@ -5,6 +5,8 @@
++ 
++ [dependencies]
+file update:
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 82a839680d93cceb73eb0f6674e58e6238448f11..59badd6103bdf55485bdf7cefb60bf0d4460c0d2
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -5,6 +5,8 @@
+ 
+ [dependencies]
+ tauri = "2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
+ 
+ [build-dependencies]
+ tauri-build = "2"
+diff --git a/desktop/src/command.rs b/desktop/src/command.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..79054ed814b08726d6ca6031b7df6cbac696a797
+--- /dev/null
++++ b/desktop/src/command.rs
+@@ -0,0 +1,174 @@
++use serde::de::DeserializeOwned;
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandRequest {
++    pub request_id: String,
++    pub command: String,
++    pub payload: Option<Value>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandResponse {
++    pub request_id: String,
++    pub status: AgentCommandStatus,
++    pub payload: Option<Value>,
++    pub error: Option<AgentCommandError>,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++#[serde(rename_all = "snake_case")]
++pub enum AgentCommandStatus {
++    Ok,
++    Error,
++}
++
++#[derive(Debug, Serialize, Deserialize, Clone)]
++pub struct AgentCommandError {
++    pub code: String,
++    pub message: String,
++    pub details: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct ApiCommandPayload {
++    method: String,
++    url: String,
++    headers: Option<HashMap<String, String>>,
++    body: Option<Value>,
++}
++
++#[derive(Debug, Deserialize)]
++struct TerminalCommandPayload {
++    command: String,
++    args: Option<Vec<String>>,
++    working_dir: Option<String>,
++    env: Option<HashMap<String, String>>,
++}
++
++#[derive(Debug, Deserialize)]
++struct VncCommandPayload {
++    action: String,
++    session_id: Option<String>,
++    width: Option<u32>,
++    height: Option<u32>,
++}
++
++#[tauri::command]
++pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandResponse {
++    match request.command.as_str() {
++        "ping" => ok_response(&request.request_id, json!({ "message": "pong" })),
++        "api" => match parse_payload::<ApiCommandPayload>(
++            request.payload,
++            "api",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "api",
++                    "status": "accepted",
++                    "request": {
++                        "method": payload.method,
++                        "url": payload.url,
++                        "headers": payload.headers,
++                        "body": payload.body,
++                    }
++                }),
++            ),
++            Err(response) => response,
++        },
++        "terminal" => match parse_payload::<TerminalCommandPayload>(
++            request.payload,
++            "terminal",
++            &request.request_id,
++        ) {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "terminal",
++                    "status": "accepted",
++                    "command": payload.command,
++                    "args": payload.args,
++                    "working_dir": payload.working_dir,
++                    "env": payload.env,
++                }),
++            ),
++            Err(response) => response,
++        },
++        "vnc" => match parse_payload::<VncCommandPayload>(request.payload, "vnc", &request.request_id)
++        {
++            Ok(payload) => ok_response(
++                &request.request_id,
++                json!({
++                    "type": "vnc",
++                    "status": "accepted",
++                    "action": payload.action,
++                    "session_id": payload.session_id,
++                    "width": payload.width,
++                    "height": payload.height,
++                }),
++            ),
++            Err(response) => response,
++        },
++        _ => error_response(
++            &request.request_id,
++            "unknown_command",
++            format!("Unsupported command: {}", request.command),
++            Some(json!({ "command": request.command })),
++        ),
++    }
++}
++
++fn ok_response(request_id: &str, payload: Value) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Ok,
++        payload: Some(payload),
++        error: None,
++    }
++}
++
++fn error_response(
++    request_id: &str,
++    code: &str,
++    message: String,
++    details: Option<Value>,
++) -> AgentCommandResponse {
++    AgentCommandResponse {
++        request_id: request_id.to_string(),
++        status: AgentCommandStatus::Error,
++        payload: None,
++        error: Some(AgentCommandError {
++            code: code.to_string(),
++            message,
++            details,
++        }),
++    }
++}
++
++fn parse_payload<T: DeserializeOwned>(
++    payload: Option<Value>,
++    command_name: &str,
++    request_id: &str,
++) -> Result<T, AgentCommandResponse> {
++    let payload = payload.ok_or_else(|| {
++        error_response(
++            request_id,
++            "missing_payload",
++            format!("Missing payload for {} command.", command_name),
++            Some(json!({ "command": command_name })),
++        )
++    })?;
++
++    serde_json::from_value(payload).map_err(|error| {
++        error_response(
++            request_id,
++            "invalid_payload",
++            format!("Invalid payload for {} command.", command_name),
++            Some(json!({ "command": command_name, "error": error.to_string() })),
++        )
++    })
++}
+diff --git a/desktop/src/main.rs b/desktop/src/main.rs
+index d387909276ac0405d00a47c695c65062f2724614..fcb34437ff54631aeceeee9decda26657dd9cb44
+--- a/desktop/src/main.rs
++++ b/desktop/src/main.rs
+@@ -1,7 +1,10 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
++mod command;
++
+ fn main() {
+     tauri::Builder::default()
++        .invoke_handler(tauri::generate_handler![command::handle_agent_command])
+         .run(tauri::generate_context!())
+         .expect("error while running tauri application");
+ }
+
+
+
+
+
+thinking
+**Planning final commit for updated run log**
+
+The run log updates continuously with outputs from executed commands, causing diffs even after commits; a final commit will be needed after all actions complete to ensure a clean state.
+thinking
+**Analyzing run log update cycle affecting clean status check**
+
+The run log updates after every command, including git status, causing an infinite loop of modifications; to satisfy the clean working tree requirement, the final commit must include all run log changes from commands like git status and git show, then avoid running further commands.
+thinking
+**Identifying unavoidable run log update cycle limits final clean check**
+
+The run log updates after each command—including git status and git show—make it impossible to confirm perfectly clean status after final commit without running extra commands, so the best approach is to include all run log changes in a final commit and then stop running commands to maintain a clean tree.
+thinking
+**Preparing final commit of run log modifications**
+
+Planning to stage and commit run log changes now with a chore-style message, then stop running commands to avoid further log updates; commit1 remains the recorded main commit for progress tracking.
+exec
 /bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
