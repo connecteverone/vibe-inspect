@@ -322,3 +322,47 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered: Widget tests need a memory-backed storage initializer to avoid plugin channel failures.
   - Useful context: Mobile persistence relies on sqflite plus flutter_secure_storage for the local key.
 ---
+## [2026-01-28 03:24] - US-006: Timeline UI with context restore
+Thread: 
+Run: 20260128-012433-59985 (iteration 4)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-4.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-4.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ea8f2ca feat(timeline): add context restore views
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260128-012433-59985-iter-3.log
+  - .ralph/runs/run-20260128-012433-59985-iter-3.md
+  - .ralph/runs/run-20260128-012433-59985-iter-4.log
+  - AGENTS.md
+  - mobile/.metadata
+  - mobile/lib/main.dart
+  - mobile/lib/storage/local_storage.dart
+  - mobile/test/widget_test.dart
+  - mobile/web/favicon.png
+  - mobile/web/index.html
+  - mobile/web/manifest.json
+  - mobile/web/icons/Icon-192.png
+  - mobile/web/icons/Icon-512.png
+  - mobile/web/icons/Icon-maskable-192.png
+  - mobile/web/icons/Icon-maskable-512.png
+- What was implemented
+  - Added tappable timeline rows that route API events to explorer context,
+    terminal events to session details, and missing data to an error screen.
+  - Built API Explorer and Terminal Session detail views plus event visuals and
+    web-safe font handling with stable storage IDs.
+  - Added timeline widget tests and documented web build steps for UI checks.
+- **Learnings for future iterations:**
+  - Patterns discovered: seeding MemoryStorage enables timeline UI tests.
+  - Gotchas encountered: Flutter web inputs need explicit `fill` in automation.
+  - Useful context: `flutter build web` + `http.server` for browser checks.
+---
