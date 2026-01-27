@@ -41,7 +41,7 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989
 - Guardrails reviewed: yes
 - No-commit run: false
 - Commit: 9f6e7e8 feat(agent): add command protocol handler
-- Post-commit status: clean
+- Post-commit status: dirty (.ralph/runs/run-20260128-012433-59985-iter-9.log updated by tooling)
 - Verification:
   - Command: cd mobile && flutter test -> PASS
   - Command: cd mobile && flutter analyze -> PASS
