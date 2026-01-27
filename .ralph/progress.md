@@ -510,3 +510,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Gotchas encountered: Flutter web automation needs keyboard typing for text fields to avoid empty submits.
   - Useful context: Local web verification works with `flutter build web --no-web-resources-cdn` plus a CORS-enabled agent stub.
 ---
+## [2026-01-28 07:03] - US-010: VNC viewer for quick UI verification
+Thread: 019c0199-1302-7b33-b838-5944507a7520
+Run: 20260128-012433-59985 (iteration 9)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-9.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985-iter-9.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 28a3221 feat(vnc): add trackpad viewer controls
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+  - Command: cd mobile && flutter build web -> PASS
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/.tmp/prompt-20260128-012433-59985-9.md
+  - .ralph/.tmp/story-20260128-012433-59985-9.json
+  - .ralph/.tmp/story-20260128-012433-59985-9.md
+  - .ralph/runs/run-20260128-012433-59985-iter-8.log
+  - .ralph/runs/run-20260128-012433-59985-iter-8.md
+  - .ralph/runs/run-20260128-012433-59985-iter-9.log
+  - .ralph/progress.md
+  - mobile/lib/main.dart
+- What was implemented
+  Delivered the VNC viewer experience with trackpad/direct pointer modes, zoom controls that center on the cursor, swipe-down exit affordance, agent command integration, and a recovery card for stream failures.
+- **Learnings for future iterations:**
+  - Patterns discovered: Centering the zoom transform on the pointer keeps short verification tasks focused.
+  - Gotchas encountered: Matrix4 translate/scale APIs are deprecated; translateByDouble/scaleByDouble avoids analyzer failures.
+  - Useful context: Browser verification captured the recovery state when no agent tunnel is connected.
+---
