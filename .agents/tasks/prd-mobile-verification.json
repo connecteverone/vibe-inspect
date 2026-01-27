@@ -266,7 +266,7 @@
     {
       "id": "US-003",
       "title": "Pairing flow with QR token and shared secret",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002"
       ],
@@ -278,13 +278,13 @@
         "Negative case: expired token is rejected with a retry prompt"
       ],
       "startedAt": "2026-01-27T17:24:33.978787+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-27T17:24:33.978878+00:00"
+      "completedAt": "2026-01-27T17:36:10.760874+00:00",
+      "updatedAt": "2026-01-27T17:36:10.760772+00:00"
     },
     {
       "id": "US-004",
       "title": "Cloudflared tunnel integration",
-      "status": "open",
+      "status": "done",
       "dependsOn": [
         "US-003"
       ],
@@ -294,12 +294,15 @@
         "Mobile stores the tunnel URL as part of the connection record",
         "Example: remote connection succeeds when mobile is off the local network",
         "Negative case: tunnel startup failure is shown with a clear remediation message"
-      ]
+      ],
+      "startedAt": "2026-01-27T17:36:12.859411+00:00",
+      "completedAt": "2026-01-27T17:53:51.980227+00:00",
+      "updatedAt": "2026-01-27T17:53:51.980133+00:00"
     },
     {
       "id": "US-005",
       "title": "Local data storage for sessions and events",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001"
       ],
@@ -309,7 +312,10 @@
         "Install storage dependencies with explicit commands (example: `flutter pub add sqflite` and `flutter pub add flutter_secure_storage`)",
         "Example: timeline events persist after app restart",
         "Negative case: storage initialization failure shows a blocking error state"
-      ]
+      ],
+      "startedAt": "2026-01-27T17:53:54.079379+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T17:53:54.079497+00:00"
     },
     {
       "id": "US-006",

@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 12,
+  "remaining": 8,
+  "quality_gates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "id": "US-005",
+  "title": "Local data storage for sessions and events"
+}

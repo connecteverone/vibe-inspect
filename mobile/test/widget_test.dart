@@ -3,10 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/main.dart';
+import 'package:mobile/storage/local_storage.dart';
 
 void main() {
   testWidgets('Pairing connects with valid secret', (tester) async {
-    await tester.pumpWidget(const VibeInspectApp());
+    await tester.pumpWidget(
+      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+    );
+    await tester.pumpAndSettle();
 
     expect(find.text('Pair your desktop agent'), findsOneWidget);
 
@@ -36,10 +40,14 @@ void main() {
 
     expect(find.text('Connected'), findsOneWidget);
     expect(find.text('https://demo.trycloudflare.com'), findsOneWidget);
+    expect(find.text('Paired with desktop agent'), findsOneWidget);
   });
 
   testWidgets('Expired token shows retry prompt', (tester) async {
-    await tester.pumpWidget(const VibeInspectApp());
+    await tester.pumpWidget(
+      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+    );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('scanQrButton')));
     await tester.pumpAndSettle();
@@ -61,7 +69,10 @@ void main() {
   });
 
   testWidgets('Tunnel error message is shown after scan', (tester) async {
-    await tester.pumpWidget(const VibeInspectApp());
+    await tester.pumpWidget(
+      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+    );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('scanQrButton')));
     await tester.pumpAndSettle();
@@ -82,4 +93,22 @@ void main() {
 
     expect(find.textContaining('Cloudflared is not installed'), findsOneWidget);
   });
+
+  testWidgets('Storage initialization failure blocks the UI', (tester) async {
+    await tester.pumpWidget(
+      const VibeInspectApp(storageInitializer: _FailingStorageInitializer()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Storage unavailable'), findsOneWidget);
+  });
+}
+
+class _FailingStorageInitializer extends StorageInitializer {
+  const _FailingStorageInitializer();
+
+  @override
+  Future<StorageRepository> initialize() async {
+    throw Exception('Database init failed');
+  }
 }

@@ -2,13 +2,17 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:mobile/storage/local_storage.dart';
 
 void main() {
-  runApp(const VibeInspectApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const VibeInspectApp(storageInitializer: LocalStorageInitializer()));
 }
 
 class VibeInspectApp extends StatelessWidget {
-  const VibeInspectApp({super.key});
+  const VibeInspectApp({super.key, required this.storageInitializer});
+
+  final StorageInitializer storageInitializer;
 
   @override
   Widget build(BuildContext context) {
@@ -30,13 +34,140 @@ class VibeInspectApp extends StatelessWidget {
         useMaterial3: true,
         textTheme: GoogleFonts.spaceGroteskTextTheme(),
       ),
-      home: const PairingScreen(),
+      home: StorageGate(storageInitializer: storageInitializer),
+    );
+  }
+}
+
+class StorageGate extends StatefulWidget {
+  const StorageGate({super.key, required this.storageInitializer});
+
+  final StorageInitializer storageInitializer;
+
+  @override
+  State<StorageGate> createState() => _StorageGateState();
+}
+
+class _StorageGateState extends State<StorageGate> {
+  late Future<StorageRepository> _storageFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _storageFuture = widget.storageInitializer.initialize();
+  }
+
+  void _retryInitialization() {
+    setState(() {
+      _storageFuture = widget.storageInitializer.initialize();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<StorageRepository>(
+      future: _storageFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const StorageLoadingScreen();
+        }
+        if (snapshot.hasError) {
+          return StorageErrorScreen(
+            error: snapshot.error,
+            onRetry: _retryInitialization,
+          );
+        }
+        final storage = snapshot.data;
+        if (storage == null) {
+          return const StorageErrorScreen(
+            error: 'Storage failed to load.',
+          );
+        }
+        return PairingScreen(storage: storage);
+      },
+    );
+  }
+}
+
+class StorageLoadingScreen extends StatelessWidget {
+  const StorageLoadingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+  }
+}
+
+class StorageErrorScreen extends StatelessWidget {
+  const StorageErrorScreen({super.key, required this.error, this.onRetry});
+
+  final Object? error;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.storage_rounded,
+              size: 56,
+              color: Color(0xFFB91C1C),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Storage unavailable',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF0F172A),
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Local history could not be initialized. Restart the app or retry '
+              'after checking device storage permissions.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF475569),
+                  ),
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                error.toString(),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF991B1B),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ],
+            if (onRetry != null) ...[
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: onRetry,
+                child: const Text('Retry initialization'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
 
 class PairingScreen extends StatefulWidget {
-  const PairingScreen({super.key});
+  const PairingScreen({super.key, required this.storage});
+
+  final StorageRepository storage;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -48,6 +179,16 @@ class _PairingScreenState extends State<PairingScreen> {
   String? _scanError;
   String? _secretError;
   final TextEditingController _secretController = TextEditingController();
+  List<TimelineEvent> _timelineEvents = [];
+  List<ToolSession> _toolSessions = [];
+  bool _isHistoryLoading = true;
+  String? _historyError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
 
   @override
   void dispose() {
@@ -102,7 +243,7 @@ class _PairingScreenState extends State<PairingScreen> {
     });
   }
 
-  void _confirmSecret() {
+  Future<void> _confirmSecret() async {
     final payload = _payload;
     if (payload == null) {
       setState(() {
@@ -135,6 +276,8 @@ class _PairingScreenState extends State<PairingScreen> {
       );
       _secretError = null;
     });
+
+    await _recordPairingEvent(payload);
   }
 
   void _resetPairing() {
@@ -145,6 +288,72 @@ class _PairingScreenState extends State<PairingScreen> {
       _secretError = null;
       _secretController.clear();
     });
+  }
+
+  Future<void> _recordPairingEvent(PairingPayload payload) async {
+    try {
+      final now = DateTime.now();
+      final session = ToolSession(
+        id: createStorageId(),
+        type: 'pairing',
+        label: 'Pairing ${payload.token}',
+        status: 'connected',
+        createdAt: now,
+      );
+      final event = TimelineEvent(
+        id: createStorageId(),
+        sessionId: session.id,
+        type: 'pairing',
+        title: 'Paired with desktop agent',
+        payload: {
+          'token': payload.token,
+          'tunnel_url': payload.tunnelUrl ?? '',
+          'connected_at': now.toIso8601String(),
+        },
+        createdAt: now,
+      );
+      await widget.storage.insertToolSession(session);
+      await widget.storage.insertTimelineEvent(event);
+      await _loadHistory();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to save local history: ${error.toString()}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() {
+      _isHistoryLoading = true;
+      _historyError = null;
+    });
+    try {
+      final events = await widget.storage.fetchTimelineEvents();
+      final sessions = await widget.storage.fetchToolSessions();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _timelineEvents = events;
+        _toolSessions = sessions;
+        _isHistoryLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isHistoryLoading = false;
+        _historyError = 'Unable to load stored history.';
+      });
+    }
   }
 
   @override
@@ -236,6 +445,28 @@ class _PairingScreenState extends State<PairingScreen> {
                   _ConnectionStatusCard(
                     connection: _connection,
                     hasToken: _payload != null,
+                  ),
+                  const SizedBox(height: 20),
+                  PairingStepCard(
+                    title: 'Local timeline',
+                    description:
+                        'Timeline events are stored on-device and survive restarts.',
+                    child: _TimelineHistory(
+                      isLoading: _isHistoryLoading,
+                      errorMessage: _historyError,
+                      events: _timelineEvents,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  PairingStepCard(
+                    title: 'Tool history',
+                    description:
+                        'Recent tool sessions saved locally for quick recall.',
+                    child: _ToolHistory(
+                      isLoading: _isHistoryLoading,
+                      errorMessage: _historyError,
+                      sessions: _toolSessions,
+                    ),
                   ),
                 ],
               ),
@@ -573,6 +804,216 @@ class _ConnectionStatusCard extends StatelessWidget {
   }
 }
 
+class _TimelineHistory extends StatelessWidget {
+  const _TimelineHistory({
+    required this.isLoading,
+    required this.errorMessage,
+    required this.events,
+  });
+
+  final bool isLoading;
+  final String? errorMessage;
+  final List<TimelineEvent> events;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (errorMessage != null) {
+      return _InlineStatus(
+        message: errorMessage!,
+        isError: true,
+      );
+    }
+
+    if (events.isEmpty) {
+      return Text(
+        'No timeline events saved yet.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF64748B),
+            ),
+      );
+    }
+
+    final visibleEvents = events.take(5).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final event in visibleEvents) ...[
+          _TimelineEventRow(event: event),
+          if (event != visibleEvents.last) const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class _ToolHistory extends StatelessWidget {
+  const _ToolHistory({
+    required this.isLoading,
+    required this.errorMessage,
+    required this.sessions,
+  });
+
+  final bool isLoading;
+  final String? errorMessage;
+  final List<ToolSession> sessions;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (errorMessage != null) {
+      return _InlineStatus(
+        message: errorMessage!,
+        isError: true,
+      );
+    }
+
+    if (sessions.isEmpty) {
+      return Text(
+        'No tool sessions stored yet.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF64748B),
+            ),
+      );
+    }
+
+    final visibleSessions = sessions.take(5).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final session in visibleSessions) ...[
+          _ToolSessionRow(session: session),
+          if (session != visibleSessions.last) const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+}
+
+class _TimelineEventRow extends StatelessWidget {
+  const _TimelineEventRow({required this.event});
+
+  final TimelineEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 16,
+            backgroundColor: Color(0xFFE2E8F0),
+            child: Icon(
+              Icons.timeline,
+              size: 18,
+              color: Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.title,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${event.type.toUpperCase()} • ${_formatTimestamp(event.createdAt)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolSessionRow extends StatelessWidget {
+  const _ToolSessionRow({required this.session});
+
+  final ToolSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 16,
+            backgroundColor: Color(0xFFDBEAFE),
+            child: Icon(
+              Icons.work_outline,
+              size: 18,
+              color: Color(0xFF1D4ED8),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${session.status.toUpperCase()} • ${_formatTimestamp(session.createdAt)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class PairingPayload {
   const PairingPayload({
     required this.token,
@@ -664,4 +1105,13 @@ class PairedConnection {
   final DateTime connectedAt;
   final String? tunnelUrl;
   final String? tunnelError;
+}
+
+String _formatTimestamp(DateTime value) {
+  final local = value.toLocal();
+  final month = local.month.toString().padLeft(2, '0');
+  final day = local.day.toString().padLeft(2, '0');
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$month/$day $hour:$minute';
 }
