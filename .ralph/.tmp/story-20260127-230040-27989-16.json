@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 12,
+  "remaining": 10,
+  "quality_gates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "id": "US-003",
+  "title": "Pairing flow with QR token and shared secret"
+}

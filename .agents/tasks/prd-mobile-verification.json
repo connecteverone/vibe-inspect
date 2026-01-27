@@ -277,9 +277,9 @@
         "Example: valid token + correct secret results in a connected state",
         "Negative case: expired token is rejected with a retry prompt"
       ],
-      "startedAt": "2026-01-27T15:34:12.116143+00:00",
+      "startedAt": "2026-01-27T17:24:33.978787+00:00",
       "completedAt": null,
-      "updatedAt": "2026-01-27T15:34:12.116264+00:00"
+      "updatedAt": "2026-01-27T17:24:33.978878+00:00"
     },
     {
       "id": "US-004",
