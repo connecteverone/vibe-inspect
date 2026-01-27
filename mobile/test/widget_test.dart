@@ -19,6 +19,7 @@ void main() {
       'expires_at':
           DateTime.now().add(const Duration(minutes: 2)).millisecondsSinceEpoch ~/
               1000,
+      'tunnel_url': 'https://demo.trycloudflare.com',
     });
 
     await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
@@ -34,6 +35,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Connected'), findsOneWidget);
+    expect(find.text('https://demo.trycloudflare.com'), findsOneWidget);
   });
 
   testWidgets('Expired token shows retry prompt', (tester) async {
@@ -56,5 +58,28 @@ void main() {
 
     expect(find.textContaining('Token expired'), findsOneWidget);
     expect(find.byKey(const Key('retryButton')), findsOneWidget);
+  });
+
+  testWidgets('Tunnel error message is shown after scan', (tester) async {
+    await tester.pumpWidget(const VibeInspectApp());
+
+    await tester.tap(find.byKey(const Key('scanQrButton')));
+    await tester.pumpAndSettle();
+
+    final payload = jsonEncode({
+      'token': 'NEW456',
+      'secret': 'SECRET',
+      'expires_at':
+          DateTime.now().add(const Duration(minutes: 2)).millisecondsSinceEpoch ~/
+              1000,
+      'tunnel_error':
+          'Cloudflared is not installed. Install it and retry pairing.',
+    });
+
+    await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
+    await tester.tap(find.byKey(const Key('applyQrButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Cloudflared is not installed'), findsOneWidget);
   });
 }

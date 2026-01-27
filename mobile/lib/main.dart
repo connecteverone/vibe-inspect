@@ -130,6 +130,8 @@ class _PairingScreenState extends State<PairingScreen> {
       _connection = PairedConnection(
         token: payload.token,
         connectedAt: DateTime.now(),
+        tunnelUrl: payload.tunnelUrl,
+        tunnelError: payload.tunnelError,
       );
       _secretError = null;
     });
@@ -183,6 +185,13 @@ class _PairingScreenState extends State<PairingScreen> {
                           const SizedBox(height: 12),
                           _InlineStatus(
                             message: _scanError!,
+                            isError: true,
+                          ),
+                        ],
+                        if (_payload?.tunnelError != null) ...[
+                          const SizedBox(height: 12),
+                          _InlineStatus(
+                            message: _payload!.tunnelError!,
                             isError: true,
                           ),
                         ],
@@ -480,6 +489,8 @@ class _ConnectionStatusCard extends StatelessWidget {
         : hasToken
             ? 'Enter the shared secret to finish pairing.'
             : 'Scan a QR token to begin pairing.';
+    final tunnelUrl = connection?.tunnelUrl;
+    final tunnelError = connection?.tunnelError;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -490,39 +501,72 @@ class _ConnectionStatusCard extends StatelessWidget {
           color: isConnected ? const Color(0xFF86EFAC) : const Color(0xFFBFDBFE),
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 24,
-            backgroundColor:
-                isConnected ? const Color(0xFF22C55E) : const Color(0xFF60A5FA),
-            child: Icon(
-              isConnected ? Icons.check : Icons.link,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF0F172A),
-                  ),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: isConnected
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFF60A5FA),
+                child: Icon(
+                  isConnected ? Icons.check : Icons.link,
+                  color: Colors.white,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF475569),
-                  ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF475569),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          if (isConnected && tunnelUrl != null && tunnelUrl.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Tunnel URL',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tunnelUrl,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF1E293B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (isConnected &&
+              (tunnelUrl == null || tunnelUrl.isEmpty) &&
+              tunnelError != null) ...[
+            const SizedBox(height: 12),
+            _InlineStatus(
+              message: tunnelError,
+              isError: true,
+            ),
+          ],
         ],
       ),
     );
@@ -534,11 +578,15 @@ class PairingPayload {
     required this.token,
     required this.secret,
     required this.expiresAt,
+    this.tunnelUrl,
+    this.tunnelError,
   });
 
   final String token;
   final String secret;
   final DateTime expiresAt;
+  final String? tunnelUrl;
+  final String? tunnelError;
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 
@@ -585,6 +633,10 @@ class PairingPayload {
       return null;
     }
 
+    final tunnelUrl = data['tunnel_url']?.toString() ??
+        data['tunnelUrl']?.toString();
+    final tunnelError = data['tunnel_error']?.toString() ??
+        data['tunnelError']?.toString();
     final expiresAt = int.tryParse(expiresValue.toString());
     if (expiresAt == null) {
       return null;
@@ -594,6 +646,8 @@ class PairingPayload {
       token: token,
       secret: secret,
       expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000),
+      tunnelUrl: tunnelUrl,
+      tunnelError: tunnelError,
     );
   }
 }
@@ -602,8 +656,12 @@ class PairedConnection {
   const PairedConnection({
     required this.token,
     required this.connectedAt,
+    this.tunnelUrl,
+    this.tunnelError,
   });
 
   final String token;
   final DateTime connectedAt;
+  final String? tunnelUrl;
+  final String? tunnelError;
 }
