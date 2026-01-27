@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 12,
+  "remaining": 12,
+  "quality_gates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "id": "US-001",
+  "title": "Scaffold Flutter mobile app and Rust/Tauri desktop agent"
+}

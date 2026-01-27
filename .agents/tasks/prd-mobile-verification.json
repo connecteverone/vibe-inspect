@@ -1,0 +1,417 @@
+{
+  "version": 1,
+  "project": "Mobile Verification-Driven IDE (Client-to-Client)",
+  "overview": "Build a Flutter mobile client and a Rust+Tauri desktop agent that connect directly (no server in v1) to run API calls, terminal commands, and VNC-based UI checks from a timeline-centric workflow.",
+  "goals": [
+    "Enable mobile-first verification workflows via timeline, command bar, API explorer, terminal, and VNC viewer",
+    "Provide a secure pairing and direct connection between mobile and desktop agent using cloudflared",
+    "Keep all session data local with optional export/import"
+  ],
+  "nonGoals": [
+    "No central server, accounts, or multi-device cloud sync in v1",
+    "No full desktop-grade code editing on mobile",
+    "No offline execution of remote actions"
+  ],
+  "successMetrics": [
+    "Pairing completes in under 2 minutes for first-time users",
+    "Users complete at least one verification action per session",
+    "VNC usage remains under 20% of total actions to indicate verification-first design"
+  ],
+  "openQuestions": [
+    "Cloudflared tunnel limits and latency impact on VNC streaming",
+    "Fallback behavior when cloudflared is unavailable or blocked",
+    "Security posture for shared secrets at rest on mobile and desktop"
+  ],
+  "stack": {
+    "framework": "Flutter (mobile) + Rust/Tauri (desktop agent)",
+    "hosting": "Client-to-client via cloudflared tunnel",
+    "database": "Local (SQLite + secure storage)",
+    "auth": "Pairing token + shared secret"
+  },
+  "routes": [
+    {
+      "path": "/",
+      "name": "App Shell",
+      "purpose": "Root shell with timeline, command bar, and navigation"
+    },
+    {
+      "path": "/onboarding",
+      "name": "Onboarding",
+      "purpose": "Explain the verification-driven workflow and pairing steps"
+    },
+    {
+      "path": "/pairing",
+      "name": "Pairing",
+      "purpose": "Pair mobile with desktop agent via QR/token"
+    },
+    {
+      "path": "/connections",
+      "name": "Connections",
+      "purpose": "Manage paired devices and tunnel status"
+    },
+    {
+      "path": "/timeline",
+      "name": "Timeline",
+      "purpose": "Primary feed of verification events with jump-back context"
+    },
+    {
+      "path": "/command",
+      "name": "Command Bar",
+      "purpose": "Intent input and routing to tools"
+    },
+    {
+      "path": "/api-explorer",
+      "name": "API Explorer",
+      "purpose": "Structured API requests, responses, and AI analysis"
+    },
+    {
+      "path": "/terminal",
+      "name": "Terminal",
+      "purpose": "Multi-session terminal manager with structured output"
+    },
+    {
+      "path": "/vnc",
+      "name": "VNC Viewer",
+      "purpose": "Quick UI verification via remote desktop"
+    },
+    {
+      "path": "/export",
+      "name": "Export/Import",
+      "purpose": "Export local data and import on another device"
+    },
+    {
+      "path": "/settings",
+      "name": "Settings",
+      "purpose": "App preferences and security controls"
+    }
+  ],
+  "uiNotes": [
+    "Timeline is the primary navigation surface; tapping events restores tool context",
+    "Command Bar is the single entry point for intent parsing and action routing",
+    "API Explorer uses structured JSON tree views with response diffs and error highlights",
+    "Terminal supports multiple sessions with quick controls (Ctrl+C, history, presets)",
+    "VNC viewer optimized for short verification with trackpad mode and zoom bar"
+  ],
+  "dataModel": [
+    {
+      "entity": "Device",
+      "fields": [
+        "id",
+        "name",
+        "platform",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "Connection",
+      "fields": [
+        "id",
+        "deviceId",
+        "tunnelUrl",
+        "status",
+        "lastSeenAt"
+      ]
+    },
+    {
+      "entity": "PairingToken",
+      "fields": [
+        "id",
+        "token",
+        "expiresAt",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "TimelineEvent",
+      "fields": [
+        "id",
+        "connectionId",
+        "type",
+        "title",
+        "payload",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "APIRequest",
+      "fields": [
+        "id",
+        "connectionId",
+        "method",
+        "url",
+        "headers",
+        "body",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "APIResponse",
+      "fields": [
+        "id",
+        "requestId",
+        "status",
+        "headers",
+        "body",
+        "latencyMs"
+      ]
+    },
+    {
+      "entity": "TerminalSession",
+      "fields": [
+        "id",
+        "connectionId",
+        "name",
+        "status",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "TerminalOutput",
+      "fields": [
+        "id",
+        "terminalSessionId",
+        "stream",
+        "text",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "VNCSession",
+      "fields": [
+        "id",
+        "connectionId",
+        "status",
+        "resolution",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "AIInsight",
+      "fields": [
+        "id",
+        "connectionId",
+        "sourceType",
+        "summary",
+        "details",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "ExportBundle",
+      "fields": [
+        "id",
+        "createdAt",
+        "version",
+        "payload"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Export/import bundle for local-only data migration between devices.",
+    "example": {
+      "version": 1,
+      "deviceName": "iPhone",
+      "exportedAt": "2025-01-01T00:00:00Z",
+      "connections": [],
+      "timelineEvents": []
+    }
+  },
+  "rules": [
+    "All actions are executed on the paired desktop agent and recorded locally on mobile",
+    "Pairing requires a short-lived token and a shared secret confirmation",
+    "Timeline events are append-only and ordered by creation time",
+    "Cloudflared tunnel is required for connections outside local network",
+    "If connection drops, actions are blocked and surfaced with recovery UI"
+  ],
+  "qualityGates": [
+    "flutter test",
+    "flutter analyze"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold Flutter mobile app and Rust/Tauri desktop agent",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a developer, I want a clean project scaffold for both clients so local development is possible.",
+      "acceptanceCriteria": [
+        "Create Flutter mobile app scaffold and Rust/Tauri desktop agent scaffold",
+        "Document dependency installs with explicit commands (example: `flutter pub add <pkg>` and `cargo add <crate>`)",
+        "Add scripts for `flutter test` and `flutter analyze`",
+        "Example: running `flutter test` passes a baseline test",
+        "Negative case: missing required dependency fails `flutter analyze` with a clear error"
+      ],
+      "startedAt": "2026-01-27T15:00:40.862515+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-27T15:00:40.862615+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Desktop agent command channel and protocol",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want the desktop agent to accept commands from mobile and return results.",
+      "acceptanceCriteria": [
+        "Define a message schema for request/response and error payloads",
+        "Expose a local command handler in the agent for API, terminal, and VNC actions",
+        "Example: mobile sends a ping command and receives a structured pong response",
+        "Negative case: unknown command returns a standardized error payload"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Pairing flow with QR token and shared secret",
+      "status": "open",
+      "dependsOn": [
+        "US-002"
+      ],
+      "description": "As a user, I want to pair my mobile app with my desktop agent securely.",
+      "acceptanceCriteria": [
+        "Desktop agent generates a short-lived pairing token and QR code",
+        "Mobile scans QR and confirms a shared secret before saving the connection",
+        "Example: valid token + correct secret results in a connected state",
+        "Negative case: expired token is rejected with a retry prompt"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Cloudflared tunnel integration",
+      "status": "open",
+      "dependsOn": [
+        "US-003"
+      ],
+      "description": "As a user, I want mobile and desktop to connect over the internet via a tunnel.",
+      "acceptanceCriteria": [
+        "Desktop agent starts a cloudflared tunnel and exposes a connection URL",
+        "Mobile stores the tunnel URL as part of the connection record",
+        "Example: remote connection succeeds when mobile is off the local network",
+        "Negative case: tunnel startup failure is shown with a clear remediation message"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Local data storage for sessions and events",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want my timeline and tool history stored locally on mobile.",
+      "acceptanceCriteria": [
+        "Persist core entities in local storage with a defined schema",
+        "Install storage dependencies with explicit commands (example: `flutter pub add sqflite` and `flutter pub add flutter_secure_storage`)",
+        "Example: timeline events persist after app restart",
+        "Negative case: storage initialization failure shows a blocking error state"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Timeline UI with context restore",
+      "status": "open",
+      "dependsOn": [
+        "US-005"
+      ],
+      "description": "As a user, I want a timeline of verification events and quick return to context.",
+      "acceptanceCriteria": [
+        "Timeline list displays event type, title, and timestamp",
+        "Tapping an API event routes to API Explorer with request/response loaded",
+        "Example: tapping a terminal event opens the referenced session",
+        "Negative case: event references missing context shows a clear error state"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Command Bar intent parsing and routing",
+      "status": "open",
+      "dependsOn": [
+        "US-006"
+      ],
+      "description": "As a user, I want a single command bar to trigger API, terminal, AI, or VNC actions.",
+      "acceptanceCriteria": [
+        "Command input accepts natural language and structured commands",
+        "Route recognized intents to the correct tool and create a timeline event",
+        "Example: `POST /login` opens API Explorer with method and URL prefilled",
+        "Negative case: ambiguous command prompts the user to choose a tool"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "API Explorer via desktop agent",
+      "status": "open",
+      "dependsOn": [
+        "US-002",
+        "US-006"
+      ],
+      "description": "As a user, I want to run API requests on the desktop agent and inspect structured responses on mobile.",
+      "acceptanceCriteria": [
+        "Send API request details to the agent and receive structured response payload",
+        "Render response status, latency, headers, and JSON tree on mobile",
+        "Example: response diff highlights changed fields from previous run",
+        "Negative case: invalid JSON body prevents request with validation message"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Multi-session terminal streaming",
+      "status": "open",
+      "dependsOn": [
+        "US-002",
+        "US-006"
+      ],
+      "description": "As a user, I want multiple terminal sessions that stream stdout and stderr.",
+      "acceptanceCriteria": [
+        "Create, switch, and close terminal sessions",
+        "Separate stdout and stderr streams in the UI",
+        "Example: run `npm test` and see stdout/stderr separated",
+        "Negative case: session disconnect shows a reconnect prompt"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "VNC viewer for quick UI verification",
+      "status": "open",
+      "dependsOn": [
+        "US-002",
+        "US-006"
+      ],
+      "description": "As a user, I want a VNC viewer optimized for short verification tasks.",
+      "acceptanceCriteria": [
+        "Implement trackpad mode for pointer control and gestures",
+        "Provide zoom bar with center-on-pointer behavior",
+        "Example: open VNC from timeline event and exit with swipe down",
+        "Negative case: VNC stream failure shows a clear recovery action"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Export and import local data",
+      "status": "open",
+      "dependsOn": [
+        "US-005"
+      ],
+      "description": "As a user, I want to export local data and import it on another device.",
+      "acceptanceCriteria": [
+        "Export produces a versioned JSON bundle of connections and timeline events",
+        "Import validates bundle version and merges data",
+        "Example: importing a bundle restores timeline history",
+        "Negative case: invalid bundle schema is rejected with a clear error"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "AI insight summaries for errors",
+      "status": "open",
+      "dependsOn": [
+        "US-006"
+      ],
+      "description": "As a user, I want AI-generated insights on errors to speed up verification.",
+      "acceptanceCriteria": [
+        "Trigger AI analysis for API and terminal errors",
+        "Display AI summary in timeline and tool context",
+        "Example: missing field error highlights the missing key",
+        "Negative case: AI service unavailable shows a fallback message without blocking"
+      ]
+    }
+  ]
+}
