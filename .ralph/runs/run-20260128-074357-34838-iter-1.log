@@ -1,0 +1,5341 @@
+OpenAI Codex v0.91.0 (research preview)
+--------
+workdir: /Users/mac/codes/vibe-inspect
+model: gpt-5.2-codex
+provider: sub2api
+approval: never
+sandbox: danger-full-access
+reasoning effort: high
+reasoning summaries: auto
+session id: 019c01d7-adf6-7f50-bdd7-4959fe92d4b0
+--------
+user
+# Build
+
+You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+
+## Paths
+- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-mobile-verification.json
+- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+- No-commit: false
+- Repo Root: /Users/mac/codes/vibe-inspect
+- Run ID: 20260128-074357-34838
+- Iteration: 1
+- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-074357-34838-iter-1.log
+- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-074357-34838-iter-1.md
+
+## Global Quality Gates (apply to every story)
+- flutter test
+- flutter analyze
+
+## Selected Story (Do not change scope)
+ID: US-012
+Title: AI insight summaries for errors
+
+Story details:
+### US-012: AI insight summaries for errors
+Status: in_progress
+Depends on: US-006
+
+Description:
+As a user, I want AI-generated insights on errors to speed up verification.
+
+Acceptance Criteria:
+- [ ] Trigger AI analysis for API and terminal errors
+- [ ] Display AI summary in timeline and tool context
+- [ ] Example: missing field error highlights the missing key
+- [ ] Negative case: AI service unavailable shows a fallback message without blocking
+
+
+If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+
+## Rules (Non-Negotiable)
+- Implement **only** the work required to complete the selected story.
+- Complete all tasks associated with this story (and only this story).
+- Do NOT ask the user questions.
+- Do NOT change unrelated code.
+- Do NOT assume something is unimplemented — confirm by reading code.
+- Implement completely; no placeholders or stubs.
+- If No-commit is true, do NOT commit or push changes.
+- Do NOT edit the PRD JSON (status is handled by the loop).
+- All changes made during the run must be committed (including updates to progress/logs).
+ - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+
+## Your Task (Do this in order)
+1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-mobile-verification.json for global context (do not edit).
+4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+6. Implement only the tasks that belong to US-012.
+7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+8. If the project has a build or dev workflow, run what applies:
+   - Build step (e.g., `npm run build`) if defined.
+   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+   - Confirm no runtime/build errors in the console.
+9. Perform a brief audit before committing:
+   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+   - **Regression:** verify existing behavior that could be impacted still works.
+10. If No-commit is false, commit changes using the `$commit` skill.
+    - Stage everything: `git add -A`
+    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+    - After committing, capture the commit hash and subject using:
+      `git show -s --format="%h %s" HEAD`.
+11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+    If No-commit is true, skip committing and note it in the progress entry.
+
+## Progress Entry Format (Append Only)
+```
+## [Date/Time] - US-012: AI insight summaries for errors
+Thread: [codex exec session id if available, otherwise leave blank]
+Run: 20260128-074357-34838 (iteration 1)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-074357-34838-iter-1.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-074357-34838-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: <hash> <subject> (or `none` + reason)
+- Post-commit status: `clean` or list remaining files
+- Verification:
+  - Command: <exact command> -> PASS/FAIL
+  - Command: <exact command> -> PASS/FAIL
+- Files changed:
+  - <file path>
+  - <file path>
+- What was implemented
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Gotchas encountered
+  - Useful context
+---
+```
+
+## Completion Signal
+Only output the completion signal when the **selected story** is fully complete and verified.
+When the selected story is complete, output:
+<promise>COMPLETE</promise>
+
+Otherwise, end normally without the signal.
+
+## Additional Guardrails
+- When authoring documentation, capture the why (tests + implementation intent).
+- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+
+## Activity Logging (Required)
+Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+```
+/Users/mac/codes/vibe-inspect/ralph log "message"
+```
+Log at least:
+- Start of work on the story
+- After major code changes
+- After tests/verification
+- After updating progress log
+
+## Browser Testing (Required for Frontend Stories)
+If the selected story changes UI, you MUST verify it in the browser:
+1. Load the `dev-browser` skill.
+2. Navigate to the relevant page.
+3. Verify the UI changes work as expected.
+4. Take a screenshot if helpful for the progress log.
+
+A frontend story is NOT complete until browser verification passes.
+
+mcp startup: no servers
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.ralph/guardrails.md' in /Users/mac/codes/vibe-inspect succeeded in 19ms:
+# Guardrails (Signs)
+
+> Lessons learned from failures. Read before acting.
+
+## Core Signs
+
+### Sign: Read Before Writing
+- **Trigger**: Before modifying any file
+- **Instruction**: Read the file first
+- **Added after**: Core principle
+
+### Sign: Test Before Commit
+- **Trigger**: Before committing changes
+- **Instruction**: Run required tests and verify outputs
+- **Added after**: Core principle
+
+---
+
+## Learned Signs
+
+
+thinking
+**Noting need for error logging**
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.ralph/errors.log' in /Users/mac/codes/vibe-inspect succeeded in 16ms:
+# Error Log
+
+> Failures and repeated issues. Use this to add guardrails.
+
+[2026-01-27 23:21:58] ITERATION 1 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-1.md
+[2026-01-27 23:34:09] ITERATION 2 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-2.md
+[2026-01-28 00:00:23] ITERATION 3 command failed (status=1)
+[2026-01-28 00:00:23] ITERATION 3 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-3.md
+[2026-01-28 00:00:23] ITERATION 3 exited non-zero; review /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-3.log
+[2026-01-28 00:00:58] ITERATION 4 command failed (status=1)
+[2026-01-28 00:00:58] ITERATION 4 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-4.md
+[2026-01-28 00:00:58] ITERATION 4 exited non-zero; review /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-4.log
+[2026-01-28 00:01:33] ITERATION 5 command failed (status=1)
+[2026-01-28 00:01:33] ITERATION 5 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-5.md
+[2026-01-28 00:01:33] ITERATION 5 exited non-zero; review /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-5.log
+[2026-01-28 00:02:09] ITERATION 6 command failed (status=1)
+[2026-01-28 00:02:09] ITERATION 6 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-6.md
+[2026-01-28 00:02:09] ITERATION 6 exited non-zero; review /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-6.log
+[2026-01-28 00:02:43] ITERATION 7 command failed (status=1)
+[2026-01-28 00:02:43] ITERATION 7 left uncommitted changes; review run summary at /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260127-230040-27989-iter-7.md
+
+thinking
+**Planning to read PRD JSON**
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.agents/tasks/prd-mobile-verification.json' in /Users/mac/codes/vibe-inspect succeeded in 20ms:
+{
+  "version": 1,
+  "project": "Mobile Verification-Driven IDE (Client-to-Client)",
+  "overview": "Build a Flutter mobile client and a Rust+Tauri desktop agent that connect directly (no server in v1) to run API calls, terminal commands, and VNC-based UI checks from a timeline-centric workflow.",
+  "goals": [
+    "Enable mobile-first verification workflows via timeline, command bar, API explorer, terminal, and VNC viewer",
+    "Provide a secure pairing and direct connection between mobile and desktop agent using cloudflared",
+    "Keep all session data local with optional export/import"
+  ],
+  "nonGoals": [
+    "No central server, accounts, or multi-device cloud sync in v1",
+    "No full desktop-grade code editing on mobile",
+    "No offline execution of remote actions"
+  ],
+  "successMetrics": [
+    "Pairing completes in under 2 minutes for first-time users",
+    "Users complete at least one verification action per session",
+    "VNC usage remains under 20% of total actions to indicate verification-first design"
+  ],
+  "openQuestions": [
+
+thinking
+**Prioritizing reading agent instructions**
+
+I'll read the AGENTS file to check for important optional instructions that could affect the next steps.
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/AGENTS.md' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+# AGENTS
+
+## Verification
+- `cd mobile && flutter test`
+- `cd mobile && flutter analyze`
+- `./scripts/flutter_test.sh`
+- `./scripts/flutter_analyze.sh`
+## Browser UI Check
+- `cd mobile && flutter build web`
+- `cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1`
+
+thinking
+**Planning logging integration**
+
+I'm preparing to add a start log activity using the ralph logging system.
+exec
+/bin/zsh -lc '/Users/mac/codes/vibe-inspect/ralph log "Start US-012 AI insight summaries for errors"' in /Users/mac/codes/vibe-inspect exited 127 in 17ms:
+zsh:1: no such file or directory: /Users/mac/codes/vibe-inspect/ralph
+
+thinking
+**Checking for missing error logging helper**
+
+I'm verifying if the project has a logging helper or script to handle error logs, considering using directory listing to locate it.
+exec
+/bin/zsh -lc 'ls -la /Users/mac/codes/vibe-inspect' in /Users/mac/codes/vibe-inspect succeeded in 20ms:
+total 40
+drwxr-xr-x@ 12 mac  staff    384 27 Jan 23:10 .
+drwxr-xr-x   8 mac  staff    256 27 Jan 22:12 ..
+drwxr-xr-x@  4 mac  staff    128 27 Jan 22:15 .agents
+drwxr-xr-x@  3 mac  staff     96 27 Jan 22:19 .codex
+drwxr-xr-x@ 12 mac  staff    384 28 Jan 07:35 .git
+drwxr-xr-x@  8 mac  staff    256 28 Jan 07:27 .ralph
+-rw-r--r--@  1 mac  staff    279 28 Jan 03:12 AGENTS.md
+-rw-r--r--@  1 mac  staff  11735 27 Jan 22:13 design.md
+drwxr-xr-x@  8 mac  staff    256 27 Jan 23:11 desktop
+drwxr-xr-x@ 18 mac  staff    576 28 Jan 02:29 mobile
+-rw-r--r--@  1 mac  staff    811 28 Jan 02:02 README.md
+drwxr-xr-x@  4 mac  staff    128 27 Jan 23:05 scripts
+
+thinking
+**Checking for ralph binary in PATH**
+exec
+/bin/zsh -lc 'which ralph' in /Users/mac/codes/vibe-inspect succeeded in 17ms:
+/opt/homebrew/bin/ralph
+
+thinking
+**Deciding to use available CLI for logging**
+
+The helper script is missing, so I'll use the available `ralph` command directly for logging as a fallback while noting this deviation from the original helper usage instructions.
+exec
+/bin/zsh -lc 'ralph log "Start US-012 AI insight summaries for errors"' in /Users/mac/codes/vibe-inspect succeeded in 135ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+
+thinking
+**Searching for AI insights references**
+
+I'm running searches to locate references to AI or insights in the codebase to identify where error-related AI insights might be implemented or logged.
+exec
+/bin/zsh -lc 'rg -n "AI|insight|summary" mobile' in /Users/mac/codes/vibe-inspect succeeded in 65ms:
+mobile/lib/main.dart:859:          message: 'The referenced AI session could not be found in history.',
+mobile/lib/main.dart:1038:                        'Describe the action and the app will route it to API, terminal, AI, or VNC.',
+mobile/lib/main.dart:3705:        ' FAIL  src/terminal.spec.ts > streams stderr',
+mobile/lib/main.dart:4267:    final summary = event.payload['summary']?.toString();
+mobile/lib/main.dart:4270:    final summaryText = summary ?? '';
+mobile/lib/main.dart:4271:    final hasSummary = summaryText.trim().isNotEmpty;
+mobile/lib/main.dart:4275:      title: 'AI Insight',
+mobile/lib/main.dart:4319:              title: 'AI output',
+mobile/lib/main.dart:4322:                  : 'Awaiting AI response',
+mobile/lib/main.dart:4324:                  ? _CodeBlock(content: summaryText)
+mobile/lib/main.dart:4325:                  : const _EmptyHint(text: 'No AI output recorded yet.'),
+mobile/lib/main.dart:5854:        return 'AI Insight';
+mobile/lib/main.dart:6041:    title: 'AI: $label',
+mobile/lib/main.dart:6042:    sessionLabel: 'AI: $label',
+mobile/lib/main.dart:6148:    r'^(ai|ask|explain|summarize|analyze|insight)\b[:\s-]*',
+mobile/lib/main.dart:6194:    ['ai', 'summarize', 'explain', 'analyze', 'insight', 'diagnose'],
+mobile/android/app/src/main/AndroidManifest.xml:24:                <action android:name="android.intent.action.MAIN"/>
+mobile/ios/Runner.xcodeproj/project.pbxproj:327:				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+mobile/ios/Runner.xcodeproj/project.pbxproj:448:				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+mobile/ios/Runner.xcodeproj/project.pbxproj:505:				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+
+thinking
+**Preparing to inspect main.dart sections**
+
+Planning to carefully read relevant parts of the large main.dart file, especially around AI insight sections and architecture, using line-range extraction to focus analysis.
+exec
+/bin/zsh -lc "sed -n '4200,4400p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+                        entry.text,
+                        style: GoogleFonts.spaceMono(
+                          fontSize: 12,
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TerminalStatusStyle {
+  const _TerminalStatusStyle(this.background, this.foreground);
+
+  final Color background;
+
+thinking
+**Searching timeline for AI summary**
+
+I'm verifying if the timeline card already supports AI summaries by searching for relevant event handling or AI Insight mentions around the timeline or event list, focusing on main.dart.
+exec
+/bin/zsh -lc 'rg -n "AI Insight|AiInsight|ai insight|AI output|AI" mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+724:          AiInsightScreen(
+859:          message: 'The referenced AI session could not be found in history.',
+865:        AiInsightScreen(
+1038:                        'Describe the action and the app will route it to API, terminal, AI, or VNC.',
+3705:        ' FAIL  src/terminal.spec.ts > streams stderr',
+4253:class AiInsightScreen extends StatelessWidget {
+4254:  const AiInsightScreen({
+4275:      title: 'AI Insight',
+4319:              title: 'AI output',
+4322:                  : 'Awaiting AI response',
+4325:                  : const _EmptyHint(text: 'No AI output recorded yet.'),
+5854:        return 'AI Insight';
+6041:    title: 'AI: $label',
+6042:    sessionLabel: 'AI: $label',
+
+thinking
+**Searching for event type definitions**
+exec
+/bin/zsh -lc 'rg -n "TimelineEvent|event.type|EventType" mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 39ms:
+196:  List<TimelineEvent> _timelineEvents = [];
+331:      final event = TimelineEvent(
+345:      await widget.storage.insertTimelineEvent(event);
+369:      final events = await widget.storage.fetchTimelineEvents();
+510:        await widget.storage.insertTimelineEvent(event);
+647:    final event = TimelineEvent(
+658:      await widget.storage.insertTimelineEvent(event);
+688:    TimelineEvent event,
+781:      final events = await widget.storage.fetchTimelineEvents();
+802:  Future<void> _handleTimelineEventTap(TimelineEvent event) async {
+803:    final eventType = event.type.toLowerCase();
+900:      message: 'This event type does not yet support context restore.',
+930:    required TimelineEvent event,
+1134:                      onEventTap: _handleTimelineEventTap,
+1557:  final List<TimelineEvent> events;
+1558:  final ValueChanged<TimelineEvent> onEventTap;
+1592:          _TimelineEventRow(
+1773:class _TimelineEventRow extends StatelessWidget {
+1774:  const _TimelineEventRow({required this.event, required this.onTap});
+1776:  final TimelineEvent event;
+
+thinking
+**Exploring event handling context**
+
+I'm reviewing earlier sections to understand timeline event types and agent command structures for deeper insight into event processing.
+exec
+/bin/zsh -lc "sed -n '1,220p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 60ms:
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
+import 'package:mobile/storage/local_storage.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  GoogleFonts.config.allowRuntimeFetching = !kIsWeb;
+  if (kIsWeb) {
+    RendererBinding.instance.ensureSemantics();
+  }
+  final storageInitializer =
+      kIsWeb ? const MemoryStorageInitializer() : const LocalStorageInitializer();
+  runApp(VibeInspectApp(storageInitializer: storageInitializer));
+
+thinking
+**Searching event API error handling**
+
+I'm searching for how API and terminal errors are handled in event-related code by looking around event creation and response processing in main.dart.
+exec
+/bin/zsh -lc 'rg -n "api" mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 67ms:
+692:      case CommandTool.api:
+693:        final apiContext = ApiEventContext.fromPayload(event.payload);
+694:        if (apiContext == null) {
+706:            context: apiContext,
+804:    if (eventType == 'api') {
+805:      final apiContext = ApiEventContext.fromPayload(event.payload);
+806:      if (apiContext == null) {
+818:          context: apiContext,
+1734:    case 'api':
+2373:    final rawRequest = payload['request'] ?? payload['api_request'];
+2374:    final rawResponse = payload['response'] ?? payload['api_response'];
+2759:                    key: const Key('apiUrlField'),
+2762:                      hintText: 'https://api.example.com/login',
+2844:                    key: const Key('apiBodyField'),
+2869:                    key: const Key('apiSendButton'),
+5668:      command: 'api',
+5844:enum CommandTool { api, terminal, ai, vnc }
+5849:      case CommandTool.api:
+5862:      case CommandTool.api:
+5863:        return 'api';
+
+thinking
+**Inspecting API explorer error handling**
+exec
+/bin/zsh -lc "sed -n '2200,3200p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 21ms:
+        decoration: BoxDecoration(
+          color: isChanged ? const Color(0xFFFFF7ED) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isChanged ? const Color(0xFFF59E0B) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: RichText(
+          text: TextSpan(
+            text: '$label: ',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF1E293B),
+              fontWeight: FontWeight.w600,
+            ),
+            children: [
+              TextSpan(
+                text: _formatJsonValue(value),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF0F172A),
+                  fontWeight: FontWeight.w500,
+
+thinking
+**Investigating terminal command error handling**
+
+I'm inspecting functions related to terminal output parsing and error handling, focusing on `_runCommand` and similar areas to identify update points for AI integration.
+exec
+/bin/zsh -lc "sed -n '3200,3800p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 52ms:
+      _activeSessionId = sessionId;
+      _commandError = null;
+      _commandFeedback = null;
+    });
+    _seedCommandFromActive();
+  }
+
+  Future<void> _createSession() async {
+    final controller = TextEditingController();
+    final label = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('New terminal session'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: 'Session name',
+              border: OutlineInputBorder(),
+            ),
+
+thinking
+**Inspecting timeline event visuals**
+exec
+/bin/zsh -lc "sed -n '1500,2000p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 22ms:
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF475569),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (isConnected && tunnelUrl != null && tunnelUrl.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Tunnel URL',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+
+thinking
+**Inspecting storage models for AI summaries**
+
+I'm exploring storage structures to locate where AI insights are saved, aiming to display AI-generated summaries in the timeline rows and tool context for API and terminal errors.
+exec
+/bin/zsh -lc 'rg -n "AIInsight|insight|ai" mobile/lib' in /Users/mac/codes/vibe-inspect succeeded in 40ms:
+mobile/lib/storage/local_storage.dart:32:    final databasePath = await getDatabasesPath();
+mobile/lib/storage/local_storage.dart:34:    final database = await openDatabase(
+mobile/lib/storage/local_storage.dart:38:        await db.execute('PRAGMA foreign_keys = ON');
+mobile/lib/storage/local_storage.dart:41:        await _createSchema(db);
+mobile/lib/storage/local_storage.dart:45:          await _createConnectionsTable(db);
+mobile/lib/storage/local_storage.dart:49:    await _ensureStorageKey(secureStorage);
+mobile/lib/storage/local_storage.dart:54:    final existing = await secureStorage.read(key: _storageKeyId);
+mobile/lib/storage/local_storage.dart:61:    await secureStorage.write(key: _storageKeyId, value: encoded);
+mobile/lib/storage/local_storage.dart:65:    await _createConnectionsTable(db);
+mobile/lib/storage/local_storage.dart:66:    await db.execute('''
+mobile/lib/storage/local_storage.dart:75:    await db.execute('''
+mobile/lib/storage/local_storage.dart:86:    await db.execute(
+mobile/lib/storage/local_storage.dart:89:    await db.execute(
+mobile/lib/storage/local_storage.dart:95:    await db.execute('''
+mobile/lib/storage/local_storage.dart:106:    await db.execute(
+mobile/lib/storage/local_storage.dart:129:    final rows = await _database.query(
+mobile/lib/storage/local_storage.dart:138:    final rows = await _database.query(
+mobile/lib/storage/local_storage.dart:147:    final rows = await _database.query(
+mobile/lib/storage/local_storage.dart:156:    await _database.insert(
+mobile/lib/storage/local_storage.dart:165:    await _database.insert(
+
+thinking
+**Locating AI command handling**
+
+I'm searching within the command bar and agent code for AI-related handling, especially around the suspected "AgentCommandClient sendAiCommand" near main.dart line 5600.
+exec
+/bin/zsh -lc "sed -n '5400,6200p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          message,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF7F1D1D),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            _ContextSectionCard(
+              title: 'Event details',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+
+thinking
+**Investingating AI command flow**
+exec
+/bin/zsh -lc "sed -n '540,940p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 58ms:
+        return 'Android';
+      case TargetPlatform.iOS:
+        return 'iOS';
+      case TargetPlatform.macOS:
+        return 'macOS';
+      case TargetPlatform.windows:
+        return 'Windows';
+      case TargetPlatform.linux:
+        return 'Linux';
+      case TargetPlatform.fuchsia:
+        return 'Fuchsia';
+    }
+  }
+
+  Future<void> _handleCommandSubmit() async {
+    final command = _commandController.text.trim();
+    if (command.isEmpty) {
+      setState(() {
+        _commandError = 'Enter a command to run.';
+      });
+
+thinking
+**Planning AI insight integration**
+
+I'll investigate the storage and data models, especially local_storage, to implement AI-generated error summaries.
+exec
+/bin/zsh -lc "sed -n '1,240p' mobile/lib/storage/local_storage.dart" in /Users/mac/codes/vibe-inspect succeeded in 44ms:
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:sqflite/sqflite.dart';
+
+abstract class StorageRepository {
+  Future<List<ConnectionRecord>> fetchConnections();
+  Future<List<ToolSession>> fetchToolSessions();
+  Future<List<TimelineEvent>> fetchTimelineEvents();
+  Future<void> insertConnection(ConnectionRecord connection);
+  Future<void> insertToolSession(ToolSession session);
+  Future<void> insertTimelineEvent(TimelineEvent event);
+}
+
+abstract class StorageInitializer {
+  const StorageInitializer();
+
+  Future<StorageRepository> initialize();
+}
+exec
+/bin/zsh -lc "sed -n '240,520p' mobile/lib/storage/local_storage.dart" in /Users/mac/codes/vibe-inspect succeeded in 35ms:
+      'type': type,
+      'label': label,
+      'status': status,
+      'created_at': createdAt.millisecondsSinceEpoch,
+    };
+  }
+
+  factory ToolSession.fromDatabase(Map<String, Object?> row) {
+    return ToolSession(
+      id: row['id']?.toString() ?? '',
+      type: row['type']?.toString() ?? 'unknown',
+      label: row['label']?.toString() ?? 'Untitled session',
+      status: row['status']?.toString() ?? 'unknown',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (row['created_at'] as int?) ?? 0,
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+
+thinking
+**Checking for AI analysis in desktop code**
+
+Planning to search the desktop codebase for AI-related logic to confirm if AI insights are triggered there and how error events might integrate AI summaries.
+exec
+/bin/zsh -lc 'rg -n "ai|insight" desktop' in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+desktop/src/main.rs:4:mod pairing;
+desktop/src/main.rs:6:fn main() {
+desktop/src/main.rs:8:        .manage(std::sync::Mutex::new(pairing::PairingState::default()))
+desktop/src/main.rs:11:            pairing::create_pairing_session,
+desktop/src/main.rs:12:            pairing::confirm_pairing_session
+desktop/src/pairing.rs:23:struct PairingPayload {
+desktop/src/pairing.rs:32:pub struct PairingSessionResponse {
+desktop/src/pairing.rs:43:pub struct PairingConfirmResponse {
+desktop/src/pairing.rs:49:pub struct PairingError {
+desktop/src/pairing.rs:54:impl PairingError {
+desktop/src/pairing.rs:63:pub struct PairingState {
+desktop/src/pairing.rs:64:    session: Option<PairingSession>,
+desktop/src/pairing.rs:71:impl Default for PairingState {
+desktop/src/pairing.rs:84:struct PairingSession {
+desktop/src/pairing.rs:95:struct TunnelDetails {
+desktop/src/pairing.rs:118:pub fn create_pairing_session(
+desktop/src/pairing.rs:119:    state: State<Mutex<PairingState>>,
+desktop/src/pairing.rs:120:) -> Result<PairingSessionResponse, PairingError> {
+desktop/src/pairing.rs:126:    let session = PairingSession {
+desktop/src/pairing.rs:132:    let mut pairing_state = state
+
+thinking
+**Confirming no AI in desktop commands**
+exec
+/bin/zsh -lc "sed -n '1,260p' desktop/src/command.rs" in /Users/mac/codes/vibe-inspect succeeded in 54ms:
+use reqwest::blocking::Client;
+use reqwest::Method;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::time::Instant;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentCommandRequest {
+    pub request_id: String,
+    pub command: String,
+    pub payload: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentCommandResponse {
+    pub request_id: String,
+    pub status: AgentCommandStatus,
+    pub payload: Option<Value>,
+
+
+thinking
+**Planning AI error summaries**
+
+I'm outlining how to trigger AI analysis for API and terminal errors, focusing on statuses ≥400, specific failure types, or stderr output. The plan includes generating AI summaries on the client (mobile) side with heuristics and displaying them in timeline events, API Explorer, and Terminal screens, highlighting missing fields in errors both in the summary and UI.
+thinking
+**Designing AI insight integration with fallback**
+
+I'm planning a local AI insight service that heuristically generates error summaries for API and terminal events, adding these to event payloads for timeline and tool context display. For AI service unavailability, I'll implement a fallback message without blocking, triggered by simulated failure flags or missing agent connection, while also handling missing field detection to highlight keys in the UI.
+exec
+/bin/zsh -lc 'rg -n "TerminalSessionScreen" -n mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 30ms:
+714:          TerminalSessionScreen(
+841:        TerminalSessionScreen(
+3960:class TerminalSessionScreen extends StatelessWidget {
+3961:  const TerminalSessionScreen({
+exec
+/bin/zsh -lc "sed -n '3880,4200p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+                      children: [
+                        TextField(
+                          key: const Key('terminalCommandField'),
+                          controller: _commandController,
+                          enabled: !isClosed,
+                          decoration: InputDecoration(
+                            hintText: 'npm test',
+                            border: const OutlineInputBorder(),
+                            errorText: _commandError,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            FilledButton.icon(
+                              key: const Key('terminalRunButton'),
+                              onPressed: (isClosed || isDisconnected || _isSending)
+                                  ? null
+                                  : _runCommand,
+                              icon: _isSending
+
+
+thinking
+**Planning AI summary integration**
+
+The terminal currently lacks an AI insight section, so I'll explore showing AI summaries for errors tied to the active event using the lastEvent data in TerminalSessionView. I'll inspect how AI events and summaries are handled elsewhere—like in the API Explorer and AI tool—to determine whether to reuse existing AI insight screens or create dedicated AI events referencing errors for consistent timeline and tool context display.
+thinking
+**Deciding AI summary storage and trigger points**
+
+Storing the AI summary directly on the error event payload is simpler than linking separate AI events, aligning with the AIInsight data model in the PRD. I’ll plan to trigger AI analysis after detecting error responses in API calls and terminal streams, then update the event payload with the summary. Next, I’ll review main.dart around the AI tool usage near line 1090 to understand existing AI command implementations.
+exec
+/bin/zsh -lc "sed -n '1050,1140p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 18ms:
+                          ),
+                          onChanged: (_) {
+                            if (_commandError != null ||
+                                _commandFeedback != null) {
+                              setState(() {
+                                _commandError = null;
+                                _commandFeedback = null;
+                              });
+                            }
+                          },
+                          onSubmitted: (_) => _handleCommandSubmit(),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            FilledButton.icon(
+                              key: const Key('commandRunButton'),
+                              onPressed: _handleCommandSubmit,
+                              icon: const Icon(Icons.bolt),
+                              label: const Text('Run command'),
+
+
+
+
+thinking
+**Planning AI error summary integration**
+
+Noticing no existing AI tool automates error summaries, but there's an AI insight screen and summary extraction tied to AI sessions that can be repurposed. The next step is to add an "AI insight" section in API/Terminal error details using existing summary data and UI components.
+thinking
+**Designing AI insight data model and integration**
+
+A structured AI insight payload will be added to event data with summary, status, and missing fields. AI summaries will trigger on API errors (status ≥400) and terminal errors (stderr output or disconnected status), with heuristics extracting key info like missing fields. AI service availability depends on agent connectivity, showing fallback if unavailable.
+
+**Planning persistence and UI updates**
+
+API and terminal events will persist AI insights in their payloads during error handling and after responses. Timeline event rows will display AI summaries, and API/Terminal screens will show detailed AI insight sections using existing or new UI components, syncing local state with stored payloads for immediate and accurate display.
+thinking
+**Addressing stale event payloads and view sync**
+
+The terminal screen’s lastEvent payload may be outdated, so AI summaries for display will be computed on the fly from current output rather than relying on potentially stale stored payloads. Persisted AI insights remain in timeline events for later reference.
+
+**Defining AI insight model and generation logic**
+
+A new AI insight class with status, summary, missing fields, and serialization will standardize payload storage. API insights will detect errors and missing fields via regex and response parsing; terminal insights will summarize stderr or error status, with agent connectivity controlling availability and fallback messaging.
+
+**Planning UI integration and state updates**
+
+AI insights will be shown in timeline rows and detailed tool contexts by parsing stored payloads or computing dynamically. API and terminal screens will maintain local AI insight state updated upon response or command output changes, ensuring UI stays consistent with persisted data.
+thinking
+**Finalizing AI insight generation and UI integration**
+
+The AI insight will be computed on terminal session state or API response, favoring cached event payload but falling back to live data. AI insight UI will show summary and highlight missing fields with chips in a dedicated card after output or response sections.
+
+**Planning error handling and persistence**
+
+API and terminal error events will update payload with AI insights and error messages, including fallback messages if AI service is unavailable. Timeline rows will display truncated AI summaries with styling, while detailed views will handle full insight presentation.
+
+**Preparing for implementation and testing**
+
+Modifications will focus on main.dart using patches. After implementation, thorough Flutter tests and browser UI checks using the dev-browser skill will ensure correctness and UI consistency.
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.codex/skills/dev-browser/SKILL.md' in /Users/mac/codes/vibe-inspect succeeded in 17ms:
+---
+name: dev-browser
+description: Browser automation with persistent page state. Use when users ask to navigate websites, fill forms, take screenshots, extract web data, test web apps, or automate browser workflows. Trigger phrases include "go to [url]", "click on", "fill out the form", "take a screenshot", "scrape", "automate", "test the website", "log into", or any browser interaction request.
+---
+
+# Dev Browser Skill
+
+Browser automation that maintains page state across script executions. Write small, focused scripts to accomplish tasks incrementally. Once you've proven out part of a workflow and there is repeated work to be done, you can write a script to do the repeated work in a single execution.
+
+## Choosing Your Approach
+
+- **Local/source-available sites**: Read the source code first to write selectors directly
+- **Unknown page layouts**: Use `getAISnapshot()` to discover elements and `selectSnapshotRef()` to interact with them
+- **Visual feedback**: Take screenshots to see what the user sees
+
+## Setup
+
+Two modes available. Ask the user if unclear which to use.
+
+### Standalone Mode (Default)
+
+thinking
+**Preparing to test UI with dev-browser and commit skill**
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.codex/skills/commit/SKILL.md' in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+---
+name: commit
+description: Write conventional commit messages with type, scope, and subject when the user wants to commit changes or save work.
+---
+
+# Git Commit
+
+Creates git commits following Conventional Commits format with proper type, scope, and subject.
+
+## Quick Start
+
+```bash
+# 1. Stage changes
+git add <files>  # or: git add -A
+
+# 2. Create commit (branch commit format)
+git commit -m "type(scope): subject
+
+Body explaining HOW and WHY.
+Reference: Task X.Y, Req N"
+
+
+thinking
+**Planning AI insight helper placement**
+
+Planning to add AI insight helper classes and related functions near existing API and terminal helper sections in main.dart, ideally after the _InfoPill class for better readability and logical grouping.
+thinking
+**Designing AI insight summary type and helpers**
+
+Drafted AiInsightSummary class with status, summary, missingFields, and nullable factory method to parse from payload; planned helper functions to apply insights to payload and extract missing fields from error messages and response bodies using regex and JSON keys.
+exec
+/bin/zsh -lc 'rg -n "_truncate" mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+3497:    final title = 'Terminal: ${_truncate(command, 28)}';
+4046:                        _truncate(session.lastCommand!, 40),
+5982:  final title = 'API $method ${_truncate(displayUrl, 28)}';
+5983:  final sessionLabel = 'API $method ${_truncate(displayUrl, 28)}';
+6015:  final preview = _truncate(normalized, 48);
+6016:  final label = _truncate(normalized, 28);
+6037:  final preview = _truncate(normalized, 48);
+6038:  final label = _truncate(normalized, 28);
+6056:  final preview = _truncate(resolved, 48);
+6057:  final label = _truncate(resolved, 28);
+6218:String _truncate(String input, int maxLength) {
+exec
+/bin/zsh -lc "sed -n '6200,6260p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+    input,
+    ['vnc', 'screen', 'desktop', 'viewer', 'remote', 'ui'],
+  );
+}
+
+bool _containsKeyword(String input, List<String> keywords) {
+  for (final keyword in keywords) {
+    final expression = RegExp(
+      '\\b${RegExp.escape(keyword)}\\b',
+      caseSensitive: false,
+    );
+    if (expression.hasMatch(input)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+String _truncate(String input, int maxLength) {
+  final trimmed = input.trim();
+
+
+thinking
+**Mapping terminal summary logic**
+
+I reviewed how the terminal insight summary builds error detection and message truncation using `_truncate`; next, I'll implement the logic to handle error messages, stderr lines, and disconnected status for concise summaries.
+thinking
+**Designing AI insight UI components**
+
+I sketched widgets to display AI insight summaries with status pills and missing field chips, applying consistent error styling and summary truncation for timelines and tool contexts, while planning fallback text when AI service is unavailable.
+exec
+/bin/zsh -lc 'ls /Users/mac/codes/vibe-inspect/.codex/skills' in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+commit
+dev-browser
+prd
+
+
+
+thinking
+**Planning skill announcement**
+
+Deciding to announce usage of dev-browser skill early in the response with a brief explanation, then reiterate skill usage in the final summary to comply with instructions.
+thinking
+**Planning AI insight integration**
+
+Planning to add AI insight state and UI in ApiExplorerScreen, persist insights with API and terminal events, and parse/store AI summary in event payloads for error analysis and UI highlighting.
+thinking
+**Extending terminal event persistence and AI summary extraction**
+
+Updating terminal event persistence to accept error messages for disconnected status and integrate AI insight generation; planning regex-based extraction of missing fields from error texts and response bodies for richer AI summaries.
+file update
+M /Users/mac/codes/vibe-inspect/mobile/lib/main.dart
+@@ -2303,2 +2303,314 @@
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+apply_patch(auto_approved=true) exited 0 in 23ms:
+Success. Updated the following files:
+M mobile/lib/main.dart
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..c8ad2b66dcb4686d17c09a6c2ff698f92ad6bc28
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..c8ad2b66dcb4686d17c09a6c2ff698f92ad6bc28
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+
+
+thinking
+**Reviewing new functions and planning state update**
+
+Added helper functions without naming conflicts and confirmed forward references are acceptable. Planning to add an `_aiInsight` property to the API explorer screen state, inserting it after `_previousResponse`.
+file update
+M /Users/mac/codes/vibe-inspect/mobile/lib/main.dart
+@@ -2741,2 +2741,3 @@
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+apply_patch(auto_approved=true) exited 0 in 36ms:
+Success. Updated the following files:
+M mobile/lib/main.dart
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..3d46b51a042b3026ae8b9ae0c016f2e072ac9637
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..3d46b51a042b3026ae8b9ae0c016f2e072ac9637
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+
+
+thinking
+**Updating initState to set AI insight**
+
+I'm inserting code in initState to initialize _aiInsight using the static fromPayload method or fallback to building the insight with response data and error message from the event payload.
+file update
+M /Users/mac/codes/vibe-inspect/mobile/lib/main.dart
+@@ -2766,2 +2766,8 @@
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+apply_patch(auto_approved=true) exited 0 in 32ms:
+Success. Updated the following files:
+M mobile/lib/main.dart
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..8419f12fe26f3b495e530646b88b2b34b8e764d4
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..8419f12fe26f3b495e530646b88b2b34b8e764d4
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+
+
+thinking
+**Editing request handling for AI insight**
+exec
+/bin/zsh -lc "sed -n '2520,2655p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+        body['fields'];
+    addFields(_coerceStringList(missingValues));
+    final errors = body['errors'];
+    if (errors is Map) {
+      for (final entry in errors.entries) {
+        final key = entry.key?.toString();
+        final value = entry.value?.toString().toLowerCase() ?? '';
+        if (key != null &&
+            (value.contains('required') || value.contains('missing'))) {
+          addField(key);
+        }
+      }
+    }
+  }
+
+  if (errorText != null && errorText.trim().isNotEmpty) {
+    addFields(_extractMissingFieldsFromText(errorText));
+  }
+
+  return fields.toList();
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..8419f12fe26f3b495e530646b88b2b34b8e764d4
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+
+
+thinking
+**Planning to locate _sendRequest**
+exec
+/bin/zsh -lc 'rg -n "Future<void> _sendRequest" -n mobile/lib/main.dart' in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+2847:  Future<void> _sendRequest() async {
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..8419f12fe26f3b495e530646b88b2b34b8e764d4
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+
+exec
+/bin/zsh -lc "sed -n '2840,2935p' mobile/lib/main.dart" in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+    final bodyText = _stringifyBody(response.body);
+    return response.status != null ||
+        response.latencyMs != null ||
+        response.headers.isNotEmpty ||
+        (bodyText != null && bodyText.trim().isNotEmpty);
+  }
+
+  Future<void> _sendRequest() async {
+    if (_isSending) {
+      return;
+    }
+
+    final url = _urlController.text.trim();
+    if (url.isEmpty) {
+      setState(() {
+        _requestError = 'Enter a request URL.';
+      });
+      return;
+    }
+
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..8419f12fe26f3b495e530646b88b2b34b8e764d4
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+
+
+
+thinking
+**Planning AI insight integration in request**
+
+I'm preparing to patch the request method to compute AI insights on success or failure, update state accordingly, and persist events or failures with detailed request and error info.
+thinking
+**Clarifying AI insight fallback handling**
+
+I'm deciding to set AI insight unavailable state only when building insights with missing agentBaseUrl during error responses, without changing early returns when agentClient is null; this keeps scope minimal while supporting fallback messaging as required.
+file update
+M /Users/mac/codes/vibe-inspect/mobile/lib/main.dart
+@@ -2878,2 +2878,5 @@
+             'Connect to the desktop agent to send API requests.';
++        _aiInsight = AiInsightSummary.unavailable(
++          'AI insights unavailable while disconnected from the desktop agent.',
++        );
+       });
+@@ -2889,2 +2892,8 @@
+     final headers = _collectHeaders();
++    final requestDetails = ApiRequestDetails(
++      method: _method,
++      url: url,
++      headers: headers,
++      body: parsedBody,
++    );
+     try {
+@@ -2905,2 +2914,7 @@
+       );
++      final insight = _buildApiInsight(
++        response: response,
++        errorMessage: null,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+@@ -2909,2 +2923,3 @@
+         _changedPaths = changedPaths;
++        _aiInsight = insight;
+       });
+@@ -2914,2 +2929,3 @@
+         previousResponse: previousResponse,
++        insight: insight,
+       );
+@@ -2919,5 +2935,16 @@
+       }
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: error.message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+         _requestError = error.message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: error.message,
++        insight: insight,
++      );
+     } catch (error) {
+@@ -2926,5 +2953,17 @@
+       }
++      final message = 'Request failed: ${error.toString()}';
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+-        _requestError = 'Request failed: ${error.toString()}';
++        _requestError = message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: message,
++        insight: insight,
++      );
+     } finally {
+apply_patch(auto_approved=true) exited 0 in 21ms:
+Success. Updated the following files:
+M mobile/lib/main.dart
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..149046c07bdc5f17dfd58921577c015a3f5b6c3d
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+@@ -2557,6 +2876,9 @@
+       setState(() {
+         _requestError =
+             'Connect to the desktop agent to send API requests.';
++        _aiInsight = AiInsightSummary.unavailable(
++          'AI insights unavailable while disconnected from the desktop agent.',
++        );
+       });
+       return;
+     }
+@@ -2568,6 +2890,12 @@
+     });
+ 
+     final headers = _collectHeaders();
++    final requestDetails = ApiRequestDetails(
++      method: _method,
++      url: url,
++      headers: headers,
++      body: parsedBody,
++    );
+     try {
+       final result = await agentClient.sendApiCommand(
+         method: _method,
+@@ -2584,30 +2912,60 @@
+         response.body,
+         previousResponse?.body,
+       );
++      final insight = _buildApiInsight(
++        response: response,
++        errorMessage: null,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+         _previousResponse = previousResponse;
+         _response = response;
+         _changedPaths = changedPaths;
++        _aiInsight = insight;
+       });
+       await _persistApiEvent(
+         request: result.request,
+         response: response,
+         previousResponse: previousResponse,
++        insight: insight,
+       );
+     } on AgentCommandFailure catch (error) {
+       if (!mounted) {
+         return;
+       }
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: error.message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+         _requestError = error.message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: error.message,
++        insight: insight,
++      );
+     } catch (error) {
+       if (!mounted) {
+         return;
+       }
++      final message = 'Request failed: ${error.toString()}';
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+-        _requestError = 'Request failed: ${error.toString()}';
++        _requestError = message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: message,
++        insight: insight,
++      );
+     } finally {
+       if (mounted) {
+         setState(() {
+
+file update:
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 77166598532cb7dd9ad819c672b0007479d10c85..149046c07bdc5f17dfd58921577c015a3f5b6c3d
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -2301,6 +2301,318 @@
+   }
+ }
+ 
++class AiInsightSummary {
++  const AiInsightSummary({
++    required this.status,
++    required this.summary,
++    this.missingFields = const [],
++  });
++
++  final String status;
++  final String summary;
++  final List<String> missingFields;
++
++  bool get isUnavailable => status == 'unavailable';
++
++  Map<String, dynamic> toPayload() {
++    return {
++      'status': status,
++      'summary': summary,
++      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
++    };
++  }
++
++  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
++    final raw = payload['ai_insight'];
++    if (raw is! Map) {
++      return null;
++    }
++    final summary = raw['summary']?.toString() ?? '';
++    if (summary.trim().isEmpty) {
++      return null;
++    }
++    final status = raw['status']?.toString() ?? 'complete';
++    final missingFields = _coerceStringList(raw['missing_fields']);
++    return AiInsightSummary(
++      status: status,
++      summary: summary,
++      missingFields: missingFields,
++    );
++  }
++
++  static AiInsightSummary unavailable(String message) {
++    return AiInsightSummary(
++      status: 'unavailable',
++      summary: message,
++    );
++  }
++}
++
++Map<String, dynamic> _applyAiInsight(
++  Map<String, dynamic> payload,
++  AiInsightSummary? insight,
++) {
++  final updated = Map<String, dynamic>.from(payload);
++  if (insight == null) {
++    updated.remove('ai_insight');
++  } else {
++    updated['ai_insight'] = insight.toPayload();
++  }
++  return updated;
++}
++
++AiInsightSummary? _buildApiInsight({
++  required ApiResponseDetails? response,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final status = response?.status;
++  final hasError = errorMessage != null || (status != null && status >= 400);
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final errorText = _resolveErrorText(errorMessage, response?.body);
++  final missingFields = _extractMissingFields(errorText, response?.body);
++  if (missingFields.isNotEmpty) {
++    final label = missingFields.length == 1 ? 'field' : 'fields';
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
++      missingFields: missingFields,
++    );
++  }
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'API error: ${_truncate(errorText, 160)}',
++    );
++  }
++  if (status != null) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary:
++          'API request failed with status $status. Review the response body for details.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'API request failed. Review the request and response details.',
++  );
++}
++
++AiInsightSummary? _buildTerminalInsight({
++  required List<TerminalOutputEntry> entries,
++  required String status,
++  String? errorMessage,
++  required String? agentBaseUrl,
++}) {
++  final loweredStatus = status.toLowerCase();
++  final stderrLines = entries
++      .where((entry) => entry.stream == TerminalStream.stderr)
++      .map((entry) => entry.text.trim())
++      .where((line) => line.isNotEmpty)
++      .toList();
++  final hasError = stderrLines.isNotEmpty ||
++      errorMessage != null ||
++      loweredStatus == 'disconnected' ||
++      loweredStatus == 'failed' ||
++      loweredStatus == 'error';
++  if (!hasError) {
++    return null;
++  }
++  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
++    return AiInsightSummary.unavailable(
++      'AI insights unavailable while disconnected from the desktop agent.',
++    );
++  }
++  final resolvedMessage = errorMessage?.trim();
++  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
++    );
++  }
++  if (stderrLines.isNotEmpty) {
++    return AiInsightSummary(
++      status: 'complete',
++      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
++    );
++  }
++  if (loweredStatus == 'disconnected') {
++    return const AiInsightSummary(
++      status: 'complete',
++      summary:
++          'Terminal session disconnected before completion. Reconnect and rerun the command.',
++    );
++  }
++  return const AiInsightSummary(
++    status: 'complete',
++    summary: 'Terminal error detected. Review stderr for details.',
++  );
++}
++
++String? _resolveErrorText(String? errorMessage, dynamic body) {
++  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
++    return errorMessage.trim();
++  }
++  if (body is Map) {
++    final candidates = [
++      body['error'],
++      body['message'],
++      body['detail'],
++      body['title'],
++    ];
++    for (final candidate in candidates) {
++      if (candidate != null) {
++        final text = candidate.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++    final errors = body['errors'];
++    if (errors is List && errors.isNotEmpty) {
++      final first = errors.first;
++      if (first != null) {
++        final text = first.toString().trim();
++        if (text.isNotEmpty) {
++          return text;
++        }
++      }
++    }
++  }
++  if (body is String && body.trim().isNotEmpty) {
++    return body.trim();
++  }
++  return null;
++}
++
++List<String> _extractMissingFields(String? errorText, dynamic body) {
++  final fields = <String>{};
++
++  void addField(String? field) {
++    final cleaned = field?.trim();
++    if (cleaned == null || cleaned.isEmpty) {
++      return;
++    }
++    fields.add(cleaned);
++  }
++
++  void addFields(Iterable<String> values) {
++    for (final value in values) {
++      addField(value);
++    }
++  }
++
++  if (body is Map) {
++    final missingValues = body['missing'] ??
++        body['missing_fields'] ??
++        body['missingFields'] ??
++        body['required_fields'] ??
++        body['requiredFields'] ??
++        body['required'] ??
++        body['fields'];
++    addFields(_coerceStringList(missingValues));
++    final errors = body['errors'];
++    if (errors is Map) {
++      for (final entry in errors.entries) {
++        final key = entry.key?.toString();
++        final value = entry.value?.toString().toLowerCase() ?? '';
++        if (key != null &&
++            (value.contains('required') || value.contains('missing'))) {
++          addField(key);
++        }
++      }
++    }
++  }
++
++  if (errorText != null && errorText.trim().isNotEmpty) {
++    addFields(_extractMissingFieldsFromText(errorText));
++  }
++
++  return fields.toList();
++}
++
++List<String> _extractMissingFieldsFromText(String text) {
++  final normalized = text.trim();
++  if (normalized.isEmpty) {
++    return [];
++  }
++  final patterns = [
++    RegExp(
++      r'missing (?:required )?field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'required field[s]?:?\s*[\"\\\']?([A-Za-z0-9_.-]+)',
++      caseSensitive: false,
++    ),
++    RegExp(
++      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
++      caseSensitive: false,
++    ),
++  ];
++  final results = <String>{};
++  for (final pattern in patterns) {
++    for (final match in pattern.allMatches(normalized)) {
++      final raw = match.group(1);
++      if (raw == null) {
++        continue;
++      }
++      final trimmed =
++          raw.replaceAll(RegExp(r'^[\"\\\']|[\"\\\']$'), '').trim();
++      if (trimmed.contains(',')) {
++        results.addAll(
++          trimmed
++              .split(',')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.contains(' and ')) {
++        results.addAll(
++          trimmed
++              .split(' and ')
++              .map((value) => value.trim())
++              .where((value) => value.isNotEmpty),
++        );
++      } else if (trimmed.isNotEmpty) {
++        results.add(trimmed);
++      }
++    }
++  }
++  return results.toList();
++}
++
++List<String> _coerceStringList(dynamic raw) {
++  if (raw == null) {
++    return [];
++  }
++  if (raw is List) {
++    return raw
++        .map((entry) => entry?.toString() ?? '')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is String) {
++    return raw
++        .split(',')
++        .map((entry) => entry.trim())
++        .where((entry) => entry.isNotEmpty)
++        .toList();
++  }
++  if (raw is Map) {
++    return raw.keys.map((key) => key.toString()).toList();
++  }
++  return [raw.toString()];
++}
++
+ class ApiRequestDetails {
+   const ApiRequestDetails({
+     required this.method,
+@@ -2427,6 +2739,7 @@
+   late List<_HeaderEditor> _headerEditors;
+   ApiResponseDetails? _response;
+   ApiResponseDetails? _previousResponse;
++  AiInsightSummary? _aiInsight;
+   Set<String> _changedPaths = {};
+   String? _bodyError;
+   String? _requestError;
+@@ -2451,6 +2764,12 @@
+       _response?.body,
+       _previousResponse?.body,
+     );
++    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
++        _buildApiInsight(
++          response: _response,
++          errorMessage: widget.event.payload['error_message']?.toString(),
++          agentBaseUrl: widget.agentBaseUrl,
++        );
+     _configureAgentClient();
+   }
+ 
+@@ -2557,6 +2876,9 @@
+       setState(() {
+         _requestError =
+             'Connect to the desktop agent to send API requests.';
++        _aiInsight = AiInsightSummary.unavailable(
++          'AI insights unavailable while disconnected from the desktop agent.',
++        );
+       });
+       return;
+     }
+@@ -2568,6 +2890,12 @@
+     });
+ 
+     final headers = _collectHeaders();
++    final requestDetails = ApiRequestDetails(
++      method: _method,
++      url: url,
++      headers: headers,
++      body: parsedBody,
++    );
+     try {
+       final result = await agentClient.sendApiCommand(
+         method: _method,
+@@ -2584,30 +2912,60 @@
+         response.body,
+         previousResponse?.body,
+       );
++      final insight = _buildApiInsight(
++        response: response,
++        errorMessage: null,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+         _previousResponse = previousResponse;
+         _response = response;
+         _changedPaths = changedPaths;
++        _aiInsight = insight;
+       });
+       await _persistApiEvent(
+         request: result.request,
+         response: response,
+         previousResponse: previousResponse,
++        insight: insight,
+       );
+     } on AgentCommandFailure catch (error) {
+       if (!mounted) {
+         return;
+       }
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: error.message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+         _requestError = error.message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: error.message,
++        insight: insight,
++      );
+     } catch (error) {
+       if (!mounted) {
+         return;
+       }
++      final message = 'Request failed: ${error.toString()}';
++      final insight = _buildApiInsight(
++        response: null,
++        errorMessage: message,
++        agentBaseUrl: widget.agentBaseUrl,
++      );
+       setState(() {
+-        _requestError = 'Request failed: ${error.toString()}';
++        _requestError = message;
++        _aiInsight = insight;
+       });
++      await _persistApiFailure(
++        request: requestDetails,
++        errorMessage: message,
++        insight: insight,
++      );
+     } finally {
+       if (mounted) {
+         setState(() {
+
+
+thinking
+**Updating event persistence with AI insight**
+
+I'm adding an optional AI insight parameter to the event persistence method and planning a new persistence method for API failures to handle AI insights properly.
+Reconnecting... 1/5 (stream disconnected before completion: Transport error: network error: error decoding response body)
+2026-01-27T23:58:41.285928Z ERROR codex_api::endpoint::responses: error=network error: error sending request for url (https://gmn.chuangzuoli.com/responses)
+Reconnecting... 2/5 (stream disconnected before completion: error sending request for url (https://gmn.chuangzuoli.com/responses))
+2026-01-27T23:58:44.707043Z ERROR codex_api::endpoint::responses: error=network error: error sending request for url (https://gmn.chuangzuoli.com/responses)
+Reconnecting... 3/5 (stream disconnected before completion: error sending request for url (https://gmn.chuangzuoli.com/responses))
+2026-01-27T23:58:48.477653Z ERROR codex_api::endpoint::responses: error=network error: error sending request for url (https://gmn.chuangzuoli.com/responses)
+Reconnecting... 4/5 (stream disconnected before completion: error sending request for url (https://gmn.chuangzuoli.com/responses))
+2026-01-27T23:58:53.087724Z ERROR codex_api::endpoint::responses: error=network error: error sending request for url (https://gmn.chuangzuoli.com/responses)
+Reconnecting... 5/5 (stream disconnected before completion: error sending request for url (https://gmn.chuangzuoli.com/responses))
+2026-01-27T23:58:59.246411Z ERROR codex_api::endpoint::responses: error=network error: error sending request for url (https://gmn.chuangzuoli.com/responses)
+ERROR: stream disconnected before completion: error sending request for url (https://gmn.chuangzuoli.com/responses)
+tokens used
+124,532

@@ -1,6 +1,10 @@
 # Activity Log
 
 ## Run Summary
+- 2026-01-28 09:54:24 | run=20260128-074357-34838 | iter=3 | mode=build | story=US-012 | duration=2043s | status=error
+- 2026-01-28 09:20:19 | run=20260128-074357-34838 | iter=2 | mode=build | story=US-012 | duration=4878s | status=error
+- 2026-01-28 07:58:59 | run=20260128-074357-34838 | iter=1 | mode=build | story=US-012 | duration=902s | status=error
+- 2026-01-28 07:35:13 | run=20260128-012433-59985 | iter=10 | mode=build | story=US-011 | duration=1595s | status=success
 - 2026-01-28 07:08:35 | run=20260128-012433-59985 | iter=9 | mode=build | story=US-010 | duration=1981s | status=success
 - 2026-01-28 06:35:32 | run=20260128-012433-59985 | iter=8 | mode=build | story=US-009 | duration=3828s | status=success
 - 2026-01-28 05:31:41 | run=20260128-012433-59985 | iter=7 | mode=build | story=US-008 | duration=1244s | status=success
@@ -171,3 +175,18 @@
 [2026-01-28 07:24:37] Browser verification completed for export/import UI
 [2026-01-28 07:27:19] Completed flutter tests/analyze and build web
 [2026-01-28 07:31:50] Updated progress log for US-011
+[2026-01-28 07:35:12] ITERATION 10 end (duration=1595s)
+[2026-01-28 07:35:15] ITERATION 11 start (mode=build story=US-012)
+[2026-01-28 07:35:40] Start US-012 AI insight summaries for errors
+[2026-01-28 07:43:57] ITERATION 1 start (mode=build story=US-012)
+[2026-01-28 07:44:28] Start US-012 AI insight summaries for errors
+[2026-01-28 07:58:59] ITERATION 1 end (duration=902s)
+[2026-01-28 07:59:01] ITERATION 2 start (mode=build story=US-012)
+[2026-01-28 09:20:19] ITERATION 2 end (duration=4878s)
+[2026-01-28 09:20:21] ITERATION 3 start (mode=build story=US-012)
+[2026-01-28 09:54:24] ITERATION 3 end (duration=2043s)
+[2026-01-28 09:54:26] ITERATION 4 start (mode=build story=US-012)
+[2026-01-28 09:57:46] ITERATION 1 start (mode=build story=US-012)
+[2026-01-28 09:58:20] Start US-012 work
+[2026-01-28 10:13:35] Implemented AI insight persistence and UI for API/terminal errors
+[2026-01-28 10:27:25] Ran flutter tests/analyze/build and browser UI verification

@@ -1780,6 +1780,12 @@ class _TimelineEventRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final visuals = _eventVisuals(event.type);
+    final insight = AiInsightSummary.fromPayload(event.payload);
+    final summary = insight?.summary ?? '';
+    final hasSummary = summary.trim().isNotEmpty;
+    final summaryColor = insight?.isUnavailable == true
+        ? const Color(0xFF9A3412)
+        : const Color(0xFFB91C1C);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1823,6 +1829,16 @@ class _TimelineEventRow extends StatelessWidget {
                         color: const Color(0xFF64748B),
                       ),
                     ),
+                    if (hasSummary) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'AI: ${_truncate(summary, 90)}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: summaryColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2301,6 +2317,396 @@ class _InfoPill extends StatelessWidget {
   }
 }
 
+class _AiInsightSummaryCard extends StatelessWidget {
+  const _AiInsightSummaryCard({required this.insight});
+
+  final AiInsightSummary insight;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final summary = insight.summary.trim();
+    final hasMissing = insight.missingFields.isNotEmpty;
+    final isUnavailable = insight.isUnavailable;
+    return _ContextSectionCard(
+      title: 'AI Insight',
+      subtitle: isUnavailable ? 'AI analysis unavailable' : 'Error analysis',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isUnavailable)
+            _InlineStatus(
+              message: summary,
+              isError: true,
+            )
+          else
+            Text(
+              summary,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF1E293B),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          if (!isUnavailable && hasMissing) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Missing fields',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFFB91C1C),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: insight.missingFields
+                  .map((field) => _MissingFieldChip(label: field))
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MissingFieldChip extends StatelessWidget {
+  const _MissingFieldChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEE2E2),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: const Color(0xFFB91C1C),
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
+  }
+}
+
+class AiInsightSummary {
+  const AiInsightSummary({
+    required this.status,
+    required this.summary,
+    this.missingFields = const [],
+  });
+
+  final String status;
+  final String summary;
+  final List<String> missingFields;
+
+  bool get isUnavailable => status == 'unavailable';
+
+  Map<String, dynamic> toPayload() {
+    return {
+      'status': status,
+      'summary': summary,
+      if (missingFields.isNotEmpty) 'missing_fields': missingFields,
+    };
+  }
+
+  static AiInsightSummary? fromPayload(Map<String, dynamic> payload) {
+    final raw = payload['ai_insight'];
+    if (raw is! Map) {
+      return null;
+    }
+    final summary = raw['summary']?.toString() ?? '';
+    if (summary.trim().isEmpty) {
+      return null;
+    }
+    final status = raw['status']?.toString() ?? 'complete';
+    final missingFields = _coerceStringList(raw['missing_fields']);
+    return AiInsightSummary(
+      status: status,
+      summary: summary,
+      missingFields: missingFields,
+    );
+  }
+
+  static AiInsightSummary unavailable(String message) {
+    return AiInsightSummary(
+      status: 'unavailable',
+      summary: message,
+    );
+  }
+}
+
+Map<String, dynamic> _applyAiInsight(
+  Map<String, dynamic> payload,
+  AiInsightSummary? insight,
+) {
+  final updated = Map<String, dynamic>.from(payload);
+  if (insight == null) {
+    updated.remove('ai_insight');
+  } else {
+    updated['ai_insight'] = insight.toPayload();
+  }
+  return updated;
+}
+
+AiInsightSummary? _buildApiInsight({
+  required ApiResponseDetails? response,
+  String? errorMessage,
+  required String? agentBaseUrl,
+}) {
+  final status = response?.status;
+  final hasError = errorMessage != null || (status != null && status >= 400);
+  if (!hasError) {
+    return null;
+  }
+  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
+    return AiInsightSummary.unavailable(
+      'AI insights unavailable while disconnected from the desktop agent.',
+    );
+  }
+  final errorText = _resolveErrorText(errorMessage, response?.body);
+  final missingFields = _extractMissingFields(errorText, response?.body);
+  if (missingFields.isNotEmpty) {
+    final label = missingFields.length == 1 ? 'field' : 'fields';
+    return AiInsightSummary(
+      status: 'complete',
+      summary:
+          'Missing required $label: ${missingFields.join(', ')}. Update the request payload.',
+      missingFields: missingFields,
+    );
+  }
+  if (errorText != null && errorText.trim().isNotEmpty) {
+    return AiInsightSummary(
+      status: 'complete',
+      summary: 'API error: ${_truncate(errorText, 160)}',
+    );
+  }
+  if (status != null) {
+    return AiInsightSummary(
+      status: 'complete',
+      summary:
+          'API request failed with status $status. Review the response body for details.',
+    );
+  }
+  return const AiInsightSummary(
+    status: 'complete',
+    summary: 'API request failed. Review the request and response details.',
+  );
+}
+
+AiInsightSummary? _buildTerminalInsight({
+  required List<TerminalOutputEntry> entries,
+  required String status,
+  String? errorMessage,
+  required String? agentBaseUrl,
+}) {
+  final loweredStatus = status.toLowerCase();
+  final stderrLines = entries
+      .where((entry) => entry.stream == TerminalStream.stderr)
+      .map((entry) => entry.text.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  final hasError = stderrLines.isNotEmpty ||
+      errorMessage != null ||
+      loweredStatus == 'disconnected' ||
+      loweredStatus == 'failed' ||
+      loweredStatus == 'error';
+  if (!hasError) {
+    return null;
+  }
+  if (agentBaseUrl == null || agentBaseUrl.trim().isEmpty) {
+    return AiInsightSummary.unavailable(
+      'AI insights unavailable while disconnected from the desktop agent.',
+    );
+  }
+  final resolvedMessage = errorMessage?.trim();
+  if (resolvedMessage != null && resolvedMessage.isNotEmpty) {
+    return AiInsightSummary(
+      status: 'complete',
+      summary: 'Terminal error: ${_truncate(resolvedMessage, 160)}',
+    );
+  }
+  if (stderrLines.isNotEmpty) {
+    return AiInsightSummary(
+      status: 'complete',
+      summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
+    );
+  }
+  if (loweredStatus == 'disconnected') {
+    return const AiInsightSummary(
+      status: 'complete',
+      summary:
+          'Terminal session disconnected before completion. Reconnect and rerun the command.',
+    );
+  }
+  return const AiInsightSummary(
+    status: 'complete',
+    summary: 'Terminal error detected. Review stderr for details.',
+  );
+}
+
+String? _resolveErrorText(String? errorMessage, dynamic body) {
+  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
+    return errorMessage.trim();
+  }
+  if (body is Map) {
+    final candidates = [
+      body['error'],
+      body['message'],
+      body['detail'],
+      body['title'],
+    ];
+    for (final candidate in candidates) {
+      if (candidate != null) {
+        final text = candidate.toString().trim();
+        if (text.isNotEmpty) {
+          return text;
+        }
+      }
+    }
+    final errors = body['errors'];
+    if (errors is List && errors.isNotEmpty) {
+      final first = errors.first;
+      if (first != null) {
+        final text = first.toString().trim();
+        if (text.isNotEmpty) {
+          return text;
+        }
+      }
+    }
+  }
+  if (body is String && body.trim().isNotEmpty) {
+    return body.trim();
+  }
+  return null;
+}
+
+List<String> _extractMissingFields(String? errorText, dynamic body) {
+  final fields = <String>{};
+
+  void addField(String? field) {
+    final cleaned = field?.trim();
+    if (cleaned == null || cleaned.isEmpty) {
+      return;
+    }
+    fields.add(cleaned);
+  }
+
+  void addFields(Iterable<String> values) {
+    for (final value in values) {
+      addField(value);
+    }
+  }
+
+  if (body is Map) {
+    final missingValues = body['missing'] ??
+        body['missing_fields'] ??
+        body['missingFields'] ??
+        body['required_fields'] ??
+        body['requiredFields'] ??
+        body['required'] ??
+        body['fields'];
+    addFields(_coerceStringList(missingValues));
+    final errors = body['errors'];
+    if (errors is Map) {
+      for (final entry in errors.entries) {
+        final key = entry.key?.toString();
+        final value = entry.value?.toString().toLowerCase() ?? '';
+        if (key != null &&
+            (value.contains('required') || value.contains('missing'))) {
+          addField(key);
+        }
+      }
+    }
+  }
+
+  if (errorText != null && errorText.trim().isNotEmpty) {
+    addFields(_extractMissingFieldsFromText(errorText));
+  }
+
+  return fields.toList();
+}
+
+List<String> _extractMissingFieldsFromText(String text) {
+  final normalized = text.trim();
+  if (normalized.isEmpty) {
+    return [];
+  }
+  final patterns = [
+    RegExp(
+      r'''missing (?:required )?field[s]?:?\s*['"]?([A-Za-z0-9_.-]+)''',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'''required field[s]?:?\s*['"]?([A-Za-z0-9_.-]+)''',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'field[s]? ([A-Za-z0-9_.-]+) (?:is|are) required',
+      caseSensitive: false,
+    ),
+  ];
+  final results = <String>{};
+  for (final pattern in patterns) {
+    for (final match in pattern.allMatches(normalized)) {
+      final raw = match.group(1);
+      if (raw == null) {
+        continue;
+      }
+      final trimmed =
+          raw.replaceAll(RegExp(r'''^['"]|['"]$'''), '').trim();
+      if (trimmed.contains(',')) {
+        results.addAll(
+          trimmed
+              .split(',')
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty),
+        );
+      } else if (trimmed.contains(' and ')) {
+        results.addAll(
+          trimmed
+              .split(' and ')
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty),
+        );
+      } else if (trimmed.isNotEmpty) {
+        results.add(trimmed);
+      }
+    }
+  }
+  return results.toList();
+}
+
+List<String> _coerceStringList(dynamic raw) {
+  if (raw == null) {
+    return [];
+  }
+  if (raw is List) {
+    return raw
+        .map((entry) => entry?.toString() ?? '')
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList();
+  }
+  if (raw is String) {
+    return raw
+        .split(',')
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList();
+  }
+  if (raw is Map) {
+    return raw.keys.map((key) => key.toString()).toList();
+  }
+  return [raw.toString()];
+}
+
 class ApiRequestDetails {
   const ApiRequestDetails({
     required this.method,
@@ -2427,6 +2833,7 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
   late List<_HeaderEditor> _headerEditors;
   ApiResponseDetails? _response;
   ApiResponseDetails? _previousResponse;
+  AiInsightSummary? _aiInsight;
   Set<String> _changedPaths = {};
   String? _bodyError;
   String? _requestError;
@@ -2451,6 +2858,12 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
       _response?.body,
       _previousResponse?.body,
     );
+    _aiInsight = AiInsightSummary.fromPayload(widget.event.payload) ??
+        _buildApiInsight(
+          response: _response,
+          errorMessage: widget.event.payload['error_message']?.toString(),
+          agentBaseUrl: widget.agentBaseUrl,
+        );
     _configureAgentClient();
   }
 
@@ -2552,12 +2965,29 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
       }
     }
 
+    final headers = _collectHeaders();
+    final requestDetails = ApiRequestDetails(
+      method: _method,
+      url: url,
+      headers: headers,
+      body: parsedBody,
+    );
+
     final agentClient = _agentClient;
     if (agentClient == null) {
+      const errorMessage = 'Connect to the desktop agent to send API requests.';
+      final insight = AiInsightSummary.unavailable(
+        'AI insights unavailable while disconnected from the desktop agent.',
+      );
       setState(() {
-        _requestError =
-            'Connect to the desktop agent to send API requests.';
+        _requestError = errorMessage;
+        _aiInsight = insight;
       });
+      await _persistApiFailure(
+        request: requestDetails,
+        errorMessage: errorMessage,
+        insight: insight,
+      );
       return;
     }
 
@@ -2567,7 +2997,6 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
       _requestError = null;
     });
 
-    final headers = _collectHeaders();
     try {
       final result = await agentClient.sendApiCommand(
         method: _method,
@@ -2584,30 +3013,60 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
         response.body,
         previousResponse?.body,
       );
+      final insight = _buildApiInsight(
+        response: response,
+        errorMessage: null,
+        agentBaseUrl: widget.agentBaseUrl,
+      );
       setState(() {
         _previousResponse = previousResponse;
         _response = response;
         _changedPaths = changedPaths;
+        _aiInsight = insight;
       });
       await _persistApiEvent(
         request: result.request,
         response: response,
         previousResponse: previousResponse,
+        insight: insight,
       );
     } on AgentCommandFailure catch (error) {
       if (!mounted) {
         return;
       }
+      final insight = _buildApiInsight(
+        response: null,
+        errorMessage: error.message,
+        agentBaseUrl: widget.agentBaseUrl,
+      );
       setState(() {
         _requestError = error.message;
+        _aiInsight = insight;
       });
+      await _persistApiFailure(
+        request: requestDetails,
+        errorMessage: error.message,
+        insight: insight,
+      );
     } catch (error) {
       if (!mounted) {
         return;
       }
+      final message = 'Request failed: ${error.toString()}';
+      final insight = _buildApiInsight(
+        response: null,
+        errorMessage: message,
+        agentBaseUrl: widget.agentBaseUrl,
+      );
       setState(() {
-        _requestError = 'Request failed: ${error.toString()}';
+        _requestError = message;
+        _aiInsight = insight;
       });
+      await _persistApiFailure(
+        request: requestDetails,
+        errorMessage: message,
+        insight: insight,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -2621,6 +3080,7 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
     required ApiRequestDetails request,
     required ApiResponseDetails response,
     required ApiResponseDetails? previousResponse,
+    required AiInsightSummary? insight,
   }) async {
     final payload = Map<String, dynamic>.from(widget.event.payload);
     payload['request'] = {
@@ -2643,13 +3103,15 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
         'body': previousResponse.body,
       };
     }
+    payload.remove('error_message');
+    final updatedPayload = _applyAiInsight(payload, insight);
 
     final updatedEvent = TimelineEvent(
       id: widget.event.id,
       sessionId: widget.event.sessionId,
       type: widget.event.type,
       title: widget.event.title,
-      payload: payload,
+      payload: updatedPayload,
       createdAt: widget.event.createdAt,
     );
     try {
@@ -2668,6 +3130,45 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
     }
   }
 
+  Future<void> _persistApiFailure({
+    required ApiRequestDetails request,
+    required String errorMessage,
+    required AiInsightSummary? insight,
+  }) async {
+    final payload = Map<String, dynamic>.from(widget.event.payload);
+    payload['request'] = {
+      'method': request.method,
+      'url': request.url,
+      'headers': request.headers,
+      'body': request.body,
+    };
+    payload['error_message'] = errorMessage;
+    final updatedPayload = _applyAiInsight(payload, insight);
+
+    final updatedEvent = TimelineEvent(
+      id: widget.event.id,
+      sessionId: widget.event.sessionId,
+      type: widget.event.type,
+      title: widget.event.title,
+      payload: updatedPayload,
+      createdAt: widget.event.createdAt,
+    );
+    try {
+      await widget.storage.insertTimelineEvent(updatedEvent);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to save API failure: ${error.toString()}',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2680,6 +3181,7 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
     final responseBodyText = _stringifyBody(responseBody);
     final hasResponse = _hasResponse(response);
     final hasDiff = _changedPaths.isNotEmpty;
+    final aiInsight = _aiInsight;
 
     return _TimelineDetailScaffold(
       title: 'API Explorer',
@@ -2940,6 +3442,10 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
                     )
                   : const _EmptyHint(text: 'No response recorded yet.'),
             ),
+            if (aiInsight != null) ...[
+              const SizedBox(height: 16),
+              _AiInsightSummaryCard(insight: aiInsight),
+            ],
           ],
         ),
       ),
@@ -3333,11 +3839,23 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       _isSending = true;
     });
 
+    final event = await _ensureTerminalEvent(active, command);
+    if (!mounted) {
+      return;
+    }
+    final seededView = active.copyWith(
+      lastCommand: command,
+      lastEvent: event,
+    );
+    _replaceSession(active.session.id, seededView);
+
     final agentClient = _agentClient;
     if (agentClient == null) {
       await _markSessionDisconnected(
         active.session.id,
         'Connect to the desktop agent to run terminal commands.',
+        event: event,
+        command: command,
       );
       if (mounted) {
         setState(() {
@@ -3353,6 +3871,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       await _markSessionDisconnected(
         active.session.id,
         error.message,
+        event: event,
+        command: command,
       );
       if (mounted) {
         setState(() {
@@ -3364,6 +3884,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       await _markSessionDisconnected(
         active.session.id,
         'Terminal command failed: ${error.toString()}',
+        event: event,
+        command: command,
       );
       if (mounted) {
         setState(() {
@@ -3375,11 +3897,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
 
     final updatedSession = _sessionWithStatus(active.session, 'running');
     await _persistSession(updatedSession);
-    final event = await _ensureTerminalEvent(active, command);
-    final updatedView = active.copyWith(
+    final updatedView = seededView.copyWith(
       session: updatedSession,
-      lastCommand: command,
-      lastEvent: event,
     );
     if (!mounted) {
       return;
@@ -3408,7 +3927,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     );
   }
 
-  Future<void> _markSessionDisconnected(String sessionId, String message) async {
+  Future<void> _markSessionDisconnected(
+    String sessionId,
+    String message, {
+    TimelineEvent? event,
+    String? command,
+  }) async {
     final view = _sessionById(sessionId);
     if (view == null) {
       return;
@@ -3418,10 +3942,17 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     if (!mounted) {
       return;
     }
-    _replaceSession(
-      sessionId,
-      view.copyWith(session: updated),
-    );
+    final updatedView = view.copyWith(session: updated);
+    _replaceSession(sessionId, updatedView);
+    if (event != null && command != null) {
+      await _persistTerminalEvent(
+        event: event,
+        command: command,
+        entries: updatedView.output,
+        status: 'disconnected',
+        errorMessage: message,
+      );
+    }
     setState(() {
       _commandError = message;
     });
@@ -3527,6 +4058,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     required String command,
     required List<TerminalOutputEntry> entries,
     required String status,
+    String? errorMessage,
   }) async {
     final payload = Map<String, dynamic>.from(event.payload);
     payload['command'] = command;
@@ -3541,12 +4073,24 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         .toList();
     payload['output_preview'] = _buildOutputPreview(entries);
     payload['updated_at'] = DateTime.now().toIso8601String();
+    if (errorMessage != null && errorMessage.trim().isNotEmpty) {
+      payload['error_message'] = errorMessage;
+    } else {
+      payload.remove('error_message');
+    }
+    final insight = _buildTerminalInsight(
+      entries: entries,
+      status: status,
+      errorMessage: errorMessage,
+      agentBaseUrl: widget.agentBaseUrl,
+    );
+    final updatedPayload = _applyAiInsight(payload, insight);
     final updatedEvent = TimelineEvent(
       id: event.id,
       sessionId: event.sessionId,
       type: event.type,
       title: event.title,
-      payload: payload,
+      payload: updatedPayload,
       createdAt: event.createdAt,
     );
     try {
@@ -3761,6 +4305,19 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final isRunning = status == 'running';
     final lastCommand = active?.lastCommand;
     final lastEventTime = active?.lastEvent?.createdAt;
+    final lastEvent = active?.lastEvent;
+    final eventInsight = lastEvent == null
+        ? null
+        : AiInsightSummary.fromPayload(lastEvent.payload);
+    final aiInsight = eventInsight ??
+        (active == null
+            ? null
+            : _buildTerminalInsight(
+                entries: output,
+                status: active.session.status,
+                errorMessage: lastEvent?.payload['error_message']?.toString(),
+                agentBaseUrl: widget.agentBaseUrl,
+              ));
 
     return _TimelineDetailScaffold(
       title: 'Terminal',
@@ -3950,6 +4507,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                 ],
               ),
             ),
+            if (aiInsight != null) ...[
+              const SizedBox(height: 16),
+              _AiInsightSummaryCard(insight: aiInsight),
+            ],
           ],
         ),
       ),
