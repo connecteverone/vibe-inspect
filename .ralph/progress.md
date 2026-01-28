@@ -583,3 +583,66 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
   - Useful context: dev-browser scrolls the flt-semantic-node-4 container to
     reach lower cards in the web build.
 ---
+## [2026-01-28 10:33] - US-012: AI insight summaries for errors
+Thread: 
+Run: 20260128-095746-38453 (iteration 1)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-095746-38453-iter-1.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-095746-38453-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 47a3431 feat(ai-insights): add error summary flow
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> PASS
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> PASS
+  - Command: cd mobile && flutter build web -> PASS
+- Files changed:
+  - .agents/tasks/prd-mobile-verification.json
+  - .ralph/.tmp/prompt-20260128-012433-59985-11.md
+  - .ralph/.tmp/prompt-20260128-074357-34838-1.md
+  - .ralph/.tmp/prompt-20260128-074357-34838-2.md
+  - .ralph/.tmp/prompt-20260128-074357-34838-3.md
+  - .ralph/.tmp/prompt-20260128-074357-34838-4.md
+  - .ralph/.tmp/prompt-20260128-095746-38453-1.md
+  - .ralph/.tmp/story-20260128-012433-59985-11.json
+  - .ralph/.tmp/story-20260128-012433-59985-11.md
+  - .ralph/.tmp/story-20260128-074327-33736-1.json
+  - .ralph/.tmp/story-20260128-074327-33736-1.md
+  - .ralph/.tmp/story-20260128-074357-34838-1.json
+  - .ralph/.tmp/story-20260128-074357-34838-1.md
+  - .ralph/.tmp/story-20260128-074357-34838-2.json
+  - .ralph/.tmp/story-20260128-074357-34838-2.md
+  - .ralph/.tmp/story-20260128-074357-34838-3.json
+  - .ralph/.tmp/story-20260128-074357-34838-3.md
+  - .ralph/.tmp/story-20260128-074357-34838-4.json
+  - .ralph/.tmp/story-20260128-074357-34838-4.md
+  - .ralph/.tmp/story-20260128-095718-38394-1.json
+  - .ralph/.tmp/story-20260128-095718-38394-1.md
+  - .ralph/.tmp/story-20260128-095746-38453-1.json
+  - .ralph/.tmp/story-20260128-095746-38453-1.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260128-012433-59985-iter-10.log
+  - .ralph/runs/run-20260128-012433-59985-iter-10.md
+  - .ralph/runs/run-20260128-012433-59985-iter-11.log
+  - .ralph/runs/run-20260128-074357-34838-iter-1.log
+  - .ralph/runs/run-20260128-074357-34838-iter-1.md
+  - .ralph/runs/run-20260128-074357-34838-iter-2.log
+  - .ralph/runs/run-20260128-074357-34838-iter-2.md
+  - .ralph/runs/run-20260128-074357-34838-iter-3.log
+  - .ralph/runs/run-20260128-074357-34838-iter-3.md
+  - .ralph/runs/run-20260128-074357-34838-iter-4.log
+  - .ralph/runs/run-20260128-095746-38453-iter-1.log
+  - .ralph/progress.md
+  - mobile/lib/main.dart
+- What was implemented
+  Added AI insight generation for API and terminal error payloads, persisted
+  summaries into timeline events, and surfaced them in tool views with missing
+  field highlights and offline fallback messaging.
+- **Learnings for future iterations:**
+  - Patterns discovered: Use raw triple-quoted regex strings for mixed quotes.
+  - Gotchas encountered: Flutter web command bar submits on Enter reliably.
+  - Useful context: dev-browser requires server.sh to finish npm install.
+---
