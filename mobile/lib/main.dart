@@ -8689,6 +8689,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool _tightJpegEnabled = false;
   VncViewMode _viewMode = VncViewMode.fit;
   bool _isConnecting = false;
+  bool _isResizing = false;
   String? _connectionError;
   Timer? _clickTimer;
   Timer? _dragHoldTimer;
@@ -8724,6 +8725,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   double _inputOffsetX = 0;
   double _inputOffsetY = 0;
   bool _directInputEnabled = false;
+  bool? _directInputBackup;
   int? _selectedDisplayIndex;
   List<VncDisplayInfo> _availableDisplays = const [];
   bool _isAutoCalibrating = false;
@@ -9035,24 +9037,37 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     );
   }
 
-  Future<void> _startStream({Size? requestedSize}) async {
-    if (_isConnecting || _isDisposed) {
+  Future<void> _startStream({
+    Size? requestedSize,
+    bool preserveExisting = false,
+    bool silentFailure = false,
+  }) async {
+    if (_isConnecting || _isResizing || _isDisposed) {
       return;
     }
-    setState(() {
-      _isConnecting = true;
-      _connectionError = null;
-    });
-    await _updateSession(status: 'connecting');
+    if (preserveExisting) {
+      _isResizing = true;
+    } else {
+      setState(() {
+        _isConnecting = true;
+        _connectionError = null;
+      });
+      await _updateSession(status: 'connecting');
+    }
 
     final agentClient = _agentClient;
     if (agentClient == null) {
-      await _setStreamFailure(
-        'Connect to the desktop agent to start streaming.',
-      );
+      if (!preserveExisting) {
+        await _setStreamFailure(
+          'Connect to the desktop agent to start streaming.',
+        );
+      }
+      _isResizing = false;
       return;
     }
 
+    VncRfbClient? candidate;
+    final previousClient = _vncClient;
     try {
       final desired = requestedSize ?? _preferredStreamSize();
       final sessionInfo = await agentClient.sendVncCommand(
@@ -9063,19 +9078,29 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         displayIndex: _selectedDisplayIndex,
       );
       final wsUri = _buildVncWebsocketUri(sessionInfo);
-      _vncClient?.close();
-      _vncClient = VncRfbClient(
+      candidate = VncRfbClient(
         uri: wsUri,
         onFrame: _handleFrame,
-        onError: (message) => _setStreamFailure(message),
+        onError: (message) {
+          if (!mounted || _isDisposed) {
+            return;
+          }
+          if (_vncClient != candidate) {
+            return;
+          }
+          unawaited(_setStreamFailure(message));
+        },
         preferredEncodings: _buildEncodingList(),
       );
-      await _vncClient!.connect();
+      await candidate.connect();
       if (!mounted || _isDisposed) {
         return;
       }
       setState(() {
-        _isConnecting = false;
+        if (!preserveExisting) {
+          _isConnecting = false;
+        }
+        _connectionError = null;
         _frameSize = Size(
           sessionInfo.width.toDouble(),
           sessionInfo.height.toDouble(),
@@ -9089,6 +9114,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _selectedDisplayIndex = sessionInfo.displayIndex;
         }
       });
+      _vncClient = candidate;
+      previousClient?.close();
       if (sessionInfo.displayIndex != null) {
         unawaited(_persistDisplaySelection(sessionInfo.displayIndex));
       }
@@ -9096,9 +9123,27 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _vncClient?.requestFullFrame();
       _maybeAutoResizeStream();
     } on AgentCommandFailure catch (error) {
-      await _setStreamFailure(error.message);
+      if (!preserveExisting) {
+        await _setStreamFailure(error.message);
+      } else if (!silentFailure && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
     } catch (error) {
-      await _setStreamFailure('VNC stream failed: ${error.toString()}');
+      if (!preserveExisting) {
+        await _setStreamFailure('VNC stream failed: ${error.toString()}');
+      } else if (!silentFailure && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('VNC resize failed: ${error.toString()}'),
+          ),
+        );
+      }
+    } finally {
+      if (preserveExisting) {
+        _isResizing = false;
+      }
     }
   }
 
@@ -9185,6 +9230,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
   void _commitZoomIndex(int index) {
     _updateZoomIndex(index, commit: true);
+    _requestStreamRefresh(resetAutoResize: true);
   }
 
   void _resetZoom() {
@@ -9195,6 +9241,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     });
     _triggerFocusPulse();
     unawaited(_updateSession(status: _currentStatusLabel));
+    _requestStreamRefresh(resetAutoResize: true);
   }
 
   String get _currentStatusLabel {
@@ -9456,12 +9503,26 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       }
     }
     final dpr = MediaQuery.of(context).devicePixelRatio;
-    var targetWidth = (_lastViewSize.width * dpr).round().clamp(1, 4096);
-    var targetHeight = (targetWidth / aspect).round().clamp(1, 4096);
-    final maxHeight = (_lastViewSize.height * dpr).round();
-    if (targetHeight > maxHeight && maxHeight > 0) {
-      targetHeight = maxHeight;
-      targetWidth = (targetHeight * aspect).round().clamp(1, 4096);
+    final zoomFactor = _zoom.clamp(0.7, 2.5);
+    final display = _availableDisplays.isNotEmpty
+        ? _availableDisplays.firstWhere(
+            (item) => item.index == _selectedDisplayIndex,
+            orElse: () => _availableDisplays.first,
+          )
+        : null;
+    final maxDisplayWidth =
+        (display?.width ?? 4096) > 0 ? (display?.width ?? 4096) : 4096;
+    final maxDisplayHeight =
+        (display?.height ?? 4096) > 0 ? (display?.height ?? 4096) : 4096;
+    var targetWidth =
+        (_lastViewSize.width * dpr * zoomFactor).round().clamp(1, maxDisplayWidth);
+    var targetHeight =
+        (targetWidth / aspect).round().clamp(1, maxDisplayHeight);
+    final viewMaxHeight = (_lastViewSize.height * dpr).round();
+    if (zoomFactor <= 1.05 && viewMaxHeight > 0 && targetHeight > viewMaxHeight) {
+      targetHeight = viewMaxHeight;
+      targetWidth =
+          (targetHeight * aspect).round().clamp(1, maxDisplayWidth);
     }
     return Size(targetWidth.toDouble(), targetHeight.toDouble());
   }
@@ -9471,6 +9532,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     if (_autoSizedOnce ||
+        _isResizing ||
         _isConnecting ||
         _vncClient == null ||
         _viewMode == VncViewMode.original) {
@@ -9492,7 +9554,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (!mounted || _isDisposed) {
         return;
       }
-      unawaited(_startStream(requestedSize: desired));
+      unawaited(
+        _startStream(
+          requestedSize: desired,
+          preserveExisting: true,
+          silentFailure: true,
+        ),
+      );
     });
   }
 
@@ -9793,6 +9861,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     setState(() {
       _isFullscreen = value;
       _autoSizedOnce = false;
+      if (value) {
+        _directInputBackup = _directInputEnabled;
+        _directInputEnabled = false;
+      } else if (_directInputBackup != null) {
+        _directInputEnabled = _directInputBackup ?? false;
+        _directInputBackup = null;
+      }
     });
     if (value) {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -9977,6 +10052,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required Size screenSize,
     bool isFullscreen = false,
     bool expandToFit = false,
+    bool showControls = true,
   }) {
     final canvas = LayoutBuilder(
       builder: (context, constraints) {
@@ -10109,7 +10185,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     },
                   ),
                 ),
-              if (!isLandscape)
+              if (showControls && !isLandscape)
                 Positioned(
                   right: 12,
                   bottom: 12,
@@ -10122,7 +10198,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     onKeyboard: _showKeyboardInput,
                   ),
                 ),
-              if (isLandscape)
+              if (showControls && (isLandscape || isFullscreen))
                 Positioned(
                   right: 12 + safePadding.right,
                   bottom: 12 + safePadding.bottom,
@@ -10143,22 +10219,24 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     ),
                   ),
                 ),
-              Positioned(
-                left: 12,
-                top: 12,
-                child: _VncOverlayIconButton(
-                  icon: _isFullscreen
-                      ? Icons.fullscreen_exit
-                      : Icons.fullscreen,
-                  label: _isFullscreen ? 'Exit' : 'Full',
-                  onPressed: () => _setFullscreen(!_isFullscreen),
+              if (showControls)
+                Positioned(
+                  left: 12,
+                  top: 12,
+                  child: _VncOverlayIconButton(
+                    icon: _isFullscreen
+                        ? Icons.fullscreen_exit
+                        : Icons.fullscreen,
+                    label: _isFullscreen ? 'Exit' : 'Full',
+                    onPressed: () => _setFullscreen(!_isFullscreen),
+                  ),
                 ),
-              ),
-              Positioned(
-                right: 12,
-                top: 12,
-                child: _VncZoomBadge(value: _zoom),
-              ),
+              if (showControls)
+                Positioned(
+                  right: 12,
+                  top: 12,
+                  child: _VncZoomBadge(value: _zoom),
+                ),
               if (!isInteractive)
                 Positioned.fill(
                   child: Container(
@@ -10257,6 +10335,165 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return AspectRatio(
       aspectRatio: _viewAspectRatio(screenSize),
       child: canvas,
+    );
+  }
+
+  Widget _buildFullscreenInputPanel({
+    required bool isInteractive,
+    required bool isLandscape,
+  }) {
+    final trackpadEnabled = isInteractive && !_directInputEnabled;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxHeight;
+        final zoomOpacity = isLandscape ? 0.38 : 1.0;
+        final trackpadOpacity = isLandscape ? 0.18 : 1.0;
+        final zoomWidth = isLandscape ? 48.0 : 60.0;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Opacity(
+              opacity: zoomOpacity,
+              child: SizedBox(
+                width: zoomWidth,
+                child: _VncZoomBar(
+                  stops: _zoomStops,
+                  index: _zoomIndex,
+                  enabled: isInteractive,
+                  glassStyle: isLandscape,
+                  onIndexChanged: _updateZoomIndex,
+                  onIndexCommitted: _commitZoomIndex,
+                  onReset: _resetZoom,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Opacity(
+                opacity: trackpadOpacity,
+                child: _VncTrackpadSurface(
+                  enabled: trackpadEnabled,
+                  glassStyle: isLandscape,
+                  height: height,
+                  showLabel: !isLandscape,
+                  disabledMessage:
+                      _directInputEnabled ? 'Direct touch enabled' : null,
+                  onPointerDown: _handleTrackpadPointerDown,
+                  onPointerMove: _handleTrackpadPointerMove,
+                  onPointerUp: _handleTrackpadPointerUp,
+                  onPointerCancel: _handleTrackpadPointerCancel,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFullscreenPortrait({
+    required ThemeData theme,
+    required bool isInteractive,
+    required EdgeInsets safePadding,
+    required Size screenSize,
+  }) {
+    final safeWidth = screenSize.width - safePadding.left - safePadding.right;
+    final safeHeight = screenSize.height - safePadding.top - safePadding.bottom;
+    final aspect = _frameSize.height == 0
+        ? 1.0
+        : _frameSize.width / _frameSize.height;
+    final minControlsHeight = 240.0;
+    final maxViewHeight = safeHeight - minControlsHeight;
+    final rawViewHeight =
+        aspect <= 0 ? safeHeight * 0.6 : safeWidth / aspect;
+    final viewHeight = maxViewHeight > 0
+        ? (rawViewHeight <= maxViewHeight ? rawViewHeight : maxViewHeight)
+        : safeHeight * 0.6;
+    return Column(
+      children: [
+        Stack(
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: safeWidth,
+                height: viewHeight,
+                child: _buildVncCanvas(
+                  theme: theme,
+                  isInteractive: isInteractive,
+                  isLandscape: false,
+                  safePadding: EdgeInsets.zero,
+                  screenSize: screenSize,
+                  isFullscreen: true,
+                  expandToFit: true,
+                  showControls: false,
+                ),
+              ),
+            ),
+            Positioned(
+              left: 12,
+              top: 12,
+              child: _VncOverlayIconButton(
+                icon: Icons.fullscreen_exit,
+                label: 'Exit',
+                onPressed: () => _setFullscreen(false),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: _buildFullscreenInputPanel(
+              isInteractive: isInteractive,
+              isLandscape: false,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFullscreenLandscape({
+    required ThemeData theme,
+    required bool isInteractive,
+    required EdgeInsets safePadding,
+    required Size screenSize,
+  }) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: _buildVncCanvas(
+            theme: theme,
+            isInteractive: isInteractive,
+            isLandscape: true,
+            safePadding: EdgeInsets.zero,
+            screenSize: screenSize,
+            isFullscreen: true,
+            expandToFit: true,
+            showControls: false,
+          ),
+        ),
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: _buildFullscreenInputPanel(
+              isInteractive: isInteractive,
+              isLandscape: true,
+            ),
+          ),
+        ),
+        Positioned(
+          left: 12,
+          top: 12,
+          child: _VncOverlayIconButton(
+            icon: Icons.fullscreen_exit,
+            label: 'Exit',
+            onPressed: () => _setFullscreen(false),
+          ),
+        ),
+      ],
     );
   }
 
@@ -10589,12 +10826,34 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          Text(
-                            'Controls',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
+                          Row(
+                            children: [
+                              Text(
+                                'Controls',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                              ),
+                              const Spacer(),
+                              if (_isFullscreen)
+                                TextButton.icon(
+                                  onPressed: () => _setFullscreen(false),
+                                  icon: const Icon(Icons.fullscreen_exit),
+                                  label: const Text('Exit'),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                  ),
                                 ),
+                              IconButton(
+                                onPressed: () => Navigator.of(context).maybePop(),
+                                icon: const Icon(Icons.close, color: Colors.white),
+                                tooltip: 'Close',
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Wrap(
@@ -10947,26 +11206,19 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: _buildVncCanvas(
+          child: isLandscape
+              ? _buildFullscreenLandscape(
                   theme: theme,
                   isInteractive: isInteractive,
-                  isLandscape: isLandscape,
                   safePadding: safePadding,
                   screenSize: screenSize,
-                  isFullscreen: true,
-                  expandToFit: true,
+                )
+              : _buildFullscreenPortrait(
+                  theme: theme,
+                  isInteractive: isInteractive,
+                  safePadding: safePadding,
+                  screenSize: screenSize,
                 ),
-              ),
-              if (!isLandscape)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: _buildTrackpadControls(isInteractive: isInteractive),
-                ),
-            ],
-          ),
         ),
       );
     }
@@ -11715,6 +11967,8 @@ class _VncTrackpadSurface extends StatelessWidget {
   const _VncTrackpadSurface({
     required this.enabled,
     this.glassStyle = false,
+    this.height,
+    this.showLabel = true,
     this.disabledMessage,
     required this.onPointerDown,
     required this.onPointerMove,
@@ -11724,6 +11978,8 @@ class _VncTrackpadSurface extends StatelessWidget {
 
   final bool enabled;
   final bool glassStyle;
+  final double? height;
+  final bool showLabel;
   final String? disabledMessage;
   final ValueChanged<PointerDownEvent> onPointerDown;
   final ValueChanged<PointerMoveEvent> onPointerMove;
@@ -11755,32 +12011,34 @@ class _VncTrackpadSurface extends StatelessWidget {
         onPointerUp: enabled ? onPointerUp : null,
         onPointerCancel: enabled ? onPointerCancel : null,
         child: Container(
-          height: 120,
+          height: height ?? 120,
           decoration: BoxDecoration(
             color: background,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: borderColor),
           ),
           child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.touch_app,
-                  color: iconColor,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  enabled
-                      ? 'Trackpad ready'
-                      : (disabledMessage ?? 'Connect to enable input'),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                        color: textColor,
-                        fontWeight: FontWeight.w600,
+            child: showLabel
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.touch_app,
+                        color: iconColor,
                       ),
-                ),
-              ],
-            ),
+                      const SizedBox(height: 8),
+                      Text(
+                        enabled
+                            ? 'Trackpad ready'
+                            : (disabledMessage ?? 'Connect to enable input'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                              color: textColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ],
+                  )
+                : const SizedBox.shrink(),
           ),
         ),
       ),
