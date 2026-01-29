@@ -1,3 +1,4 @@
+use crate::terminal;
 use reqwest::blocking::Client;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -44,11 +45,19 @@ struct ApiCommandPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct TerminalCommandPayload {
-    command: String,
-    args: Option<Vec<String>>,
+    action: Option<String>,
+    session_id: Option<String>,
+    input: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    since: Option<u64>,
+    limit: Option<usize>,
     working_dir: Option<String>,
     env: Option<HashMap<String, String>>,
+    command: Option<String>,
+    args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +66,7 @@ struct VncCommandPayload {
     session_id: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    display_index: Option<usize>,
 }
 
 struct ApiExecutionResponse {
@@ -112,17 +122,28 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
             "terminal",
             &request.request_id,
         ) {
-            Ok(payload) => ok_response(
-                &request.request_id,
-                json!({
-                    "type": "terminal",
-                    "status": "accepted",
-                    "command": payload.command,
-                    "args": payload.args,
-                    "working_dir": payload.working_dir,
-                    "env": payload.env,
-                }),
-            ),
+            Ok(payload) => {
+                let terminal_request = terminal::TerminalActionRequest {
+                    action: resolve_terminal_action(&payload).to_lowercase(),
+                    session_id: payload.session_id.clone(),
+                    input: resolve_terminal_input(&payload),
+                    cols: payload.cols,
+                    rows: payload.rows,
+                    since: payload.since,
+                    limit: payload.limit,
+                    working_dir: payload.working_dir.clone(),
+                    env: payload.env.clone(),
+                };
+                match terminal::handle_terminal_command(terminal_request) {
+                    Ok(response) => ok_response(&request.request_id, response),
+                    Err(error) => error_response(
+                        &request.request_id,
+                        error.code,
+                        error.message,
+                        Some(json!({ "command": "terminal" })),
+                    ),
+                }
+            }
             Err(response) => response,
         },
         "vnc" => match parse_payload::<VncCommandPayload>(request.payload, "vnc", &request.request_id)
@@ -136,6 +157,7 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
                     "session_id": payload.session_id,
                     "width": payload.width,
                     "height": payload.height,
+                    "display_index": payload.display_index,
                 }),
             ),
             Err(response) => response,
@@ -243,4 +265,53 @@ fn execute_api_request(payload: &ApiCommandPayload) -> Result<ApiExecutionRespon
         headers,
         body,
     })
+}
+
+fn resolve_terminal_action(payload: &TerminalCommandPayload) -> String {
+    if let Some(action) = payload.action.as_ref() {
+        if !action.trim().is_empty() {
+            return action.trim().to_string();
+        }
+    }
+    if payload.session_id.is_none() {
+        return "start".to_string();
+    }
+    if payload.command.is_some() || payload.input.is_some() {
+        return "input".to_string();
+    }
+    "start".to_string()
+}
+
+fn resolve_terminal_input(payload: &TerminalCommandPayload) -> Option<String> {
+    if let Some(input) = payload.input.as_ref() {
+        if !input.is_empty() {
+            return Some(input.clone());
+        }
+    }
+    let command = payload.command.as_ref()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    if let Some(args) = payload.args.as_ref() {
+        if !args.is_empty() {
+            let joined = args
+                .iter()
+                .map(|arg| arg.trim())
+                .filter(|arg| !arg.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !joined.is_empty() {
+                let mut combined = format!("{command} {joined}");
+                if !combined.ends_with('\n') {
+                    combined.push('\n');
+                }
+                return Some(combined);
+            }
+        }
+    }
+    let mut combined = command.to_string();
+    if !combined.ends_with('\n') {
+        combined.push('\n');
+    }
+    Some(combined)
 }

@@ -11,6 +11,11 @@ abstract class StorageRepository {
   Future<void> insertConnection(ConnectionRecord connection);
   Future<void> insertToolSession(ToolSession session);
   Future<void> insertTimelineEvent(TimelineEvent event);
+  Future<void> deleteConnection(String connectionId);
+  Future<void> deleteToolSessionsByAgent(String agentId);
+  Future<String?> readKeyValue(String key);
+  Future<void> writeKeyValue(String key, String value);
+  Future<void> deleteKeyValue(String key);
 }
 
 abstract class StorageInitializer {
@@ -23,7 +28,7 @@ class LocalStorageInitializer extends StorageInitializer {
   const LocalStorageInitializer();
 
   static const _databaseName = 'vibe_inspect.db';
-  static const _schemaVersion = 2;
+  static const _schemaVersion = 3;
   static const _storageKeyId = 'vibe_storage_key';
 
   @override
@@ -43,6 +48,14 @@ class LocalStorageInitializer extends StorageInitializer {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await _createConnectionsTable(db);
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE tool_sessions ADD COLUMN agent_id TEXT');
+          if (oldVersion >= 2) {
+            await db.execute(
+              'ALTER TABLE connections ADD COLUMN agent_url TEXT',
+            );
+          }
         }
       },
     );
@@ -69,6 +82,7 @@ class LocalStorageInitializer extends StorageInitializer {
         type TEXT NOT NULL,
         label TEXT NOT NULL,
         status TEXT NOT NULL,
+        agent_id TEXT,
         created_at INTEGER NOT NULL
       )
     ''');
@@ -98,6 +112,7 @@ class LocalStorageInitializer extends StorageInitializer {
         token TEXT NOT NULL,
         status TEXT NOT NULL,
         connected_at INTEGER NOT NULL,
+        agent_url TEXT,
         tunnel_url TEXT,
         tunnel_error TEXT,
         last_seen_at INTEGER
@@ -178,8 +193,39 @@ class LocalStorage implements StorageRepository {
     );
   }
 
-  Future<String?> readSecureValue(String key) async {
+  @override
+  Future<void> deleteConnection(String connectionId) async {
+    await _database.delete(
+      'connections',
+      where: 'id = ?',
+      whereArgs: [connectionId],
+    );
+  }
+
+  @override
+  Future<void> deleteToolSessionsByAgent(String agentId) async {
+    await _database.transaction((txn) async {
+      await txn.delete(
+        'tool_sessions',
+        where: 'agent_id = ?',
+        whereArgs: [agentId],
+      );
+    });
+  }
+
+  @override
+  Future<String?> readKeyValue(String key) async {
     return _secureStorage.read(key: key);
+  }
+
+  @override
+  Future<void> writeKeyValue(String key, String value) async {
+    await _secureStorage.write(key: key, value: value);
+  }
+
+  @override
+  Future<void> deleteKeyValue(String key) async {
+    await _secureStorage.delete(key: key);
   }
 }
 
@@ -187,6 +233,7 @@ class MemoryStorage implements StorageRepository {
   final List<ConnectionRecord> _connections = [];
   final List<ToolSession> _sessions = [];
   final List<TimelineEvent> _events = [];
+  final Map<String, String> _keyValues = {};
 
   @override
   Future<List<ConnectionRecord>> fetchConnections() async {
@@ -217,6 +264,41 @@ class MemoryStorage implements StorageRepository {
   Future<void> insertTimelineEvent(TimelineEvent event) async {
     _events.add(event);
   }
+
+  @override
+  Future<void> deleteConnection(String connectionId) async {
+    _connections.removeWhere((connection) => connection.id == connectionId);
+  }
+
+  @override
+  Future<void> deleteToolSessionsByAgent(String agentId) async {
+    final removedSessionIds = _sessions
+        .where((session) => session.agentId == agentId)
+        .map((session) => session.id)
+        .toSet();
+    _sessions.removeWhere((session) => session.agentId == agentId);
+    if (removedSessionIds.isEmpty) {
+      return;
+    }
+    _events.removeWhere(
+      (event) => removedSessionIds.contains(event.sessionId),
+    );
+  }
+
+  @override
+  Future<String?> readKeyValue(String key) async {
+    return _keyValues[key];
+  }
+
+  @override
+  Future<void> writeKeyValue(String key, String value) async {
+    _keyValues[key] = value;
+  }
+
+  @override
+  Future<void> deleteKeyValue(String key) async {
+    _keyValues.remove(key);
+  }
 }
 
 class ToolSession {
@@ -225,6 +307,7 @@ class ToolSession {
     required this.type,
     required this.label,
     required this.status,
+    this.agentId,
     required this.createdAt,
   });
 
@@ -232,6 +315,7 @@ class ToolSession {
   final String type;
   final String label;
   final String status;
+  final String? agentId;
   final DateTime createdAt;
 
   Map<String, dynamic> toDatabase() {
@@ -240,6 +324,7 @@ class ToolSession {
       'type': type,
       'label': label,
       'status': status,
+      'agent_id': agentId,
       'created_at': createdAt.millisecondsSinceEpoch,
     };
   }
@@ -250,6 +335,7 @@ class ToolSession {
       type: row['type']?.toString() ?? 'unknown',
       label: row['label']?.toString() ?? 'Untitled session',
       status: row['status']?.toString() ?? 'unknown',
+      agentId: row['agent_id']?.toString(),
       createdAt: DateTime.fromMillisecondsSinceEpoch(
         (row['created_at'] as int?) ?? 0,
       ),
@@ -262,6 +348,7 @@ class ToolSession {
       'type': type,
       'label': label,
       'status': status,
+      'agentId': agentId,
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -283,6 +370,7 @@ class ToolSession {
     if (status is! String || status.isEmpty) {
       throw const FormatException('Tool session status is required.');
     }
+    final agentId = json['agentId'];
     final createdAtRaw = json['createdAt'];
     if (createdAtRaw is! String) {
       throw const FormatException('Tool session createdAt must be a string.');
@@ -296,6 +384,7 @@ class ToolSession {
       type: type,
       label: label,
       status: status,
+      agentId: agentId is String && agentId.isNotEmpty ? agentId : null,
       createdAt: createdAt,
     );
   }
@@ -407,6 +496,7 @@ class ConnectionRecord {
     required this.token,
     required this.status,
     required this.connectedAt,
+    this.agentUrl,
     this.tunnelUrl,
     this.tunnelError,
     this.lastSeenAt,
@@ -416,6 +506,7 @@ class ConnectionRecord {
   final String token;
   final String status;
   final DateTime connectedAt;
+  final String? agentUrl;
   final String? tunnelUrl;
   final String? tunnelError;
   final DateTime? lastSeenAt;
@@ -426,6 +517,7 @@ class ConnectionRecord {
       'token': token,
       'status': status,
       'connected_at': connectedAt.millisecondsSinceEpoch,
+      'agent_url': agentUrl,
       'tunnel_url': tunnelUrl,
       'tunnel_error': tunnelError,
       'last_seen_at': lastSeenAt?.millisecondsSinceEpoch,
@@ -440,6 +532,7 @@ class ConnectionRecord {
       connectedAt: DateTime.fromMillisecondsSinceEpoch(
         (row['connected_at'] as int?) ?? 0,
       ),
+      agentUrl: row['agent_url']?.toString(),
       tunnelUrl: row['tunnel_url']?.toString(),
       tunnelError: row['tunnel_error']?.toString(),
       lastSeenAt: row['last_seen_at'] != null
@@ -456,6 +549,7 @@ class ConnectionRecord {
       'token': token,
       'status': status,
       'connectedAt': connectedAt.toIso8601String(),
+      'agentUrl': agentUrl,
       'tunnelUrl': tunnelUrl,
       'tunnelError': tunnelError,
       'lastSeenAt': lastSeenAt?.toIso8601String(),
@@ -475,6 +569,7 @@ class ConnectionRecord {
     if (status is! String || status.isEmpty) {
       throw const FormatException('Connection status is required.');
     }
+    final agentUrlRaw = json['agentUrl'];
     final connectedAtRaw = json['connectedAt'];
     if (connectedAtRaw is! String) {
       throw const FormatException('Connection connectedAt must be a string.');
@@ -507,6 +602,9 @@ class ConnectionRecord {
       token: token,
       status: status,
       connectedAt: connectedAt,
+      agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+          ? agentUrlRaw
+          : null,
       tunnelUrl: tunnelUrl as String?,
       tunnelError: tunnelError as String?,
       lastSeenAt: lastSeenAt,
@@ -524,7 +622,7 @@ class ExportBundle {
     required this.timelineEvents,
   });
 
-  static const int currentVersion = 1;
+  static const int currentVersion = 2;
 
   final int version;
   final String deviceName;
@@ -549,9 +647,9 @@ class ExportBundle {
     if (version is! int) {
       throw const FormatException('Bundle version must be an integer.');
     }
-    if (version != currentVersion) {
+    if (version > currentVersion || version < 1) {
       throw FormatException(
-        'Unsupported bundle version $version. Expected $currentVersion.',
+        'Unsupported bundle version $version. Expected 1-$currentVersion.',
       );
     }
     final deviceName = json['deviceName'];

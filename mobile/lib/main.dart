@@ -8657,6 +8657,12 @@ enum VncEncodingPreference {
   raw,
 }
 
+enum VncViewMode {
+  fit,
+  fill,
+  original,
+}
+
 class _VncSessionScreenState extends State<VncSessionScreen> {
   static const List<double> _zoomStops = [0.5, 0.75, 1, 1.5, 2, 3];
   static const double _swipeThreshold = 120;
@@ -8681,6 +8687,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   int _tightCompressionLevel = 6;
   int _tightQualityLevel = 6;
   bool _tightJpegEnabled = false;
+  VncViewMode _viewMode = VncViewMode.fit;
   bool _isConnecting = false;
   String? _connectionError;
   Timer? _clickTimer;
@@ -8726,6 +8733,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Timer? _calibrationSaveTimer;
   Timer? _autoResizeTimer;
   bool _autoSizedOnce = false;
+  bool _pendingFullFrameRequest = false;
   double? _calibrationBackupScaleX;
   double? _calibrationBackupScaleY;
   double? _calibrationBackupOffsetX;
@@ -9085,6 +9093,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         unawaited(_persistDisplaySelection(sessionInfo.displayIndex));
       }
       await _updateSession(status: 'connected');
+      _vncClient?.requestFullFrame();
       _maybeAutoResizeStream();
     } on AgentCommandFailure catch (error) {
       await _setStreamFailure(error.message);
@@ -9282,18 +9291,31 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }
 
   double _baseScale(Size viewSize) {
-    if (_frameSize.width == 0) {
+    if (_frameSize.width == 0 || _frameSize.height == 0) {
       return 1;
     }
-    return viewSize.width / _frameSize.width;
+    final scaleX = viewSize.width / _frameSize.width;
+    final scaleY = viewSize.height / _frameSize.height;
+    switch (_viewMode) {
+      case VncViewMode.fit:
+        return scaleX < scaleY ? scaleX : scaleY;
+      case VncViewMode.fill:
+        return scaleX > scaleY ? scaleX : scaleY;
+      case VncViewMode.original:
+        return 1;
+    }
   }
 
-  Offset _clampedCameraCenter() {
+  Offset _clampedCameraCenter(Size viewSize) {
     if (_frameSize.width == 0 || _frameSize.height == 0) {
       return _cameraCenter;
     }
-    final visibleWidth = _frameSize.width / _zoom;
-    final visibleHeight = _frameSize.height / _zoom;
+    final scale = _baseScale(viewSize) * _zoom;
+    if (scale <= 0) {
+      return _cameraCenter;
+    }
+    final visibleWidth = viewSize.width / scale;
+    final visibleHeight = viewSize.height / scale;
     final minX = visibleWidth >= _frameSize.width
         ? _frameSize.width / 2
         : visibleWidth / 2;
@@ -9315,7 +9337,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Offset _calculateTranslation(Size viewSize) {
     final center = Offset(viewSize.width / 2, viewSize.height / 2);
     final scale = _baseScale(viewSize) * _zoom;
-    final camera = _clampedCameraCenter();
+    final camera = _clampedCameraCenter(viewSize);
     return center - camera * scale;
   }
 
@@ -9404,6 +9426,16 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     client.setEncodings(_buildEncodingList());
   }
 
+  double _viewAspectRatio(Size screenSize) {
+    final frameAspect = _frameSize.height == 0
+        ? 1
+        : _frameSize.width / _frameSize.height;
+    if (_viewMode == VncViewMode.fill) {
+      return screenSize.width / screenSize.height.toDouble();
+    }
+    return frameAspect.toDouble();
+  }
+
   Size? _preferredStreamSize() {
     if (!mounted) {
       return null;
@@ -9438,7 +9470,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (!mounted || _isDisposed) {
       return;
     }
-    if (_autoSizedOnce || _isConnecting || _vncClient == null) {
+    if (_autoSizedOnce ||
+        _isConnecting ||
+        _vncClient == null ||
+        _viewMode == VncViewMode.original) {
       return;
     }
     final desired = _preferredStreamSize();
@@ -9757,12 +9792,32 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     setState(() {
       _isFullscreen = value;
+      _autoSizedOnce = false;
     });
     if (value) {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     } else {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
+    _requestStreamRefresh(resetAutoResize: true);
+  }
+
+  void _requestStreamRefresh({bool resetAutoResize = false}) {
+    if (resetAutoResize) {
+      _autoSizedOnce = false;
+    }
+    if (_pendingFullFrameRequest) {
+      return;
+    }
+    _pendingFullFrameRequest = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingFullFrameRequest = false;
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      _maybeAutoResizeStream();
+      _vncClient?.requestFullFrame();
+    });
   }
 
   void _startAutoCalibration() {
@@ -9919,52 +9974,67 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required bool isInteractive,
     required bool isLandscape,
     required EdgeInsets safePadding,
+    required Size screenSize,
     bool isFullscreen = false,
+    bool expandToFit = false,
   }) {
-    return AspectRatio(
-      aspectRatio: _frameSize.width / _frameSize.height,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final viewSize = Size(
-            constraints.maxWidth,
-            constraints.maxHeight,
-          );
-          _lastViewSize = viewSize;
-          if (isInteractive) {
-            _maybeAutoResizeStream();
-          }
-          final pointerScreen = _pointerToScreen(viewSize);
-          final targetScreen = _isAutoCalibrating && _calibrationTargets.isNotEmpty
-              ? _frameToScreen(
-                  _calibrationTargets[_calibrationStep
-                      .clamp(0, _calibrationTargets.length - 1)],
-                  viewSize,
-                )
-              : null;
-          final translation = _calculateTranslation(viewSize);
-          final scale = _baseScale(viewSize) * _zoom;
-          final hasFrame = _frameImage != null;
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
-            child: Stack(
-              children: [
-                const Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Color(0xFF0B1120),
-                          Color(0xFF1E293B),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+    final canvas = LayoutBuilder(
+      builder: (context, constraints) {
+        final viewSize = Size(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        final previousViewSize = _lastViewSize;
+        _lastViewSize = viewSize;
+        final viewDelta = (viewSize.width - previousViewSize.width).abs() +
+            (viewSize.height - previousViewSize.height).abs();
+        if (isInteractive && viewDelta > 6) {
+          _autoSizedOnce = false;
+          _requestStreamRefresh();
+        }
+        if (isInteractive) {
+          _maybeAutoResizeStream();
+        }
+        final pointerScreen = _pointerToScreen(viewSize);
+        final targetScreen =
+            _isAutoCalibrating && _calibrationTargets.isNotEmpty
+                ? _frameToScreen(
+                    _calibrationTargets[_calibrationStep
+                        .clamp(0, _calibrationTargets.length - 1)],
+                    viewSize,
+                  )
+                : null;
+        final translation = _calculateTranslation(viewSize);
+        final scale = _baseScale(viewSize) * _zoom;
+        final hasFrame = _frameImage != null;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
+          child: Stack(
+            children: [
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFF0B1120),
+                        Color(0xFF1E293B),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
                   ),
                 ),
-                if (hasFrame)
-                  Positioned.fill(
+              ),
+              if (hasFrame)
+                Positioned.fill(
+                  child: OverflowBox(
+                    minWidth: 0,
+                    minHeight: 0,
+                    maxWidth: double.infinity,
+                    maxHeight: double.infinity,
+                    alignment: Alignment.topLeft,
                     child: Transform(
+                      alignment: Alignment.topLeft,
                       transform: Matrix4.identity()
                         ..translateByDouble(
                           translation.dx,
@@ -9984,202 +10054,209 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       ),
                     ),
                   ),
-                if (!hasFrame)
-                  Center(
-                    child: Text(
-                      'Waiting for frames...',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: Colors.white70,
-                        fontWeight: FontWeight.w600,
-                      ),
+                ),
+              if (!hasFrame)
+                Center(
+                  child: Text(
+                    'Waiting for frames...',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w600,
                     ),
-                  ),
-                if (isInteractive && _directInputEnabled)
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (details) {
-                        final framePos =
-                            _screenToFrame(details.localPosition, viewSize);
-                        _setPointerPosition(framePos);
-                        _sendClick(1);
-                      },
-                      onPanStart: (details) {
-                        _directDragActive = true;
-                        _buttonMask |= 1;
-                        final framePos =
-                            _screenToFrame(details.localPosition, viewSize);
-                        _setPointerPosition(framePos);
-                        _sendPointerEvent();
-                      },
-                      onPanUpdate: (details) {
-                        if (!_directDragActive) {
-                          return;
-                        }
-                        final framePos =
-                            _screenToFrame(details.localPosition, viewSize);
-                        _setPointerPosition(framePos);
-                      },
-                      onPanEnd: (_) {
-                        if (!_directDragActive) {
-                          return;
-                        }
-                        _directDragActive = false;
-                        _buttonMask &= ~1;
-                        _sendPointerEvent();
-                      },
-                      onPanCancel: () {
-                        if (!_directDragActive) {
-                          return;
-                        }
-                        _directDragActive = false;
-                        _buttonMask &= ~1;
-                        _sendPointerEvent();
-                      },
-                    ),
-                  ),
-                if (!isLandscape)
-                  Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: _VncShortcutOverlay(
-                      enabled: isInteractive,
-                      onEsc: () => _sendKeyPress(0xff1b),
-                      onCmd: () => _sendKeyPress(0xffe7),
-                      onTab: () => _sendKeyPress(0xff09),
-                      onCtrl: () => _sendKeyPress(0xffe3),
-                      onKeyboard: _showKeyboardInput,
-                    ),
-                  ),
-                if (isLandscape)
-                  Positioned(
-                    right: 12 + safePadding.right,
-                    bottom: 12 + safePadding.bottom,
-                    child: Tooltip(
-                      message: 'Controls',
-                      child: FloatingActionButton.small(
-                        heroTag: 'vncControlsFab-${widget.session.id}',
-                        onPressed: () => _openLandscapeControls(
-                          isInteractive: isInteractive,
-                        ),
-                        backgroundColor: isInteractive
-                            ? Colors.black.withAlpha(170)
-                            : Colors.black.withAlpha(100),
-                        foregroundColor: Colors.white,
-                        child: Icon(
-                          _controlsSheetOpen ? Icons.close : Icons.tune,
-                        ),
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  left: 12,
-                  top: 12,
-                  child: _VncOverlayIconButton(
-                    icon: _isFullscreen
-                        ? Icons.fullscreen_exit
-                        : Icons.fullscreen,
-                    label: _isFullscreen ? 'Exit' : 'Full',
-                    onPressed: () => _setFullscreen(!_isFullscreen),
                   ),
                 ),
+              if (isInteractive && _directInputEnabled)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (details) {
+                      final framePos =
+                          _screenToFrame(details.localPosition, viewSize);
+                      _setPointerPosition(framePos);
+                      _sendClick(1);
+                    },
+                    onPanStart: (details) {
+                      _directDragActive = true;
+                      _buttonMask |= 1;
+                      final framePos =
+                          _screenToFrame(details.localPosition, viewSize);
+                      _setPointerPosition(framePos);
+                      _sendPointerEvent();
+                    },
+                    onPanUpdate: (details) {
+                      if (!_directDragActive) {
+                        return;
+                      }
+                      final framePos =
+                          _screenToFrame(details.localPosition, viewSize);
+                      _setPointerPosition(framePos);
+                    },
+                    onPanEnd: (_) {
+                      if (!_directDragActive) {
+                        return;
+                      }
+                      _directDragActive = false;
+                      _buttonMask &= ~1;
+                      _sendPointerEvent();
+                    },
+                    onPanCancel: () {
+                      if (!_directDragActive) {
+                        return;
+                      }
+                      _directDragActive = false;
+                      _buttonMask &= ~1;
+                      _sendPointerEvent();
+                    },
+                  ),
+                ),
+              if (!isLandscape)
                 Positioned(
                   right: 12,
-                  top: 12,
-                  child: _VncZoomBadge(value: _zoom),
+                  bottom: 12,
+                  child: _VncShortcutOverlay(
+                    enabled: isInteractive,
+                    onEsc: () => _sendKeyPress(0xff1b),
+                    onCmd: () => _sendKeyPress(0xffe7),
+                    onTab: () => _sendKeyPress(0xff09),
+                    onCtrl: () => _sendKeyPress(0xffe3),
+                    onKeyboard: _showKeyboardInput,
+                  ),
                 ),
-                if (!isInteractive)
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.black.withAlpha(80),
-                      child: Center(
-                        child: Text(
-                          _connectionError != null
-                              ? 'Stream unavailable'
-                              : 'Connecting...',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
+              if (isLandscape)
+                Positioned(
+                  right: 12 + safePadding.right,
+                  bottom: 12 + safePadding.bottom,
+                  child: Tooltip(
+                    message: 'Controls',
+                    child: FloatingActionButton.small(
+                      heroTag: 'vncControlsFab-${widget.session.id}',
+                      onPressed: () => _openLandscapeControls(
+                        isInteractive: isInteractive,
+                      ),
+                      backgroundColor: isInteractive
+                          ? Colors.black.withAlpha(170)
+                          : Colors.black.withAlpha(100),
+                      foregroundColor: Colors.white,
+                      child: Icon(
+                        _controlsSheetOpen ? Icons.close : Icons.tune,
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: 12,
+                top: 12,
+                child: _VncOverlayIconButton(
+                  icon: _isFullscreen
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
+                  label: _isFullscreen ? 'Exit' : 'Full',
+                  onPressed: () => _setFullscreen(!_isFullscreen),
+                ),
+              ),
+              Positioned(
+                right: 12,
+                top: 12,
+                child: _VncZoomBadge(value: _zoom),
+              ),
+              if (!isInteractive)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withAlpha(80),
+                    child: Center(
+                      child: Text(
+                        _connectionError != null
+                            ? 'Stream unavailable'
+                            : 'Connecting...',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                   ),
-                if (_isAutoCalibrating && targetScreen != null)
-                  Positioned(
-                    left: targetScreen.dx - 18,
-                    top: targetScreen.dy - 18,
-                    child: const _CalibrationTarget(),
-                  ),
-                if (_isAutoCalibrating)
-                  Positioned(
-                    left: 12,
-                    right: 12,
-                    top: 56,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withAlpha(160),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white.withAlpha(40)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '自动校准 ${_calibrationStep + 1}/${_calibrationTargets.length}',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '依次对准四个角标记，然后点“记录当前点”。',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                                  color: Colors.white70,
-                                ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: _cancelAutoCalibration,
-                                style: TextButton.styleFrom(
-                                  foregroundColor: Colors.white70,
-                                ),
-                                child: const Text('取消'),
+                ),
+              if (_isAutoCalibrating && targetScreen != null)
+                Positioned(
+                  left: targetScreen.dx - 18,
+                  top: targetScreen.dy - 18,
+                  child: const _CalibrationTarget(),
+                ),
+              if (_isAutoCalibrating)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: 56,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(160),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white.withAlpha(40)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '自动校准 ${_calibrationStep + 1}/${_calibrationTargets.length}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
                               ),
-                              const Spacer(),
-                              FilledButton(
-                                onPressed: _captureCalibrationPoint,
-                                child: Text(
-                                  _calibrationStep + 1 >=
-                                          _calibrationTargets.length
-                                      ? '完成'
-                                      : '记录当前点',
-                                ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '依次对准四个角标记，然后点“记录当前点”。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white70,
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: _cancelAutoCalibration,
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.white70,
+                              ),
+                              child: const Text('取消'),
+                            ),
+                            const Spacer(),
+                            FilledButton(
+                              onPressed: _captureCalibrationPoint,
+                              child: Text(
+                                _calibrationStep + 1 >=
+                                        _calibrationTargets.length
+                                    ? '完成'
+                                    : '记录当前点',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                if (isInteractive)
-                  Positioned(
-                    left: pointerScreen.dx - 10,
-                    top: pointerScreen.dy - 10,
-                    child: _VncPointer(
-                      isClicking: _showClickPulse,
-                      isFocusing: _showFocusPulse,
-                    ),
+                ),
+              if (isInteractive)
+                Positioned(
+                  left: pointerScreen.dx - 10,
+                  top: pointerScreen.dy - 10,
+                  child: _VncPointer(
+                    isClicking: _showClickPulse,
+                    isFocusing: _showFocusPulse,
                   ),
-              ],
-            ),
-          );
-        },
-      ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (expandToFit) {
+      return SizedBox.expand(child: canvas);
+    }
+    return AspectRatio(
+      aspectRatio: _viewAspectRatio(screenSize),
+      child: canvas,
     );
   }
 
@@ -10266,6 +10343,47 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         ),
         const SizedBox(height: 12),
         _buildGestureHints(glassStyle: glassStyle),
+        const SizedBox(height: 12),
+        Text(
+          '视图模式',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 6),
+        ToggleButtons(
+          isSelected: [
+            _viewMode == VncViewMode.fit,
+            _viewMode == VncViewMode.fill,
+            _viewMode == VncViewMode.original,
+          ],
+          onPressed: isInteractive
+              ? (index) {
+                  setState(() {
+                    _viewMode = VncViewMode.values[index];
+                    _autoSizedOnce = false;
+                  });
+                  _requestStreamRefresh(resetAutoResize: true);
+                }
+              : null,
+          borderRadius: BorderRadius.circular(12),
+          constraints: const BoxConstraints(minWidth: 84, minHeight: 36),
+          children: const [
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10),
+              child: Text('适配'),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10),
+              child: Text('填满'),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10),
+              child: Text('原始'),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         Text(
           '编码与质量',
@@ -10790,6 +10908,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final safePadding = MediaQuery.of(context).padding;
+    final screenSize = MediaQuery.of(context).size;
     final target = widget.event.payload['target']?.toString();
     final targetLabel =
         target == null || target.trim().isEmpty ? 'Remote desktop' : target;
@@ -10831,17 +10950,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           child: Column(
             children: [
               Expanded(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: _buildVncCanvas(
-                      theme: theme,
-                      isInteractive: isInteractive,
-                      isLandscape: isLandscape,
-                      safePadding: safePadding,
-                      isFullscreen: true,
-                    ),
-                  ),
+                child: _buildVncCanvas(
+                  theme: theme,
+                  isInteractive: isInteractive,
+                  isLandscape: isLandscape,
+                  safePadding: safePadding,
+                  screenSize: screenSize,
+                  isFullscreen: true,
+                  expandToFit: true,
                 ),
               ),
               if (!isLandscape)
@@ -10980,6 +11096,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     isInteractive: isInteractive,
                     isLandscape: isLandscape,
                     safePadding: safePadding,
+                    screenSize: screenSize,
                     isFullscreen: false,
                   ),
                   if (!isLandscape) ...[

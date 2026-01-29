@@ -1,21 +1,25 @@
-use crate::command::{handle_agent_command, AgentCommandRequest};
+use crate::server;
+use get_if_addrs::get_if_addrs;
 use qrcode::render::svg;
 use qrcode::QrCode;
 use rand::{distributions::Alphanumeric, Rng};
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 const PAIRING_TTL_SECS: u64 = 180;
 const TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(12);
+const LOCAL_SERVER_HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
+const LOCAL_SERVER_HEALTH_RETRIES: usize = 3;
+const LOCAL_SERVER_HEALTH_RETRY_DELAY: Duration = Duration::from_millis(120);
+const LOCAL_SERVER_ERROR_PREFIX: &str = "Local server unavailable.";
+const LOCAL_SERVER_ERROR_MESSAGE: &str =
+    "Local server unavailable. Restart the desktop agent and retry pairing.";
 const CLOUDFLARED_INSTALL_URL: &str =
     "https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/";
 
@@ -26,6 +30,8 @@ struct PairingPayload {
     expires_at: u64,
     tunnel_url: Option<String>,
     tunnel_error: Option<String>,
+    local_urls: Vec<String>,
+    requires_approval: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,12 +43,14 @@ pub struct PairingSessionResponse {
     pub qr_svg: String,
     pub tunnel_url: Option<String>,
     pub tunnel_error: Option<String>,
+    pub local_urls: Vec<String>,
+    pub requires_approval: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PairingConfirmResponse {
     pub status: String,
-    pub connected_at: u64,
+    pub connected_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,9 +68,36 @@ impl PairingError {
     }
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct PairingSessionInfo {
+    pub token: String,
+    pub secret: String,
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PendingConfirmationInfo {
+    pub token: String,
+    pub requested_at: u64,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PairingStatusResponse {
+    pub session: Option<PairingSessionInfo>,
+    pub connected_at: Option<u64>,
+    pub pending: Option<PendingConfirmationInfo>,
+    pub requires_approval: bool,
+    pub local_urls: Vec<String>,
+    pub tunnel_url: Option<String>,
+    pub tunnel_error: Option<String>,
+}
+
 pub struct PairingState {
     session: Option<PairingSession>,
     connected_at: Option<u64>,
+    pending_confirmation: Option<PendingConfirmation>,
+    requires_approval: bool,
     tunnel: Option<TunnelState>,
     tunnel_error: Option<String>,
     local_port: Option<u16>,
@@ -73,6 +108,8 @@ impl Default for PairingState {
         Self {
             session: None,
             connected_at: None,
+            pending_confirmation: None,
+            requires_approval: false,
             tunnel: None,
             tunnel_error: None,
             local_port: None,
@@ -85,6 +122,13 @@ struct PairingSession {
     token: String,
     secret: String,
     expires_at: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PendingConfirmation {
+    token: String,
+    requested_at: u64,
+    source: Option<String>,
 }
 
 struct TunnelState {
@@ -116,7 +160,7 @@ impl TunnelStartError {
 
 #[tauri::command]
 pub fn create_pairing_session(
-    state: State<Mutex<PairingState>>,
+    state: State<Arc<Mutex<PairingState>>>,
 ) -> Result<PairingSessionResponse, PairingError> {
     let token = generate_code(6);
     let secret = generate_code(8);
@@ -129,11 +173,13 @@ pub fn create_pairing_session(
         expires_at,
     };
 
+    let state = state.inner().clone();
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
 
-    let tunnel_details = ensure_tunnel(&mut pairing_state);
+    let tunnel_details = ensure_tunnel(&state, &mut pairing_state);
+    let local_urls = current_local_urls(&pairing_state);
 
     let payload = PairingPayload {
         token: session.token.clone(),
@@ -141,6 +187,8 @@ pub fn create_pairing_session(
         expires_at: session.expires_at,
         tunnel_url: tunnel_details.url.clone(),
         tunnel_error: tunnel_details.error.clone(),
+        local_urls: local_urls.clone(),
+        requires_approval: pairing_state.requires_approval,
     };
 
     let qr_payload = serde_json::to_string(&payload)
@@ -149,6 +197,7 @@ pub fn create_pairing_session(
 
     pairing_state.session = Some(session.clone());
     pairing_state.connected_at = None;
+    pairing_state.pending_confirmation = None;
 
     Ok(PairingSessionResponse {
         token: session.token,
@@ -158,19 +207,113 @@ pub fn create_pairing_session(
         qr_svg,
         tunnel_url: tunnel_details.url,
         tunnel_error: tunnel_details.error,
+        local_urls,
+        requires_approval: pairing_state.requires_approval,
     })
 }
 
 #[tauri::command]
 pub fn confirm_pairing_session(
-    state: State<Mutex<PairingState>>,
+    state: State<Arc<Mutex<PairingState>>>,
     token: String,
     secret: String,
+) -> Result<PairingConfirmResponse, PairingError> {
+    confirm_pairing_with_state(state.inner(), &token, &secret, Some("tauri".to_string()))
+}
+
+#[tauri::command]
+pub fn get_pairing_status(
+    state: State<Arc<Mutex<PairingState>>>,
+) -> Result<PairingStatusResponse, PairingError> {
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    refresh_local_server(state.inner(), &mut pairing_state);
+    Ok(build_pairing_status(&pairing_state))
+}
+
+#[tauri::command]
+pub fn set_pairing_requires_approval(
+    state: State<Arc<Mutex<PairingState>>>,
+    requires_approval: bool,
+) -> Result<PairingStatusResponse, PairingError> {
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    pairing_state.requires_approval = requires_approval;
+    if !requires_approval && pairing_state.pending_confirmation.is_some() {
+        let now = current_timestamp()?;
+        pairing_state.connected_at = Some(now);
+        pairing_state.pending_confirmation = None;
+    }
+    refresh_local_server(state.inner(), &mut pairing_state);
+    Ok(build_pairing_status(&pairing_state))
+}
+
+#[tauri::command]
+pub fn approve_pairing_request(
+    state: State<Arc<Mutex<PairingState>>>,
 ) -> Result<PairingConfirmResponse, PairingError> {
     let now = current_timestamp()?;
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    let session = pairing_state
+        .session
+        .as_ref()
+        .ok_or_else(|| PairingError::new("missing_token", "No active pairing token."))?;
+    if pairing_state.pending_confirmation.is_none() {
+        return Err(PairingError::new(
+            "no_pending",
+            "No pending pairing requests.",
+        ));
+    }
+    if now > session.expires_at {
+        return Err(PairingError::new(
+            "token_expired",
+            "Pairing token expired. Generate a new token.",
+        ));
+    }
+    pairing_state.connected_at = Some(now);
+    pairing_state.pending_confirmation = None;
+    Ok(PairingConfirmResponse {
+        status: "connected".to_string(),
+        connected_at: Some(now),
+    })
+}
+
+#[tauri::command]
+pub fn deny_pairing_request(
+    state: State<Arc<Mutex<PairingState>>>,
+) -> Result<PairingStatusResponse, PairingError> {
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    pairing_state.pending_confirmation = None;
+    refresh_local_server(state.inner(), &mut pairing_state);
+    Ok(build_pairing_status(&pairing_state))
+}
+
+pub(crate) fn confirm_pairing_with_state(
+    state: &Arc<Mutex<PairingState>>,
+    token: &str,
+    secret: &str,
+    source: Option<String>,
+) -> Result<PairingConfirmResponse, PairingError> {
+    let now = current_timestamp()?;
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    confirm_pairing_locked(&mut pairing_state, token, secret, source, now)
+}
+
+fn confirm_pairing_locked(
+    pairing_state: &mut PairingState,
+    token: &str,
+    secret: &str,
+    source: Option<String>,
+    now: u64,
+) -> Result<PairingConfirmResponse, PairingError> {
     let session = pairing_state
         .session
         .as_ref()
@@ -197,15 +340,59 @@ pub fn confirm_pairing_session(
         ));
     }
 
+    if pairing_state.requires_approval {
+        if let Some(connected_at) = pairing_state.connected_at {
+            return Ok(PairingConfirmResponse {
+                status: "connected".to_string(),
+                connected_at: Some(connected_at),
+            });
+        }
+        pairing_state.pending_confirmation = Some(PendingConfirmation {
+            token: session.token.clone(),
+            requested_at: now,
+            source,
+        });
+        return Ok(PairingConfirmResponse {
+            status: "pending".to_string(),
+            connected_at: None,
+        });
+    }
+
     pairing_state.connected_at = Some(now);
+    pairing_state.pending_confirmation = None;
 
     Ok(PairingConfirmResponse {
         status: "connected".to_string(),
-        connected_at: now,
+        connected_at: Some(now),
     })
 }
 
-fn ensure_tunnel(pairing_state: &mut PairingState) -> TunnelDetails {
+fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
+    let session = pairing_state.session.as_ref().map(|session| PairingSessionInfo {
+        token: session.token.clone(),
+        secret: session.secret.clone(),
+        expires_at: session.expires_at,
+    });
+    let pending = pairing_state.pending_confirmation.as_ref().map(|pending| {
+        PendingConfirmationInfo {
+            token: pending.token.clone(),
+            requested_at: pending.requested_at,
+            source: pending.source.clone(),
+        }
+    });
+    let local_urls = current_local_urls(pairing_state);
+    PairingStatusResponse {
+        session,
+        connected_at: pairing_state.connected_at,
+        pending,
+        requires_approval: pairing_state.requires_approval,
+        local_urls,
+        tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+        tunnel_error: pairing_state.tunnel_error.clone(),
+    }
+}
+
+fn ensure_tunnel(state: &Arc<Mutex<PairingState>>, pairing_state: &mut PairingState) -> TunnelDetails {
     if let Some(tunnel) = pairing_state.tunnel.as_mut() {
         if tunnel_is_alive(tunnel) {
             return TunnelDetails {
@@ -216,23 +403,18 @@ fn ensure_tunnel(pairing_state: &mut PairingState) -> TunnelDetails {
         pairing_state.tunnel = None;
     }
 
-    let port = match pairing_state.local_port {
-        Some(port) => port,
-        None => match start_local_tunnel_server() {
-            Ok(port) => {
-                pairing_state.local_port = Some(port);
-                port
-            }
-            Err(_) => {
-                let message =
-                    "Unable to start the local tunnel listener. Restart the desktop agent and retry pairing.";
-                pairing_state.tunnel_error = Some(message.to_string());
-                return TunnelDetails {
-                    url: None,
-                    error: Some(message.to_string()),
-                };
-            }
-        },
+    let port = match ensure_local_server(state, pairing_state) {
+        Ok(port) => {
+            clear_local_server_error(pairing_state);
+            port
+        }
+        Err(error) => {
+            pairing_state.tunnel_error = Some(error.message);
+            return TunnelDetails {
+                url: None,
+                error: pairing_state.tunnel_error.clone(),
+            };
+        }
     };
 
     match start_cloudflared_tunnel(port) {
@@ -264,203 +446,84 @@ fn tunnel_is_alive(tunnel: &mut TunnelState) -> bool {
     }
 }
 
-fn start_local_tunnel_server() -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
+fn ensure_local_server(
+    state: &Arc<Mutex<PairingState>>,
+    pairing_state: &mut PairingState,
+) -> Result<u16, PairingError> {
+    if let Some(port) = pairing_state.local_port {
+        if is_local_server_healthy(port) {
+            return Ok(port);
+        }
+        pairing_state.local_port = None;
+    }
 
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            if let Ok(stream) = stream {
-                handle_tunnel_request(stream);
+    match start_local_tunnel_server(state.clone()) {
+        Ok(port) => {
+            if is_local_server_healthy(port) {
+                pairing_state.local_port = Some(port);
+                Ok(port)
+            } else {
+                pairing_state.local_port = None;
+                Err(PairingError::new(
+                    "local_server_unavailable",
+                    LOCAL_SERVER_ERROR_MESSAGE,
+                ))
             }
         }
-    });
-
-    Ok(port)
-}
-
-fn handle_tunnel_request(mut stream: TcpStream) {
-    let request = match read_tunnel_http_request(&mut stream) {
-        Ok(request) => request,
         Err(_) => {
-            let body = json!({
-                "error": {
-                    "code": "invalid_request",
-                    "message": "Malformed HTTP request."
-                }
-            })
-            .to_string();
-            write_tunnel_response(&mut stream, 400, &body);
-            return;
+            pairing_state.local_port = None;
+            Err(PairingError::new(
+                "local_server_unavailable",
+                LOCAL_SERVER_ERROR_MESSAGE,
+            ))
         }
+    }
+}
+
+fn refresh_local_server(state: &Arc<Mutex<PairingState>>, pairing_state: &mut PairingState) {
+    if ensure_local_server(state, pairing_state).is_ok() {
+        clear_local_server_error(pairing_state);
+    } else {
+        pairing_state.tunnel_error = Some(LOCAL_SERVER_ERROR_MESSAGE.to_string());
+    }
+}
+
+fn clear_local_server_error(pairing_state: &mut PairingState) {
+    if let Some(error) = pairing_state.tunnel_error.as_deref() {
+        if error.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
+            pairing_state.tunnel_error = None;
+        }
+    }
+}
+
+fn is_local_server_healthy(port: u16) -> bool {
+    let url = format!("http://127.0.0.1:{port}/health");
+    let client = match Client::builder()
+        .timeout(LOCAL_SERVER_HEALTH_TIMEOUT)
+        .no_proxy()
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
     };
-
-    if request.method.eq_ignore_ascii_case("OPTIONS") {
-        write_tunnel_empty_response(&mut stream, 204);
-        return;
-    }
-
-    if request.path.starts_with("/command") {
-        if !request.method.eq_ignore_ascii_case("POST") {
-            let body = json!({
-                "error": {
-                    "code": "method_not_allowed",
-                    "message": "Use POST to send agent commands."
+    for attempt in 0..LOCAL_SERVER_HEALTH_RETRIES {
+        if attempt > 0 {
+            thread::sleep(LOCAL_SERVER_HEALTH_RETRY_DELAY);
+        }
+        match client.get(&url).send() {
+            Ok(response) => {
+                if response.status().is_success() {
+                    return true;
                 }
-            })
-            .to_string();
-            write_tunnel_response(&mut stream, 405, &body);
-            return;
-        }
-
-        let command_request: AgentCommandRequest =
-            match serde_json::from_slice(&request.body) {
-                Ok(request) => request,
-                Err(error) => {
-                    let body = json!({
-                        "error": {
-                            "code": "invalid_payload",
-                            "message": format!("Invalid JSON payload: {error}")
-                        }
-                    })
-                    .to_string();
-                    write_tunnel_response(&mut stream, 400, &body);
-                    return;
-                }
-            };
-
-        let response = handle_agent_command(command_request);
-        let body = serde_json::to_string(&response).unwrap_or_else(|_| {
-            json!({
-                "error": {
-                    "code": "serialize_failed",
-                    "message": "Failed to serialize agent response."
-                }
-            })
-            .to_string()
-        });
-        write_tunnel_response(&mut stream, 200, &body);
-        return;
-    }
-
-    let body = json!({
-        "status": "ok",
-        "message": "Vibe Inspect tunnel active"
-    })
-    .to_string();
-    write_tunnel_response(&mut stream, 200, &body);
-}
-
-struct TunnelHttpRequest {
-    method: String,
-    path: String,
-    headers: HashMap<String, String>,
-    body: Vec<u8>,
-}
-
-fn read_tunnel_http_request(
-    stream: &mut TcpStream,
-) -> Result<TunnelHttpRequest, std::io::Error> {
-    let mut buffer = Vec::new();
-    let mut temp = [0u8; 1024];
-    let mut header_end = None;
-
-    while header_end.is_none() {
-        let bytes_read = stream.read(&mut temp)?;
-        if bytes_read == 0 {
-            break;
-        }
-        buffer.extend_from_slice(&temp[..bytes_read]);
-        header_end = find_header_end(&buffer);
-        if buffer.len() > 1024 * 1024 {
-            break;
+            }
+            Err(_) => {}
         }
     }
-
-    let header_end = header_end.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing headers")
-    })?;
-
-    let header_text = String::from_utf8_lossy(&buffer[..header_end]);
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines.next().unwrap_or_default();
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().unwrap_or_default().to_string();
-    let path = parts.next().unwrap_or("/").to_string();
-    let mut headers = HashMap::new();
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once(':') {
-            headers.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
-        }
-    }
-
-    let content_length = headers
-        .get("content-length")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    let mut body = buffer[header_end + 4..].to_vec();
-    while body.len() < content_length {
-        let bytes_read = stream.read(&mut temp)?;
-        if bytes_read == 0 {
-            break;
-        }
-        body.extend_from_slice(&temp[..bytes_read]);
-        if body.len() > content_length {
-            body.truncate(content_length);
-            break;
-        }
-    }
-    body.truncate(content_length);
-
-    Ok(TunnelHttpRequest {
-        method,
-        path,
-        headers,
-        body,
-    })
+    false
 }
 
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-}
-
-fn write_tunnel_response(stream: &mut TcpStream, status: u16, body: &str) {
-    let status_text = status_text(status);
-    let response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n{}",
-        status,
-        status_text,
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(response.as_bytes());
-}
-
-fn write_tunnel_empty_response(stream: &mut TcpStream, status: u16) {
-    let status_text = status_text(status);
-    let response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n\r\n",
-        status,
-        status_text
-    );
-    let _ = stream.write_all(response.as_bytes());
-}
-
-fn status_text(status: u16) -> &'static str {
-    match status {
-        200 => "OK",
-        204 => "No Content",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        _ => "OK",
-    }
+fn start_local_tunnel_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::io::Error> {
+    server::start_local_server(state)
 }
 
 fn start_cloudflared_tunnel(port: u16) -> Result<TunnelHandle, TunnelStartError> {
@@ -543,8 +606,34 @@ fn generate_code(length: usize) -> String {
 fn current_timestamp() -> Result<u64, PairingError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(Duration::as_secs)
+        .map(|duration| duration.as_secs())
         .map_err(|_| PairingError::new("time_error", "Failed to read system time."))
+}
+
+fn current_local_urls(pairing_state: &PairingState) -> Vec<String> {
+    let port = match pairing_state.local_port {
+        Some(port) => port,
+        None => return Vec::new(),
+    };
+    let mut urls = Vec::new();
+    if let Ok(interfaces) = get_if_addrs() {
+        for iface in interfaces {
+            if iface.is_loopback() {
+                continue;
+            }
+            if let std::net::IpAddr::V4(addr) = iface.ip() {
+                let octets = addr.octets();
+                if octets[0] == 169 && octets[1] == 254 {
+                    // Skip link-local IPv4 (APIPA) addresses.
+                    continue;
+                }
+                urls.push(format!("http://{}:{}", addr, port));
+            }
+        }
+    }
+    urls.sort();
+    urls.dedup();
+    urls
 }
 
 fn build_qr_svg(payload: &str) -> Result<String, PairingError> {

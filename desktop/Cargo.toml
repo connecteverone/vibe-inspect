@@ -4,12 +4,26 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = "2"
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"
 qrcode = "0.13"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+get_if_addrs = "0.5"
+portable-pty = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tower-http = { version = "0.5", features = ["cors"] }
+scrap = "0.5"
+enigo = "0.1"
+flate2 = "1"
+rfb-encodings = "0.1"
+jpeg-encoder = { version = "0.7", default-features = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }

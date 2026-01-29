@@ -2,17 +2,40 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:mobile/main.dart';
 import 'package:mobile/storage/local_storage.dart';
+import 'package:xterm/xterm.dart';
 
 void main() {
   testWidgets('Pairing connects with valid secret', (tester) async {
+    final mockClient = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      if (request.url.path.endsWith('/pairing/confirm')) {
+        expect(body['token'], 'ABC123');
+        expect(body['secret'], 'SECRET77');
+        return http.Response(
+          jsonEncode({
+            'status': 'connected',
+            'connected_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          }),
+          200,
+        );
+      }
+      return http.Response('Not found', 404);
+    });
+
     await tester.pumpWidget(
-      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+      VibeInspectApp(
+        storageInitializer: const MemoryStorageInitializer(),
+        pairingHttpClient: mockClient,
+        forceManualQr: true,
+      ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Pair your desktop agent'), findsOneWidget);
+    expect(find.text('Agents & workspaces'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('scanQrButton')));
     await tester.pumpAndSettle();
@@ -32,20 +55,19 @@ void main() {
 
     expect(find.text('ABC123'), findsOneWidget);
 
-    await tester.enterText(find.byKey(const Key('secretField')), 'SECRET77');
-    final confirmButton = find.byKey(const Key('confirmSecretButton'));
-    await tester.ensureVisible(confirmButton);
-    await tester.tap(confirmButton);
     await tester.pumpAndSettle();
 
-    expect(find.text('Connected'), findsOneWidget);
+    expect(find.textContaining('Connected'), findsOneWidget);
     expect(find.text('https://demo.trycloudflare.com'), findsOneWidget);
-    expect(find.text('Paired with desktop agent'), findsOneWidget);
+    expect(find.text('ABC123'), findsOneWidget);
   });
 
   testWidgets('Expired token shows retry prompt', (tester) async {
     await tester.pumpWidget(
-      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+      const VibeInspectApp(
+        storageInitializer: MemoryStorageInitializer(),
+        forceManualQr: true,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -70,7 +92,10 @@ void main() {
 
   testWidgets('Tunnel error message is shown after scan', (tester) async {
     await tester.pumpWidget(
-      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+      const VibeInspectApp(
+        storageInitializer: MemoryStorageInitializer(),
+        forceManualQr: true,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -96,24 +121,39 @@ void main() {
 
   testWidgets('Storage initialization failure blocks the UI', (tester) async {
     await tester.pumpWidget(
-      const VibeInspectApp(storageInitializer: _FailingStorageInitializer()),
+      const VibeInspectApp(
+        storageInitializer: _FailingStorageInitializer(),
+        forceManualQr: true,
+      ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Storage unavailable'), findsOneWidget);
   });
 
-  testWidgets('Timeline API event opens API explorer', (tester) async {
+  testWidgets('Workspace API session opens API explorer', (tester) async {
     final now = DateTime.now();
     const apiEventId = 'api-event-1';
     const apiSessionId = 'api-session-1';
+    const agentId = 'agent-1';
     final initializer = _SeededStorageInitializer((storage) async {
+      await storage.insertConnection(
+        ConnectionRecord(
+          id: agentId,
+          token: 'TOKEN-1',
+          status: 'connected',
+          connectedAt: now,
+          agentUrl: 'https://agent.local',
+          lastSeenAt: now,
+        ),
+      );
       await storage.insertToolSession(
         ToolSession(
           id: apiSessionId,
           type: 'api',
           label: 'Login API',
           status: 'complete',
+          agentId: agentId,
           createdAt: now,
         ),
       );
@@ -147,9 +187,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final eventFinder = find.byKey(const Key('timelineEvent-$apiEventId'));
-    await tester.ensureVisible(eventFinder);
-    await tester.tap(eventFinder);
+    final agentFinder = find.text('agent.local');
+    await tester.ensureVisible(agentFinder);
+    await tester.tap(agentFinder);
+    await tester.pumpAndSettle();
+
+    final apiSessionFinder = find.text('Login API');
+    await tester.ensureVisible(apiSessionFinder);
+    await tester.tap(apiSessionFinder);
     await tester.pumpAndSettle();
 
     expect(find.text('API Explorer'), findsOneWidget);
@@ -158,17 +203,29 @@ void main() {
     expect(find.textContaining('Status 500'), findsOneWidget);
   });
 
-  testWidgets('Timeline terminal event opens session', (tester) async {
+  testWidgets('Workspace terminal session opens session', (tester) async {
     final now = DateTime.now();
     const terminalEventId = 'terminal-event-1';
     const terminalSessionId = 'terminal-session-1';
+    const agentId = 'agent-2';
     final initializer = _SeededStorageInitializer((storage) async {
+      await storage.insertConnection(
+        ConnectionRecord(
+          id: agentId,
+          token: 'TOKEN-2',
+          status: 'connected',
+          connectedAt: now,
+          agentUrl: 'https://terminal.agent',
+          lastSeenAt: now,
+        ),
+      );
       await storage.insertToolSession(
         ToolSession(
           id: terminalSessionId,
           type: 'terminal',
           label: 'Build logs',
           status: 'running',
+          agentId: agentId,
           createdAt: now,
         ),
       );
@@ -192,29 +249,50 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final eventFinder = find.byKey(const Key('timelineEvent-$terminalEventId'));
-    await tester.ensureVisible(eventFinder);
-    await tester.tap(eventFinder);
+    final agentFinder = find.text('terminal.agent');
+    await tester.ensureVisible(agentFinder);
+    await tester.tap(agentFinder);
+    await tester.pumpAndSettle();
+
+    final terminalSessionFinder = find.text('Build logs');
+    await tester.ensureVisible(terminalSessionFinder);
+    await tester.tap(terminalSessionFinder);
     await tester.pumpAndSettle();
 
     expect(find.text('Terminal'), findsOneWidget);
     expect(find.text('Build logs'), findsWidgets);
-    expect(find.text('npm test'), findsWidgets);
+    expect(find.byType(TerminalView), findsOneWidget);
   });
 
   testWidgets('API Explorer blocks invalid JSON body', (tester) async {
+    final now = DateTime.now();
+    const agentId = 'agent-3';
+    final initializer = _SeededStorageInitializer((storage) async {
+      await storage.insertConnection(
+        ConnectionRecord(
+          id: agentId,
+          token: 'TOKEN-3',
+          status: 'connected',
+          connectedAt: now,
+          agentUrl: 'https://api.agent',
+          lastSeenAt: now,
+        ),
+      );
+    });
+
     await tester.pumpWidget(
-      const VibeInspectApp(storageInitializer: MemoryStorageInitializer()),
+      VibeInspectApp(storageInitializer: initializer),
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-      find.byKey(const Key('commandBarField')),
-      'POST https://api.example.com/login',
-    );
-    final runButton = find.byKey(const Key('commandRunButton'));
-    await tester.ensureVisible(runButton);
-    await tester.tap(runButton);
+    final agentFinder = find.text('api.agent');
+    await tester.ensureVisible(agentFinder);
+    await tester.tap(agentFinder);
+    await tester.pumpAndSettle();
+
+    final newApiFinder = find.text('New API request');
+    await tester.ensureVisible(newApiFinder);
+    await tester.tap(newApiFinder);
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -229,18 +307,30 @@ void main() {
     expect(find.text('Body must be valid JSON.'), findsOneWidget);
   });
 
-  testWidgets('Timeline event with missing context shows error state',
+  testWidgets('Workspace session with missing context shows error state',
       (tester) async {
     final now = DateTime.now();
     const brokenEventId = 'api-event-missing';
     const apiSessionId = 'api-session-missing';
+    const agentId = 'agent-4';
     final initializer = _SeededStorageInitializer((storage) async {
+      await storage.insertConnection(
+        ConnectionRecord(
+          id: agentId,
+          token: 'TOKEN-4',
+          status: 'connected',
+          connectedAt: now,
+          agentUrl: 'https://broken.agent',
+          lastSeenAt: now,
+        ),
+      );
       await storage.insertToolSession(
         ToolSession(
           id: apiSessionId,
           type: 'api',
           label: 'Broken API',
           status: 'error',
+          agentId: agentId,
           createdAt: now,
         ),
       );
@@ -266,13 +356,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final eventFinder = find.byKey(const Key('timelineEvent-$brokenEventId'));
-    await tester.ensureVisible(eventFinder);
-    await tester.tap(eventFinder);
+    final agentFinder = find.text('broken.agent');
+    await tester.ensureVisible(agentFinder);
+    await tester.tap(agentFinder);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('missing request or response details'),
-        findsOneWidget);
+    final brokenSessionFinder = find.text('Broken API');
+    await tester.ensureVisible(brokenSessionFinder);
+    await tester.tap(brokenSessionFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('API context is missing'), findsOneWidget);
   });
 }
 
