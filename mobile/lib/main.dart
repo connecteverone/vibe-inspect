@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
+import 'package:mobile/vnc_client.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:xterm/xterm.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,40 +25,162 @@ void main() {
   runApp(VibeInspectApp(storageInitializer: storageInitializer));
 }
 
+ThemeData _buildTheme() {
+  const primary = Color(0xFF1E293B);
+  const secondary = Color(0xFF22C55E);
+  const surface = Color(0xFFFFFFFF);
+  const background = Color(0xFFF8FAFC);
+  const onSurface = Color(0xFF0F172A);
+  const onPrimary = Color(0xFFF8FAFC);
+  const onSecondary = Color(0xFF052E16);
+  const error = Color(0xFFB91C1C);
+
+  final baseTextTheme = GoogleFonts.ibmPlexSansTextTheme();
+  final headingTextTheme = GoogleFonts.jetBrainsMonoTextTheme();
+  final textTheme = baseTextTheme.copyWith(
+    displayLarge: headingTextTheme.displayLarge,
+    displayMedium: headingTextTheme.displayMedium,
+    displaySmall: headingTextTheme.displaySmall,
+    headlineLarge: headingTextTheme.headlineLarge,
+    headlineMedium: headingTextTheme.headlineMedium,
+    headlineSmall: headingTextTheme.headlineSmall,
+    titleLarge: headingTextTheme.titleLarge,
+    titleMedium: headingTextTheme.titleMedium,
+    titleSmall: headingTextTheme.titleSmall,
+  );
+
+  final scheme = const ColorScheme(
+    brightness: Brightness.light,
+    primary: primary,
+    onPrimary: onPrimary,
+    secondary: secondary,
+    onSecondary: onSecondary,
+    tertiary: Color(0xFF38BDF8),
+    onTertiary: onSurface,
+    error: error,
+    onError: onPrimary,
+    surface: surface,
+    onSurface: onSurface,
+  );
+
+  return ThemeData(
+    colorScheme: scheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: background,
+    textTheme: textTheme,
+    appBarTheme: const AppBarTheme(
+      backgroundColor: background,
+      foregroundColor: onSurface,
+      elevation: 0,
+      centerTitle: false,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: secondary,
+        foregroundColor: onPrimary,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        textStyle: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: primary,
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: const Color(0xFFF1F5F9),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: primary, width: 1.5),
+      ),
+      hintStyle: textTheme.bodyMedium?.copyWith(
+        color: const Color(0xFF64748B),
+      ),
+    ),
+    cardTheme: CardThemeData(
+      color: surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: const Color(0xFFF1F5F9),
+      selectedColor: const Color(0xFFBBF7D0),
+      labelStyle: textTheme.labelMedium?.copyWith(
+        color: onSurface,
+        fontWeight: FontWeight.w600,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(999),
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    ),
+    snackBarTheme: const SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: Color(0xFF0F172A),
+      contentTextStyle: TextStyle(color: Colors.white),
+    ),
+  );
+}
+
 class VibeInspectApp extends StatelessWidget {
-  const VibeInspectApp({super.key, required this.storageInitializer});
+  const VibeInspectApp({
+    super.key,
+    required this.storageInitializer,
+    this.pairingHttpClient,
+    this.forceManualQr = false,
+  });
 
   final StorageInitializer storageInitializer;
+  final http.Client? pairingHttpClient;
+  final bool forceManualQr;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Vibe Inspect',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: const ColorScheme(
-          brightness: Brightness.light,
-          primary: Color(0xFF1F2937),
-          onPrimary: Color(0xFFF9FAFB),
-          secondary: Color(0xFFE07A5F),
-          onSecondary: Color(0xFFF9FAFB),
-          error: Color(0xFFB91C1C),
-          onError: Color(0xFFF9FAFB),
-          surface: Color(0xFFF8FAFC),
-          onSurface: Color(0xFF111827),
-        ),
-        useMaterial3: true,
-        textTheme: GoogleFonts.spaceGroteskTextTheme(),
+      theme: _buildTheme(),
+      home: StorageGate(
+        storageInitializer: storageInitializer,
+        pairingHttpClient: pairingHttpClient,
+        forceManualQr: forceManualQr,
       ),
-      home: StorageGate(storageInitializer: storageInitializer),
     );
   }
 }
 
 class StorageGate extends StatefulWidget {
-  const StorageGate({super.key, required this.storageInitializer});
+  const StorageGate({
+    super.key,
+    required this.storageInitializer,
+    this.pairingHttpClient,
+    this.forceManualQr = false,
+  });
 
   final StorageInitializer storageInitializer;
+  final http.Client? pairingHttpClient;
+  final bool forceManualQr;
 
   @override
   State<StorageGate> createState() => _StorageGateState();
@@ -94,7 +221,11 @@ class _StorageGateState extends State<StorageGate> {
             error: 'Storage failed to load.',
           );
         }
-        return PairingScreen(storage: storage);
+        return PairingScreen(
+          storage: storage,
+          pairingHttpClient: widget.pairingHttpClient,
+          forceManualQr: widget.forceManualQr,
+        );
       },
     );
   }
@@ -176,9 +307,16 @@ class StorageErrorScreen extends StatelessWidget {
 }
 
 class PairingScreen extends StatefulWidget {
-  const PairingScreen({super.key, required this.storage});
+  const PairingScreen({
+    super.key,
+    required this.storage,
+    this.pairingHttpClient,
+    this.forceManualQr = false,
+  });
 
   final StorageRepository storage;
+  final http.Client? pairingHttpClient;
+  final bool forceManualQr;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -186,17 +324,19 @@ class PairingScreen extends StatefulWidget {
 
 class _PairingScreenState extends State<PairingScreen> {
   PairingPayload? _payload;
-  PairedConnection? _connection;
   String? _scanError;
-  String? _secretError;
-  final TextEditingController _secretController = TextEditingController();
-  final TextEditingController _commandController = TextEditingController();
-  String? _commandError;
-  String? _commandFeedback;
-  List<TimelineEvent> _timelineEvents = [];
-  List<ToolSession> _toolSessions = [];
-  bool _isHistoryLoading = true;
-  String? _historyError;
+  String? _pairingStatus;
+  bool _pairingStatusIsError = false;
+  bool _isPairing = false;
+  Timer? _pairingPoller;
+  String? _pairingAgentUrl;
+  bool? _pairingUsesTunnel;
+  http.Client? _pairingClient;
+  bool _ownsPairingClient = false;
+  bool _forceTunnel = false;
+  bool _isPendingPollActive = false;
+  List<ConnectionRecord> _connections = [];
+  String? _activeAgentId;
   String? _exportStatus;
   bool _exportStatusIsError = false;
   String? _importStatus;
@@ -205,29 +345,57 @@ class _PairingScreenState extends State<PairingScreen> {
   @override
   void initState() {
     super.initState();
+    _pairingClient = widget.pairingHttpClient ?? http.Client();
+    _ownsPairingClient = widget.pairingHttpClient == null;
     _loadHistory();
   }
 
   @override
   void dispose() {
-    _secretController.dispose();
-    _commandController.dispose();
+    _pairingPoller?.cancel();
+    if (_ownsPairingClient) {
+      _pairingClient?.close();
+    }
     super.dispose();
   }
 
   Future<void> _scanQrPayload() async {
+    if (widget.forceManualQr ||
+        kIsWeb ||
+        !(defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS)) {
+      final manual = await _promptQrPayloadInput();
+      if (manual == null) {
+        return;
+      }
+      await _applyQrPayload(manual);
+      return;
+    }
+
+    final scanned = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => const _QrScannerScreen(),
+      ),
+    );
+    if (scanned == null) {
+      return;
+    }
+    await _applyQrPayload(scanned);
+  }
+
+  Future<String?> _promptQrPayloadInput() async {
     final controller = TextEditingController();
     final payload = await showDialog<String>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Scan pairing QR'),
+          title: const Text('Enter pairing token'),
           content: TextField(
             key: const Key('qrPayloadField'),
             controller: controller,
             maxLines: 4,
             decoration: const InputDecoration(
-              hintText: 'Paste QR payload JSON',
+              hintText: 'Paste QR payload JSON or vibeinspect:// URL',
             ),
           ),
           actions: [
@@ -244,79 +412,422 @@ class _PairingScreenState extends State<PairingScreen> {
         );
       },
     );
+    return payload;
+  }
 
-    if (payload == null) {
-      return;
-    }
-
-    final parsed = PairingPayload.tryParse(payload);
+  Future<void> _applyQrPayload(String raw) async {
+    final parsed = PairingPayload.tryParse(raw);
+    _pairingPoller?.cancel();
     setState(() {
       _payload = parsed;
-      _connection = null;
       _scanError = parsed == null ? 'Invalid QR payload.' : null;
-      _secretError = null;
-      _secretController.clear();
+      _pairingStatus = null;
+      _pairingStatusIsError = false;
+      _isPairing = false;
+      _pairingAgentUrl = null;
+      _pairingUsesTunnel = null;
       if (parsed != null && parsed.isExpired) {
         _scanError = 'Token expired. Request a new token and retry.';
       }
     });
+    if (parsed != null && !parsed.isExpired) {
+      await _attemptAutoPairing(parsed);
+    }
   }
 
-  Future<void> _confirmSecret() async {
-    final payload = _payload;
-    if (payload == null) {
-      setState(() {
-        _secretError = 'Scan a pairing token first.';
-      });
+  Future<void> _attemptAutoPairing(PairingPayload payload) async {
+    if (_isPairing) {
       return;
     }
+    setState(() {
+      _isPairing = true;
+      _pairingStatus = 'Contacting the desktop agent...';
+      _pairingStatusIsError = false;
+    });
+    final result = await _confirmPairingWithUrls(payload);
+    if (!mounted) {
+      return;
+    }
+    switch (result.status) {
+      case _PairingAttemptStatus.connected:
+        await _completePairing(payload, result.agentUrl!);
+        break;
+      case _PairingAttemptStatus.pending:
+        _pairingPoller?.cancel();
+        setState(() {
+          _isPairing = false;
+          _pairingAgentUrl = result.agentUrl;
+          _pairingUsesTunnel =
+              result.agentUrl == null ? null : _isTunnelUrl(payload, result.agentUrl!);
+          _pairingStatus = 'Waiting for desktop approval.';
+          _pairingStatusIsError = false;
+        });
+        _startPendingPolling(payload, result.agentUrl!);
+        break;
+      case _PairingAttemptStatus.failed:
+        setState(() {
+          _isPairing = false;
+          _pairingStatus =
+              result.message ?? 'Unable to reach the desktop agent.';
+          _pairingStatusIsError = true;
+          _pairingUsesTunnel = null;
+        });
+        break;
+    }
+  }
 
+  Future<void> _retryPairing() async {
+    final payload = _payload;
+    if (payload == null) {
+      return;
+    }
     if (payload.isExpired) {
       setState(() {
         _scanError = 'Token expired. Request a new token and retry.';
-        _secretError = null;
       });
       return;
     }
+    await _attemptAutoPairing(payload);
+  }
 
-    if (_secretController.text.trim() != payload.secret) {
-      setState(() {
-        _secretError = 'Shared secret does not match.';
-      });
-      return;
-    }
-
-    setState(() {
-      _connection = PairedConnection(
-        token: payload.token,
-        connectedAt: DateTime.now(),
-        tunnelUrl: payload.tunnelUrl,
-        tunnelError: payload.tunnelError,
-      );
-      _secretError = null;
+  void _startPendingPolling(PairingPayload payload, String agentUrl) {
+    _pairingPoller?.cancel();
+    _pairingPoller =
+        Timer.periodic(const Duration(seconds: 2), (_) async {
+      await _pollPendingPairing(payload, agentUrl);
     });
+  }
 
-    await _recordPairingEvent(payload);
+  Future<void> _pollPendingPairing(
+    PairingPayload payload,
+    String agentUrl,
+  ) async {
+    if (_isPairing) {
+      return;
+    }
+    if (payload.isExpired) {
+      _pairingPoller?.cancel();
+      if (mounted) {
+        setState(() {
+          _pairingStatus = 'Token expired. Request a new token and retry.';
+          _pairingStatusIsError = true;
+        });
+      }
+      return;
+    }
+    if (_isPendingPollActive) {
+      return;
+    }
+    _isPendingPollActive = true;
+    try {
+      final result = await _confirmPairingAtUrl(payload, agentUrl);
+      if (!mounted) {
+        return;
+      }
+      if (result.status == _PairingAttemptStatus.connected) {
+        await _completePairing(payload, agentUrl);
+        return;
+      }
+      if (result.status == _PairingAttemptStatus.failed) {
+        _pairingPoller?.cancel();
+        setState(() {
+          _pairingStatus =
+              result.message ?? 'Desktop approval check failed.';
+          _pairingStatusIsError = true;
+        });
+      }
+    } finally {
+      _isPendingPollActive = false;
+    }
+  }
+
+  Future<void> _completePairing(
+    PairingPayload payload,
+    String agentUrl,
+  ) async {
+    _pairingPoller?.cancel();
+    setState(() {
+      _pairingAgentUrl = agentUrl;
+      _pairingUsesTunnel = _isTunnelUrl(payload, agentUrl);
+      _pairingStatus = 'Connected.';
+      _pairingStatusIsError = false;
+      _isPairing = false;
+    });
+    await _recordPairingEvent(payload, agentUrl);
+  }
+
+  Future<_PairingAttemptResult> _confirmPairingWithUrls(
+    PairingPayload payload,
+  ) async {
+    final selection = await _selectPairingCandidates(payload);
+    final candidates = selection.candidates;
+    if (candidates.isEmpty) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: selection.message ??
+            payload.tunnelError ??
+            'No desktop URL found in the pairing payload.',
+      );
+    }
+    final errors = <String>[];
+    for (final url in candidates) {
+      final result = await _confirmPairingAtUrl(payload, url);
+      if (result.status != _PairingAttemptStatus.failed) {
+        return result;
+      }
+      if (result.message != null) {
+        errors.add(result.message!);
+      }
+    }
+    return _PairingAttemptResult(
+      status: _PairingAttemptStatus.failed,
+      message: errors.isNotEmpty
+          ? errors.first
+          : 'Unable to reach the desktop agent.',
+    );
+  }
+
+  Future<_PairingCandidateSelection> _selectPairingCandidates(
+    PairingPayload payload,
+  ) async {
+    final tunnelUrl = payload.tunnelUrl?.trim() ?? '';
+    final localUrls = payload.localUrls;
+    if (_forceTunnel) {
+      if (tunnelUrl.isNotEmpty) {
+        return _PairingCandidateSelection(candidates: [tunnelUrl]);
+      }
+      final message = payload.tunnelError != null &&
+              payload.tunnelError!.trim().isNotEmpty
+          ? payload.tunnelError!
+          : 'Tunnel URL unavailable. Disable "Force tunnel" or install Cloudflared.';
+      return _PairingCandidateSelection(candidates: const [], message: message);
+    }
+
+    if (localUrls.isNotEmpty) {
+      final reachable = await _reachableLocalUrls(localUrls);
+      if (reachable.isNotEmpty) {
+        return _PairingCandidateSelection(candidates: reachable);
+      }
+    }
+
+    if (tunnelUrl.isNotEmpty) {
+      return _PairingCandidateSelection(candidates: [tunnelUrl]);
+    }
+
+    final fallbackMessage = payload.tunnelError != null &&
+            payload.tunnelError!.trim().isNotEmpty
+        ? payload.tunnelError!
+        : localUrls.isNotEmpty
+            ? 'Local endpoints unreachable and no tunnel URL available.'
+            : 'No desktop URL found in the pairing payload.';
+    return _PairingCandidateSelection(
+      candidates: const [],
+      message: fallbackMessage,
+    );
+  }
+
+  Future<List<String>> _reachableLocalUrls(List<String> localUrls) async {
+    final results = await Future.wait(
+      localUrls.map(_isLocalReachable),
+    );
+    final reachable = <String>[];
+    for (var index = 0; index < localUrls.length; index += 1) {
+      if (results[index]) {
+        reachable.add(localUrls[index]);
+      }
+    }
+    return reachable;
+  }
+
+  Future<bool> _isLocalReachable(String baseUrl) async {
+    final client = _pairingClient;
+    if (client == null) {
+      return false;
+    }
+    Uri uri;
+    try {
+      uri = _healthUri(baseUrl);
+    } catch (_) {
+      return false;
+    }
+    try {
+      final response =
+          await client.get(uri).timeout(const Duration(seconds: 1));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<_PairingAttemptResult> _confirmPairingAtUrl(
+    PairingPayload payload,
+    String baseUrl,
+  ) async {
+    final client = _pairingClient;
+    if (client == null) {
+      return const _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Pairing client unavailable.',
+      );
+    }
+    Uri uri;
+    try {
+      uri = _pairingUri(baseUrl);
+    } catch (_) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Invalid agent URL: $baseUrl',
+        agentUrl: baseUrl,
+      );
+    }
+    http.Response response;
+    try {
+      response = await client
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'token': payload.token,
+              'secret': payload.secret,
+            }),
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Failed to reach $baseUrl.',
+        agentUrl: baseUrl,
+      );
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Desktop agent returned HTTP ${response.statusCode}.',
+        agentUrl: baseUrl,
+      );
+    }
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } catch (_) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Desktop agent response was not JSON.',
+        agentUrl: baseUrl,
+      );
+    }
+
+    if (decoded is! Map<String, dynamic>) {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: 'Desktop agent response was malformed.',
+        agentUrl: baseUrl,
+      );
+    }
+
+    final status = decoded['status']?.toString();
+    if (status == 'connected') {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.connected,
+        agentUrl: baseUrl,
+      );
+    }
+    if (status == 'pending') {
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.pending,
+        agentUrl: baseUrl,
+      );
+    }
+    final error = decoded['error'];
+    if (error is Map) {
+      final message = error['message']?.toString();
+      if (message != null && message.isNotEmpty) {
+        return _PairingAttemptResult(
+          status: _PairingAttemptStatus.failed,
+          message: message,
+          agentUrl: baseUrl,
+        );
+      }
+    }
+
+    return _PairingAttemptResult(
+      status: _PairingAttemptStatus.failed,
+      message: 'Desktop agent returned an unexpected response.',
+      agentUrl: baseUrl,
+    );
+  }
+
+  Uri _pairingUri(String baseUrl) {
+    final base = Uri.parse(baseUrl);
+    if (base.scheme.isEmpty) {
+      throw const FormatException(
+        'Agent URL must include a scheme (https://).',
+      );
+    }
+    final basePath =
+        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final confirmPath =
+        basePath.isEmpty ? '/pairing/confirm' : '$basePath/pairing/confirm';
+    return base.replace(path: confirmPath);
+  }
+
+  Uri _healthUri(String baseUrl) {
+    final base = Uri.parse(baseUrl);
+    if (base.scheme.isEmpty) {
+      throw const FormatException(
+        'Agent URL must include a scheme (https://).',
+      );
+    }
+    final basePath =
+        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final healthPath = basePath.isEmpty ? '/health' : '$basePath/health';
+    return base.replace(path: healthPath);
+  }
+
+  bool _isTunnelUrl(PairingPayload payload, String agentUrl) {
+    final tunnelUrl = payload.tunnelUrl?.trim();
+    if (tunnelUrl == null || tunnelUrl.isEmpty) {
+      return false;
+    }
+    return _normalizeUrl(tunnelUrl) == _normalizeUrl(agentUrl);
+  }
+
+  String _normalizeUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.endsWith('/')) {
+      return trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
   }
 
   void _resetPairing() {
+    _pairingPoller?.cancel();
     setState(() {
       _payload = null;
-      _connection = null;
       _scanError = null;
-      _secretError = null;
-      _secretController.clear();
+      _pairingStatus = null;
+      _pairingStatusIsError = false;
+      _isPairing = false;
+      _pairingAgentUrl = null;
+      _pairingUsesTunnel = null;
     });
   }
 
-  Future<void> _recordPairingEvent(PairingPayload payload) async {
+  Future<void> _recordPairingEvent(
+    PairingPayload payload,
+    String agentUrl,
+  ) async {
     try {
       final now = DateTime.now();
+      final connectionId = createStorageId();
       final connection = ConnectionRecord(
-        id: createStorageId(),
+        id: connectionId,
         token: payload.token,
         status: 'connected',
         connectedAt: now,
+        agentUrl: agentUrl,
         tunnelUrl: payload.tunnelUrl,
         tunnelError: payload.tunnelError,
         lastSeenAt: now,
@@ -326,6 +837,7 @@ class _PairingScreenState extends State<PairingScreen> {
         type: 'pairing',
         label: 'Pairing ${payload.token}',
         status: 'connected',
+        agentId: connectionId,
         createdAt: now,
       );
       final event = TimelineEvent(
@@ -335,6 +847,7 @@ class _PairingScreenState extends State<PairingScreen> {
         title: 'Paired with desktop agent',
         payload: {
           'token': payload.token,
+          'agent_url': agentUrl,
           'tunnel_url': payload.tunnelUrl ?? '',
           'connected_at': now.toIso8601String(),
         },
@@ -344,6 +857,11 @@ class _PairingScreenState extends State<PairingScreen> {
       await widget.storage.insertToolSession(session);
       await widget.storage.insertTimelineEvent(event);
       await _loadHistory();
+      if (mounted) {
+        setState(() {
+          _activeAgentId = connectionId;
+        });
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -551,372 +1069,37 @@ class _PairingScreenState extends State<PairingScreen> {
     }
   }
 
-  Future<void> _handleCommandSubmit() async {
-    final command = _commandController.text.trim();
-    if (command.isEmpty) {
-      setState(() {
-        _commandError = 'Enter a command to run.';
-      });
-      return;
-    }
-
-    setState(() {
-      _commandError = null;
-      _commandFeedback = null;
-    });
-
-    final intent = await _resolveCommandIntent(command);
-    if (!mounted || intent == null) {
-      return;
-    }
-
-    await _routeCommandIntent(intent);
-  }
-
-  Future<CommandIntent?> _resolveCommandIntent(String command) async {
-    final parsed = _uniqueIntents(_parseCommandIntents(command));
-    if (parsed.length == 1) {
-      return parsed.first;
-    }
-
-    final options = parsed.isEmpty ? _buildFallbackIntents(command) : parsed;
-    options.sort((a, b) => a.tool.index.compareTo(b.tool.index));
-    if (!mounted) {
-      return null;
-    }
-
-    final dialogTitle = parsed.isEmpty
-        ? 'Choose a tool'
-        : 'Multiple tools matched';
-    final dialogSubtitle = parsed.isEmpty
-        ? 'We could not determine the right tool for:'
-        : 'Select the tool you meant for:';
-
-    return showDialog<CommandIntent>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(dialogTitle),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(dialogSubtitle),
-                  const SizedBox(height: 8),
-                  Text(
-                    '"$command"',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF475569),
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 16),
-                  for (final option in options) ...[
-                    _CommandChoiceTile(
-                      intent: option,
-                      onTap: () => Navigator.of(context).pop(option),
-                    ),
-                    if (option != options.last) const SizedBox(height: 8),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _routeCommandIntent(CommandIntent intent) async {
-    final now = DateTime.now();
-    final session = ToolSession(
-      id: createStorageId(),
-      type: intent.tool.storageKey,
-      label: intent.sessionLabel,
-      status: 'queued',
-      createdAt: now,
-    );
-    final event = TimelineEvent(
-      id: createStorageId(),
-      sessionId: session.id,
-      type: intent.tool.storageKey,
-      title: intent.title,
-      payload: intent.payload,
-      createdAt: now,
-    );
-
-    try {
-      await widget.storage.insertToolSession(session);
-      await widget.storage.insertTimelineEvent(event);
-      await _loadHistory();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Failed to save command: ${error.toString()}',
-          ),
-        ),
-      );
-      return;
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _commandFeedback = 'Opened ${intent.tool.label}';
-      _commandController.clear();
-    });
-
-    _openIntentScreen(intent, event, session);
-  }
-
-  void _openIntentScreen(
-    CommandIntent intent,
-    TimelineEvent event,
-    ToolSession session,
-  ) {
-    switch (intent.tool) {
-      case CommandTool.api:
-        final apiContext = ApiEventContext.fromPayload(event.payload);
-        if (apiContext == null) {
-          _openContextError(
-            title: 'Context unavailable',
-            message:
-                'This API request is missing details needed to restore the explorer.',
-            event: event,
-          );
-          return;
-        }
-        _pushContextScreen(
-          ApiExplorerScreen(
-            event: event,
-            context: apiContext,
-            storage: widget.storage,
-            agentBaseUrl: _connection?.tunnelUrl,
-          ),
-        );
-        return;
-      case CommandTool.terminal:
-        _pushContextScreen(
-          TerminalSessionScreen(
-            event: event,
-            session: session,
-            storage: widget.storage,
-            agentBaseUrl: _connection?.tunnelUrl,
-          ),
-        );
-        return;
-      case CommandTool.ai:
-        _pushContextScreen(
-          AiInsightScreen(
-            event: event,
-            session: session,
-          ),
-        );
-        return;
-      case CommandTool.vnc:
-        _pushContextScreen(
-          VncSessionScreen(
-            event: event,
-            session: session,
-            storage: widget.storage,
-            agentBaseUrl: _connection?.tunnelUrl,
-          ),
-        );
-        return;
-    }
-  }
-
-  Future<ToolSession?> _resolveSession(String sessionId) async {
-    var session = _findSessionById(_toolSessions, sessionId);
-    if (session != null) {
-      return session;
-    }
-    try {
-      final sessions = await widget.storage.fetchToolSessions();
-      session = _findSessionById(sessions, sessionId);
-    } catch (_) {
-      session = null;
-    }
-    return session;
-  }
-
-  void _applyCommandExample(String example) {
-    setState(() {
-      _commandController.text = example;
-      _commandController.selection =
-          TextSelection.collapsed(offset: example.length);
-      _commandError = null;
-      _commandFeedback = null;
-    });
-  }
-
-  void _clearCommandInput() {
-    setState(() {
-      _commandController.clear();
-      _commandError = null;
-      _commandFeedback = null;
-    });
-  }
-
   Future<void> _loadHistory() async {
-    setState(() {
-      _isHistoryLoading = true;
-      _historyError = null;
-    });
     try {
-      final events = await widget.storage.fetchTimelineEvents();
-      final sessions = await widget.storage.fetchToolSessions();
+      final connections = await widget.storage.fetchConnections();
       if (!mounted) {
         return;
       }
       setState(() {
-        _timelineEvents = events;
-        _toolSessions = sessions;
-        _isHistoryLoading = false;
+        _connections = connections;
+        _activeAgentId ??= connections.isNotEmpty ? connections.first.id : null;
       });
     } catch (_) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _isHistoryLoading = false;
-        _historyError = 'Unable to load stored history.';
-      });
     }
   }
 
-  Future<void> _handleTimelineEventTap(TimelineEvent event) async {
-    final eventType = event.type.toLowerCase();
-    if (eventType == 'api') {
-      final apiContext = ApiEventContext.fromPayload(event.payload);
-      if (apiContext == null) {
-        _openContextError(
-          title: 'Context unavailable',
-          message:
-              'This API event is missing request or response details needed to restore the explorer.',
-          event: event,
-        );
-        return;
-      }
-      _pushContextScreen(
-        ApiExplorerScreen(
-          event: event,
-          context: apiContext,
-          storage: widget.storage,
-          agentBaseUrl: _connection?.tunnelUrl,
-        ),
-      );
-      return;
-    }
-
-    if (eventType == 'terminal') {
-      final session = await _resolveSession(event.sessionId);
-      if (!mounted) {
-        return;
-      }
-      if (session == null) {
-        _openContextError(
-          title: 'Session missing',
-          message:
-              'The referenced terminal session could not be found in local history.',
-          event: event,
-        );
-        return;
-      }
-      _pushContextScreen(
-        TerminalSessionScreen(
-          event: event,
-          session: session,
-          storage: widget.storage,
-          agentBaseUrl: _connection?.tunnelUrl,
-        ),
-      );
-      return;
-    }
-
-    if (eventType == 'ai') {
-      final session = await _resolveSession(event.sessionId);
-      if (!mounted) {
-        return;
-      }
-      if (session == null) {
-        _openContextError(
-          title: 'Session missing',
-          message: 'The referenced AI session could not be found in history.',
-          event: event,
-        );
-        return;
-      }
-      _pushContextScreen(
-        AiInsightScreen(
-          event: event,
-          session: session,
-        ),
-      );
-      return;
-    }
-
-    if (eventType == 'vnc') {
-      final session = await _resolveSession(event.sessionId);
-      if (!mounted) {
-        return;
-      }
-      if (session == null) {
-        _openContextError(
-          title: 'Session missing',
-          message:
-              'The referenced VNC session could not be found in local history.',
-          event: event,
-        );
-        return;
-      }
-      _pushContextScreen(
-        VncSessionScreen(
-          event: event,
-          session: session,
-          storage: widget.storage,
-          agentBaseUrl: _connection?.tunnelUrl,
-        ),
-      );
-      return;
-    }
-
-    _openContextError(
-      title: 'Context unavailable',
-      message: 'This event type does not yet support context restore.',
-      event: event,
-    );
-  }
-
-  ToolSession? _findSessionById(
-    List<ToolSession> sessions,
-    String sessionId,
-  ) {
-    for (final session in sessions) {
-      if (session.id == sessionId) {
-        return session;
-      }
-    }
-    return null;
-  }
-
-  void _pushContextScreen(Widget screen) {
+  void _openAgentWorkspace(ConnectionRecord agent) {
+    setState(() {
+      _activeAgentId = agent.id;
+    });
     Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => screen))
+        .push(
+          MaterialPageRoute(
+            builder: (_) => AgentWorkspaceScreen(
+              storage: widget.storage,
+              agent: agent,
+              agents: _connections,
+            ),
+          ),
+        )
         .then((_) {
       if (mounted) {
         _loadHistory();
@@ -924,25 +1107,59 @@ class _PairingScreenState extends State<PairingScreen> {
     });
   }
 
-  void _openContextError({
-    required String title,
-    required String message,
-    required TimelineEvent event,
-  }) {
-    if (!mounted) {
+  Future<void> _deleteAgent(ConnectionRecord agent) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove agent?'),
+          content: Text(
+            'This will delete all sessions and history for ${_agentLabel(agent)}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
       return;
     }
-    _pushContextScreen(
-      ContextMissingScreen(
-        title: title,
-        message: message,
-        event: event,
-      ),
-    );
+    try {
+      await widget.storage.deleteToolSessionsByAgent(agent.id);
+      await widget.storage.deleteConnection(agent.id);
+      await _loadHistory();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (_activeAgentId == agent.id) {
+          _activeAgentId =
+              _connections.isNotEmpty ? _connections.first.id : null;
+        }
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to remove agent: ${error.toString()}'),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasAgents = _connections.isNotEmpty;
     return Scaffold(
       body: Stack(
         children: [
@@ -956,9 +1173,9 @@ class _PairingScreenState extends State<PairingScreen> {
                   const _PairingHeader(),
                   const SizedBox(height: 24),
                   PairingStepCard(
-                    title: 'Scan QR token',
+                    title: 'Add agent',
                     description:
-                        'Capture the desktop QR to import a short-lived token.',
+                        'Scan a short-lived token to add a desktop agent.',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -966,7 +1183,7 @@ class _PairingScreenState extends State<PairingScreen> {
                           key: const Key('scanQrButton'),
                           onPressed: _scanQrPayload,
                           icon: const Icon(Icons.qr_code_2),
-                          label: const Text('Scan QR payload'),
+                          label: const Text('Scan QR token'),
                         ),
                         const SizedBox(height: 16),
                         if (_payload == null)
@@ -982,7 +1199,8 @@ class _PairingScreenState extends State<PairingScreen> {
                             isError: true,
                           ),
                         ],
-                        if (_payload?.tunnelError != null) ...[
+                        if (_payload?.tunnelError != null &&
+                            _pairingStatus != _payload!.tunnelError) ...[
                           const SizedBox(height: 12),
                           _InlineStatus(
                             message: _payload!.tunnelError!,
@@ -997,153 +1215,178 @@ class _PairingScreenState extends State<PairingScreen> {
                             child: const Text('Retry pairing'),
                           ),
                         ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  PairingStepCard(
-                    title: 'Confirm shared secret',
-                    description:
-                        'Enter the secret shown on your desktop to finish pairing.',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextField(
-                          key: const Key('secretField'),
-                          controller: _secretController,
-                          obscureText: true,
-                          decoration: InputDecoration(
-                            labelText: 'Shared secret',
-                            errorText: _secretError,
-                          ),
-                        ),
                         const SizedBox(height: 12),
-                        FilledButton(
-                          key: const Key('confirmSecretButton'),
-                          onPressed: _connection == null ? _confirmSecret : null,
-                          child: const Text('Confirm secret'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  _ConnectionStatusCard(
-                    connection: _connection,
-                    hasToken: _payload != null,
-                  ),
-                  const SizedBox(height: 20),
-                  PairingStepCard(
-                    title: 'Command bar',
-                    description:
-                        'Describe the action and the app will route it to API, terminal, AI, or VNC.',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextField(
-                          key: const Key('commandBarField'),
-                          controller: _commandController,
-                          decoration: InputDecoration(
-                            labelText: 'Command',
-                            hintText:
-                                'POST /login, run npm test, analyze deploy error',
-                            errorText: _commandError,
-                          ),
-                          onChanged: (_) {
-                            if (_commandError != null ||
-                                _commandFeedback != null) {
-                              setState(() {
-                                _commandError = null;
-                                _commandFeedback = null;
-                              });
-                            }
-                          },
-                          onSubmitted: (_) => _handleCommandSubmit(),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            FilledButton.icon(
-                              key: const Key('commandRunButton'),
-                              onPressed: _handleCommandSubmit,
-                              icon: const Icon(Icons.bolt),
-                              label: const Text('Run command'),
+                        if (_isPairing) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
                             ),
-                            const SizedBox(width: 12),
-                            OutlinedButton(
-                              key: const Key('commandClearButton'),
-                              onPressed: _clearCommandInput,
-                              child: const Text('Clear'),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F2FE),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: const Color(0xFFBAE6FD),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                    valueColor: AlwaysStoppedAnimation(
+                                      Color(0xFF0284C7),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  'Pairing in progress...',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF0C4A6E),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (_pairingStatus != null)
+                          _InlineStatus(
+                            key: const Key('pairingStatus'),
+                            message: _pairingStatus!,
+                            isError: _pairingStatusIsError,
+                          )
+                        else
+                          const Text(
+                            'Scan a token to begin pairing. Approve on desktop if required.',
+                          ),
+                        if (_pairingAgentUrl != null) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Agent: $_pairingAgentUrl',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFF64748B),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          if (_pairingUsesTunnel != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Mode: ${_pairingUsesTunnel! ? 'Tunnel' : 'Local network'}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: const Color(0xFF94A3B8),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ],
+                        ],
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          key: const Key('retryPairingButton'),
+                          onPressed: _payload == null ? null : _retryPairing,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry pairing'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  PairingStepCard(
+                    title: 'Advanced',
+                    description:
+                        'Control how the mobile app connects to the desktop agent.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Force tunnel connection',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Use the cloud tunnel even when the agent is on the same LAN.',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: const Color(0xFF64748B),
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch.adaptive(
+                              value: _forceTunnel,
+                              onChanged: (value) {
+                                setState(() {
+                                  _forceTunnel = value;
+                                });
+                              },
                             ),
                           ],
                         ),
-                        if (_commandFeedback != null) ...[
+                        if (_forceTunnel &&
+                            (_payload?.tunnelUrl == null ||
+                                _payload!.tunnelUrl!.trim().isEmpty)) ...[
                           const SizedBox(height: 12),
                           _InlineStatus(
-                            message: _commandFeedback!,
-                            isError: false,
+                            message: _payload?.tunnelError ??
+                                'Tunnel URL unavailable. Install Cloudflared and generate a new token.',
+                            isError: true,
                           ),
                         ],
-                        const SizedBox(height: 16),
-                        Text(
-                          'Examples',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFF64748B),
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _CommandExampleChip(
-                              label: 'POST /login',
-                              onTap: () => _applyCommandExample('POST /login'),
-                            ),
-                            _CommandExampleChip(
-                              label: 'run npm test',
-                              onTap: () =>
-                                  _applyCommandExample('run npm test'),
-                            ),
-                            _CommandExampleChip(
-                              label: 'ai summarize last error',
-                              onTap: () => _applyCommandExample(
-                                'ai summarize last error',
-                              ),
-                            ),
-                            _CommandExampleChip(
-                              label: 'vnc open login screen',
-                              onTap: () => _applyCommandExample(
-                                'vnc open login screen',
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
                   PairingStepCard(
-                    title: 'Local timeline',
+                    title: 'Agents',
                     description:
-                        'Timeline events are stored on-device and survive restarts.',
-                    child: _TimelineHistory(
-                      isLoading: _isHistoryLoading,
-                      errorMessage: _historyError,
-                      events: _timelineEvents,
-                      onEventTap: _handleTimelineEventTap,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  PairingStepCard(
-                    title: 'Tool history',
-                    description:
-                        'Recent tool sessions saved locally for quick recall.',
-                    child: _ToolHistory(
-                      isLoading: _isHistoryLoading,
-                      errorMessage: _historyError,
-                      sessions: _toolSessions,
-                    ),
+                        'Each agent has its own workspace and sessions.',
+                    child: hasAgents
+                        ? Column(
+                            children: [
+                              for (final agent in _connections) ...[
+                                _AgentCard(
+                                  agent: agent,
+                                  isActive: agent.id == _activeAgentId,
+                                  onOpenWorkspace: () =>
+                                      _openAgentWorkspace(agent),
+                                  onDelete: () => _deleteAgent(agent),
+                                ),
+                                if (agent != _connections.last)
+                                  const SizedBox(height: 12),
+                              ],
+                            ],
+                          )
+                        : Text(
+                            'No agents paired yet.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: const Color(0xFF64748B),
+                                ),
+                          ),
                   ),
                   const SizedBox(height: 20),
                   PairingStepCard(
@@ -1198,43 +1441,1221 @@ class _PairingScreenState extends State<PairingScreen> {
   }
 }
 
+class _QrScannerScreen extends StatefulWidget {
+  const _QrScannerScreen();
+
+  @override
+  State<_QrScannerScreen> createState() => _QrScannerScreenState();
+}
+
+class _QrScannerScreenState extends State<_QrScannerScreen> {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.normal,
+    facing: CameraFacing.back,
+  );
+  bool _isHandling = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleDetect(BarcodeCapture capture) {
+    if (_isHandling) {
+      return;
+    }
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue;
+      if (raw == null || raw.trim().isEmpty) {
+        continue;
+      }
+      if (PairingPayload.tryParse(raw) == null) {
+        setState(() {
+          _errorMessage = 'Unrecognized QR code. Try again or paste the token.';
+        });
+        return;
+      }
+      _isHandling = true;
+      _controller.stop();
+      Navigator.of(context).pop(raw);
+      return;
+    }
+  }
+
+  Future<void> _openManualEntry() async {
+    final controller = TextEditingController();
+    final payload = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Enter pairing token'),
+          content: TextField(
+            key: const Key('qrPayloadField'),
+            controller: controller,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              hintText: 'Paste QR payload JSON or vibeinspect:// URL',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('applyQrButton'),
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('Use token'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || payload == null) {
+      return;
+    }
+    final trimmed = payload.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    Navigator.of(context).pop(trimmed);
+  }
+
+  String _describeScannerError(MobileScannerException error) {
+    switch (error.errorCode) {
+      case MobileScannerErrorCode.permissionDenied:
+        return 'Camera permission denied. Enable it or paste the token.';
+      case MobileScannerErrorCode.unsupported:
+        return 'Camera not available on this device.';
+      case MobileScannerErrorCode.controllerUninitialized:
+        return 'Camera not ready yet.';
+      case MobileScannerErrorCode.genericError:
+      default:
+        return 'Unable to start the camera.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan pairing QR'),
+        actions: [
+          IconButton(
+            tooltip: 'Paste token',
+            onPressed: _openManualEntry,
+            icon: const Icon(Icons.edit),
+          ),
+          ValueListenableBuilder<MobileScannerState>(
+            valueListenable: _controller,
+            builder: (context, state, _) {
+              final torchState = state.torchState;
+              final hasTorch = torchState != TorchState.unavailable;
+              return IconButton(
+                tooltip: 'Toggle torch',
+                onPressed: hasTorch ? _controller.toggleTorch : null,
+                icon: Icon(
+                  torchState == TorchState.on
+                      ? Icons.flash_on
+                      : Icons.flash_off,
+                ),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Switch camera',
+            onPressed: _controller.switchCamera,
+            icon: const Icon(Icons.cameraswitch),
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = constraints.biggest;
+          final scanSize = size.shortestSide * 0.7;
+          final scanWindow = Rect.fromCenter(
+            center: size.center(Offset.zero),
+            width: scanSize,
+            height: scanSize,
+          );
+          return Stack(
+            children: [
+              MobileScanner(
+                controller: _controller,
+                onDetect: _handleDetect,
+                scanWindow: scanWindow,
+                tapToFocus: true,
+                errorBuilder: (context, error) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.camera_alt_outlined,
+                            size: 48,
+                            color: Color(0xFF64748B),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _describeScannerError(error),
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: const Color(0xFF475569),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton(
+                            onPressed: _openManualEntry,
+                            child: const Text('Paste token'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                overlayBuilder: (context, constraints) {
+                  return CustomPaint(
+                    painter: _ScannerOverlayPainter(scanWindow),
+                    child: const SizedBox.expand(),
+                  );
+                },
+              ),
+              if (_errorMessage != null)
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: 32,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color.fromARGB(217, 15, 23, 42),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.error_outline,
+                          color: Color(0xFFFCA5A5),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _errorMessage!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ScannerOverlayPainter extends CustomPainter {
+  _ScannerOverlayPainter(this.scanWindow);
+
+  final Rect scanWindow;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final overlay = Paint()
+      ..color = const Color(0x99000000)
+      ..style = PaintingStyle.fill;
+    final border = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..addRRect(RRect.fromRectXY(scanWindow, 16, 16));
+    canvas.drawPath(path, overlay);
+    canvas.drawRRect(RRect.fromRectXY(scanWindow, 16, 16), border);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScannerOverlayPainter oldDelegate) {
+    return oldDelegate.scanWindow != scanWindow;
+  }
+}
+
+class AgentWorkspaceScreen extends StatefulWidget {
+  const AgentWorkspaceScreen({
+    super.key,
+    required this.storage,
+    required this.agent,
+    required this.agents,
+  });
+
+  final StorageRepository storage;
+  final ConnectionRecord agent;
+  final List<ConnectionRecord> agents;
+
+  @override
+  State<AgentWorkspaceScreen> createState() => _AgentWorkspaceScreenState();
+}
+
+class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
+  List<ToolSession> _sessions = [];
+  List<TimelineEvent> _events = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+  late ConnectionRecord _activeAgent;
+
+  @override
+  void initState() {
+    super.initState();
+    _activeAgent = widget.agent;
+    _loadWorkspace();
+  }
+
+  Future<void> _loadWorkspace() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      final sessions = await widget.storage.fetchToolSessions();
+      final events = await widget.storage.fetchTimelineEvents();
+      final agentSessions = sessions
+          .where((session) => session.agentId == _activeAgent.id)
+          .toList();
+      final sessionIds = agentSessions.map((session) => session.id).toSet();
+      final agentEvents =
+          events.where((event) => sessionIds.contains(event.sessionId)).toList();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sessions = agentSessions;
+        _events = agentEvents;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Unable to load workspace.';
+      });
+    }
+  }
+
+  String? get _agentBaseUrl {
+    final url = _activeAgent.agentUrl?.trim();
+    return url == null || url.isEmpty ? null : url;
+  }
+
+  Future<void> _openTerminalSession() async {
+    final now = DateTime.now();
+    final terminalCount =
+        _sessions.where((session) => session.type == 'terminal').length;
+    final session = ToolSession(
+      id: createStorageId(),
+      type: 'terminal',
+      label: 'Terminal Session ${terminalCount + 1}',
+      status: 'idle',
+      agentId: _activeAgent.id,
+      createdAt: now,
+    );
+    try {
+      await widget.storage.insertToolSession(session);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to create terminal session: ${error.toString()}',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => TerminalWorkspaceScreen(
+              storage: widget.storage,
+              agentBaseUrl: _agentBaseUrl,
+              agentId: widget.agent.id,
+              initialSession: session,
+            ),
+          ),
+        )
+        .then((_) => _loadWorkspace());
+  }
+
+  Future<void> _openApiSession() async {
+    final now = DateTime.now();
+    final intent = _buildApiIntent('GET /');
+    final session = ToolSession(
+      id: createStorageId(),
+      type: intent.tool.storageKey,
+      label: intent.sessionLabel,
+      status: 'queued',
+      agentId: _activeAgent.id,
+      createdAt: now,
+    );
+    final event = TimelineEvent(
+      id: createStorageId(),
+      sessionId: session.id,
+      type: intent.tool.storageKey,
+      title: intent.title,
+      payload: intent.payload,
+      createdAt: now,
+    );
+    try {
+      await widget.storage.insertToolSession(session);
+      await widget.storage.insertTimelineEvent(event);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to create API session: ${error.toString()}',
+          ),
+        ),
+      );
+      return;
+    }
+    final apiContext = ApiEventContext.fromPayload(event.payload);
+    if (!mounted || apiContext == null) {
+      return;
+    }
+    await Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => ApiExplorerScreen(
+              event: event,
+              context: apiContext,
+              storage: widget.storage,
+              agentBaseUrl: _agentBaseUrl,
+            ),
+          ),
+        )
+        .then((_) => _loadWorkspace());
+  }
+
+  Future<void> _openVncView() async {
+    final baseUrl = _agentBaseUrl;
+    if (baseUrl == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Agent URL missing. Re-pair to enable VNC.'),
+        ),
+      );
+      return;
+    }
+    final existingSession = _sessions.firstWhere(
+      (session) => session.type == 'vnc',
+      orElse: () => ToolSession(
+        id: '',
+        type: 'vnc',
+        label: '',
+        status: 'queued',
+        createdAt: DateTime.now(),
+      ),
+    );
+    final now = DateTime.now();
+    final session = existingSession.id.isEmpty
+        ? ToolSession(
+            id: createStorageId(),
+            type: 'vnc',
+            label: 'VNC Workspace',
+            status: 'queued',
+            agentId: _activeAgent.id,
+            createdAt: now,
+          )
+        : existingSession;
+    if (existingSession.id.isEmpty) {
+      try {
+        await widget.storage.insertToolSession(session);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to create VNC session: ${error.toString()}',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    final event = TimelineEvent(
+      id: createStorageId(),
+      sessionId: session.id,
+      type: 'vnc',
+      title: 'VNC: ${_agentLabel(_activeAgent)}',
+      payload: {
+        'target': _agentLabel(_activeAgent),
+        'status': 'queued',
+      },
+      createdAt: now,
+    );
+    try {
+      await widget.storage.insertTimelineEvent(event);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start VNC: ${error.toString()}'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => VncSessionScreen(
+              event: event,
+              session: session,
+              storage: widget.storage,
+              agentBaseUrl: baseUrl,
+            ),
+          ),
+        )
+        .then((_) => _loadWorkspace());
+  }
+
+  Future<void> _removeActiveAgent() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove agent?'),
+          content: Text(
+            'This will delete all sessions and history for ${_agentLabel(_activeAgent)}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      await widget.storage.deleteToolSessionsByAgent(_activeAgent.id);
+      await widget.storage.deleteConnection(_activeAgent.id);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to remove agent: ${error.toString()}'),
+        ),
+      );
+      return;
+    }
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _openSession(ToolSession session) async {
+    final baseUrl = _agentBaseUrl;
+    final latestEvent = _latestEventForSession(session.id);
+    if (session.type == 'terminal') {
+      await Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => TerminalWorkspaceScreen(
+                storage: widget.storage,
+                agentBaseUrl: baseUrl,
+                agentId: _activeAgent.id,
+                initialSession: session,
+                initialEvent: latestEvent,
+              ),
+            ),
+          )
+          .then((_) => _loadWorkspace());
+      return;
+    }
+    if (session.type == 'api') {
+      if (latestEvent == null) {
+        _showMissingContext('No API activity found for this session.');
+        return;
+      }
+      final apiContext = ApiEventContext.fromPayload(latestEvent.payload);
+      if (apiContext == null) {
+        _showMissingContext('API context is missing for this session.');
+        return;
+      }
+      await Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => ApiExplorerScreen(
+                event: latestEvent,
+                context: apiContext,
+                storage: widget.storage,
+                agentBaseUrl: baseUrl,
+              ),
+            ),
+          )
+          .then((_) => _loadWorkspace());
+      return;
+    }
+    if (session.type == 'ai') {
+      if (latestEvent == null) {
+        _showMissingContext('No AI insight found for this session.');
+        return;
+      }
+      await Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => AiInsightScreen(
+                event: latestEvent,
+                session: session,
+              ),
+            ),
+          )
+          .then((_) => _loadWorkspace());
+      return;
+    }
+    _showMissingContext('This session type is not supported yet.');
+  }
+
+  void _showMissingContext(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  TimelineEvent? _latestEventForSession(String sessionId) {
+    for (final event in _events) {
+      if (event.sessionId == sessionId) {
+        return event;
+      }
+    }
+    return null;
+  }
+
+  List<ToolSession> _visibleSessions() {
+    return _sessions
+        .where((session) =>
+            session.type != 'pairing' && session.type != 'vnc')
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_isLoading) {
+      return const _TimelineDetailScaffold(
+        title: 'Workspace',
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_errorMessage != null) {
+      return _TimelineDetailScaffold(
+        title: 'Workspace',
+        body: Center(
+          child: _InlineStatus(message: _errorMessage!, isError: true),
+        ),
+      );
+    }
+    final sessions = _visibleSessions();
+    final baseUrl = _agentBaseUrl;
+    final hasAgentUrl = baseUrl != null && baseUrl.isNotEmpty;
+    return _TimelineDetailScaffold(
+      title: _agentLabel(_activeAgent),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Workspace',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Manage sessions and open tools for this agent.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ContextSectionCard(
+              title: 'Agent',
+              subtitle: hasAgentUrl
+                  ? 'Connected to ${_agentLabel(_activeAgent)}.'
+                  : 'Agent URL missing. Re-pair to enable commands.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _AgentSwitcher(
+                    agents: widget.agents,
+                    activeAgentId: _activeAgent.id,
+                    onChanged: (next) {
+                      setState(() {
+                        _activeAgent = next;
+                      });
+                      _loadWorkspace();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _KeyValueRow(
+                    label: 'Status',
+                    value: _activeAgent.status.toUpperCase(),
+                  ),
+                  if (_activeAgent.agentUrl != null)
+                    _KeyValueRow(
+                      label: 'Base URL',
+                      value: _activeAgent.agentUrl!,
+                    ),
+                  if (_activeAgent.lastSeenAt != null)
+                    _KeyValueRow(
+                      label: 'Last seen',
+                      value: _formatTimestamp(_activeAgent.lastSeenAt!),
+                    ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _removeActiveAgent,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Remove agent'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFFB91C1C),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ContextSectionCard(
+              title: 'Actions',
+              subtitle: 'Create sessions or launch the VNC view.',
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _openTerminalSession,
+                    icon: const Icon(Icons.terminal),
+                    label: const Text('New terminal'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _openApiSession,
+                    icon: const Icon(Icons.http),
+                    label: const Text('New API request'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: hasAgentUrl ? _openVncView : null,
+                    icon: const Icon(Icons.desktop_windows_outlined),
+                    label: const Text('Open VNC view'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ContextSectionCard(
+              title: 'Sessions',
+              subtitle: 'Tap a session to open its tool view.',
+              child: sessions.isEmpty
+                  ? const _EmptyHint(text: 'No sessions yet.')
+                  : Column(
+                      children: [
+                        for (final session in sessions) ...[
+                          _AgentSessionRow(
+                            session: session,
+                            event: _latestEventForSession(session.id),
+                            onTap: () => _openSession(session),
+                          ),
+                          if (session != sessions.last)
+                            const SizedBox(height: 10),
+                        ],
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentCard extends StatelessWidget {
+  const _AgentCard({
+    required this.agent,
+    required this.isActive,
+    required this.onOpenWorkspace,
+    required this.onDelete,
+  });
+
+  final ConnectionRecord agent;
+  final bool isActive;
+  final VoidCallback onOpenWorkspace;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final statusStyle = _agentStatusStyle(agent.status);
+    final borderColor =
+        isActive ? const Color(0xFF38BDF8) : const Color(0xFFE2E8F0);
+    final background =
+        isActive ? const Color(0xFFF0F9FF) : const Color(0xFFF8FAFC);
+    final agentUrl = agent.agentUrl;
+    final subtitle = agentUrl == null || agentUrl.trim().isEmpty
+        ? 'Agent URL missing'
+        : agentUrl;
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onOpenWorkspace,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: statusStyle.background,
+                child: Icon(
+                  Icons.memory,
+                  size: 18,
+                  color: statusStyle.foreground,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _agentLabel(agent),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: statusStyle.background,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      agent.status.toUpperCase(),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: statusStyle.foreground,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  IconButton(
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Remove agent',
+                    splashRadius: 18,
+                    color: const Color(0xFFDC2626),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentSessionRow extends StatelessWidget {
+  const _AgentSessionRow({
+    required this.session,
+    required this.event,
+    required this.onTap,
+  });
+
+  final ToolSession session;
+  final TimelineEvent? event;
+  final VoidCallback onTap;
+
+  String _previewText() {
+    if (event == null) {
+      return 'No activity yet';
+    }
+    switch (session.type.toLowerCase()) {
+      case 'terminal':
+        final command = event!.payload['command']?.toString();
+        return command?.trim().isNotEmpty == true
+            ? command!.trim()
+            : event!.title;
+      case 'api':
+        final context = ApiEventContext.fromPayload(event!.payload);
+        if (context != null) {
+          return '${context.request.method} ${context.request.url}';
+        }
+        return event!.title;
+      case 'ai':
+        return event!.title;
+      default:
+        return event!.title;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final visuals = _eventVisuals(session.type);
+    final statusStyle = _sessionStatusStyle(session.status);
+    final timeLabel =
+        event == null ? 'Never run' : _formatTimestamp(event!.createdAt);
+    return Material(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: visuals.backgroundColor,
+                child: Icon(
+                  visuals.icon,
+                  size: 18,
+                  color: visuals.foregroundColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      session.label,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _previewText(),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      timeLabel,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF94A3B8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusStyle.background,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  session.status.toUpperCase(),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: statusStyle.foreground,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionStatusStyle {
+  const _SessionStatusStyle(this.background, this.foreground);
+
+  final Color background;
+  final Color foreground;
+}
+
+_SessionStatusStyle _sessionStatusStyle(String status) {
+  switch (status.toLowerCase()) {
+    case 'running':
+    case 'complete':
+    case 'success':
+      return const _SessionStatusStyle(
+        Color(0xFFDCFCE7),
+        Color(0xFF166534),
+      );
+    case 'queued':
+    case 'idle':
+      return const _SessionStatusStyle(
+        Color(0xFFFEF3C7),
+        Color(0xFF92400E),
+      );
+    case 'disconnected':
+    case 'error':
+    case 'failed':
+      return const _SessionStatusStyle(
+        Color(0xFFFEE2E2),
+        Color(0xFFB91C1C),
+      );
+    case 'exited':
+    case 'killed':
+    case 'closed':
+      return const _SessionStatusStyle(
+        Color(0xFFE2E8F0),
+        Color(0xFF475569),
+      );
+    default:
+      return const _SessionStatusStyle(
+        Color(0xFFE2E8F0),
+        Color(0xFF475569),
+      );
+  }
+}
+
+class _AgentStatusStyle {
+  const _AgentStatusStyle(this.background, this.foreground);
+
+  final Color background;
+  final Color foreground;
+}
+
+_AgentStatusStyle _agentStatusStyle(String status) {
+  switch (status.toLowerCase()) {
+    case 'connected':
+      return const _AgentStatusStyle(
+        Color(0xFFDCFCE7),
+        Color(0xFF166534),
+      );
+    case 'pending':
+    case 'connecting':
+      return const _AgentStatusStyle(
+        Color(0xFFFEF3C7),
+        Color(0xFF92400E),
+      );
+    case 'disconnected':
+    case 'error':
+      return const _AgentStatusStyle(
+        Color(0xFFFEE2E2),
+        Color(0xFFB91C1C),
+      );
+    default:
+      return const _AgentStatusStyle(
+        Color(0xFFE2E8F0),
+        Color(0xFF475569),
+      );
+  }
+}
+
+class _AgentSwitcher extends StatelessWidget {
+  const _AgentSwitcher({
+    required this.agents,
+    required this.activeAgentId,
+    required this.onChanged,
+  });
+
+  final List<ConnectionRecord> agents;
+  final String activeAgentId;
+  final ValueChanged<ConnectionRecord> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (agents.isEmpty) {
+      return const _EmptyHint(text: 'No agents connected.');
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          isExpanded: true,
+          value: activeAgentId,
+          icon: const Icon(Icons.swap_horiz),
+          onChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            final selected = agents.firstWhere((agent) => agent.id == value);
+            onChanged(selected);
+          },
+          items: [
+            for (final agent in agents)
+              DropdownMenuItem<String>(
+                value: agent.id,
+                child: Row(
+                  children: [
+                    _AgentStatusDot(status: agent.status),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_agentLabel(agent))),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentStatusDot extends StatelessWidget {
+  const _AgentStatusDot({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _agentStatusStyle(status);
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: style.foreground,
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+}
+
 class _PairingBackground extends StatelessWidget {
   const _PairingBackground();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Color(0xFFFCE7D2),
-            Color(0xFFF8FAFC),
-            Color(0xFFE0F2FE),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return Stack(
+      children: [
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Color(0xFFF8FAFC),
+                Color(0xFFE2E8F0),
+                Color(0xFFE0F2FE),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
         ),
-      ),
-      child: Stack(
-        children: const [
-          Positioned(
-            top: -80,
-            left: -40,
-            child: _GlowCircle(
-              size: 180,
-              color: Color(0xFFFFE0B2),
-            ),
+        const Positioned(
+          top: -80,
+          left: -40,
+          child: _GlowCircle(
+            size: 180,
+            color: Color(0xFFDCFCE7),
           ),
-          Positioned(
-            bottom: -60,
-            right: -30,
-            child: _GlowCircle(
-              size: 200,
-              color: Color(0xFFCFFAFE),
-            ),
+        ),
+        const Positioned(
+          bottom: -60,
+          right: -30,
+          child: _GlowCircle(
+            size: 200,
+            color: Color(0xFFE0F2FE),
           ),
-        ],
-      ),
+        ),
+        const Positioned(
+          top: 120,
+          right: -40,
+          child: _BackdropShard(
+            width: 180,
+            height: 120,
+            angle: 0.2,
+            color: Color(0xFFE2E8F0),
+          ),
+        ),
+        const Positioned(
+          bottom: 180,
+          left: -60,
+          child: _BackdropShard(
+            width: 220,
+            height: 140,
+            angle: -0.24,
+            color: Color(0xFFDBEAFE),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1265,6 +2686,42 @@ class _GlowCircle extends StatelessWidget {
   }
 }
 
+class _BackdropShard extends StatelessWidget {
+  const _BackdropShard({
+    required this.width,
+    required this.height,
+    required this.angle,
+    required this.color,
+  });
+
+  final double width;
+  final double height;
+  final double angle;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: angle,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: color.withAlpha(180),
+          borderRadius: BorderRadius.circular(36),
+          boxShadow: [
+            BoxShadow(
+              color: color.withAlpha(120),
+              blurRadius: 30,
+              spreadRadius: 4,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PairingHeader extends StatelessWidget {
   const _PairingHeader();
 
@@ -1274,7 +2731,7 @@ class _PairingHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Pair your desktop agent',
+          'Agents & workspaces',
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.w700,
                 color: const Color(0xFF0F172A),
@@ -1282,12 +2739,47 @@ class _PairingHeader extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Use a short-lived token and a shared secret to link devices securely.',
+          'Connect multiple agents and manage their sessions in dedicated workspaces.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: const Color(0xFF475569),
               ),
         ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: const [
+            _FeatureChip(label: 'Multi-agent'),
+            _FeatureChip(label: 'Session workspaces'),
+            _FeatureChip(label: 'VNC ready'),
+          ],
+        ),
       ],
+    );
+  }
+}
+
+class _FeatureChip extends StatelessWidget {
+  const _FeatureChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF3),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFBBF7D0)),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: const Color(0xFF166534),
+              fontWeight: FontWeight.w600,
+            ),
+      ),
     );
   }
 }
@@ -1307,57 +2799,59 @@ class PairingStepCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(1),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(15),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          colors: [Color(0xFFE0F2FE), Color(0xFFDCFCE7)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(27),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(14),
+              blurRadius: 28,
+              offset: const Offset(0, 14),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 4,
+              width: 48,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF22C55E), Color(0xFF38BDF8)],
                 ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            description,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF64748B),
-                ),
-          ),
-          const SizedBox(height: 16),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _CommandExampleChip extends StatelessWidget {
-  const _CommandExampleChip({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ActionChip(
-      label: Text(label),
-      onPressed: onTap,
-      backgroundColor: const Color(0xFFF1F5F9),
-      side: const BorderSide(color: Color(0xFFE2E8F0)),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF64748B),
+                  ),
+            ),
+            const SizedBox(height: 16),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -1383,6 +2877,20 @@ class _PairingTokenDetails extends StatelessWidget {
           _TokenRow(label: 'Token', value: payload.token),
           const SizedBox(height: 8),
           _TokenRow(label: 'Expires in', value: payload.expiryLabel),
+          if (payload.localUrls.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _TokenRow(
+              label: 'LAN endpoints',
+              value: '${payload.localUrls.length} available',
+            ),
+          ],
+          if (payload.requiresApproval) ...[
+            const SizedBox(height: 8),
+            const _TokenRow(
+              label: 'Desktop approval',
+              value: 'Required',
+            ),
+          ],
         ],
       ),
     );
@@ -1418,7 +2926,7 @@ class _TokenRow extends StatelessWidget {
 }
 
 class _InlineStatus extends StatelessWidget {
-  const _InlineStatus({required this.message, this.isError = false});
+  const _InlineStatus({super.key, required this.message, this.isError = false});
 
   final String message;
   final bool isError;
@@ -1427,291 +2935,35 @@ class _InlineStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final background = isError ? const Color(0xFFFEE2E2) : const Color(0xFFDCFCE7);
     final textColor = isError ? const Color(0xFF991B1B) : const Color(0xFF166534);
+    final icon =
+        isError ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
-      child: Text(
-        message,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: FontWeight.w600,
-            ),
-      ),
-    );
-  }
-}
-
-class _ConnectionStatusCard extends StatelessWidget {
-  const _ConnectionStatusCard({required this.connection, required this.hasToken});
-
-  final PairedConnection? connection;
-  final bool hasToken;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isConnected = connection != null;
-    final title = isConnected ? 'Connected' : 'Not connected';
-    final subtitle = isConnected
-        ? 'Connection saved for ${connection!.token}.'
-        : hasToken
-            ? 'Enter the shared secret to finish pairing.'
-            : 'Scan a QR token to begin pairing.';
-    final tunnelUrl = connection?.tunnelUrl;
-    final tunnelError = connection?.tunnelError;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: isConnected ? const Color(0xFFDCFCE7) : const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isConnected ? const Color(0xFF86EFAC) : const Color(0xFFBFDBFE),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: isConnected
-                    ? const Color(0xFF22C55E)
-                    : const Color(0xFF60A5FA),
-                child: Icon(
-                  isConnected ? Icons.check : Icons.link,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: const Color(0xFF475569),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          Icon(icon, size: 18, color: textColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
           ),
-          if (isConnected && tunnelUrl != null && tunnelUrl.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Tunnel URL',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              tunnelUrl,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF1E293B),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-          if (isConnected &&
-              (tunnelUrl == null || tunnelUrl.isEmpty) &&
-              tunnelError != null) ...[
-            const SizedBox(height: 12),
-            _InlineStatus(
-              message: tunnelError,
-              isError: true,
-            ),
-          ],
         ],
-      ),
-    );
-  }
-}
-
-class _TimelineHistory extends StatelessWidget {
-  const _TimelineHistory({
-    required this.isLoading,
-    required this.errorMessage,
-    required this.events,
-    required this.onEventTap,
-  });
-
-  final bool isLoading;
-  final String? errorMessage;
-  final List<TimelineEvent> events;
-  final ValueChanged<TimelineEvent> onEventTap;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    if (errorMessage != null) {
-      return _InlineStatus(
-        message: errorMessage!,
-        isError: true,
-      );
-    }
-
-    if (events.isEmpty) {
-      return Text(
-        'No timeline events saved yet.',
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: const Color(0xFF64748B),
-            ),
-      );
-    }
-
-    final visibleEvents = events.take(5).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final event in visibleEvents) ...[
-          _TimelineEventRow(
-            event: event,
-            onTap: () => onEventTap(event),
-          ),
-          if (event != visibleEvents.last) const SizedBox(height: 12),
-        ],
-      ],
-    );
-  }
-}
-
-class _ToolHistory extends StatelessWidget {
-  const _ToolHistory({
-    required this.isLoading,
-    required this.errorMessage,
-    required this.sessions,
-  });
-
-  final bool isLoading;
-  final String? errorMessage;
-  final List<ToolSession> sessions;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    if (errorMessage != null) {
-      return _InlineStatus(
-        message: errorMessage!,
-        isError: true,
-      );
-    }
-
-    if (sessions.isEmpty) {
-      return Text(
-        'No tool sessions stored yet.',
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: const Color(0xFF64748B),
-            ),
-      );
-    }
-
-    final visibleSessions = sessions.take(5).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final session in visibleSessions) ...[
-          _ToolSessionRow(session: session),
-          if (session != visibleSessions.last) const SizedBox(height: 12),
-        ],
-      ],
-    );
-  }
-}
-
-class _CommandChoiceTile extends StatelessWidget {
-  const _CommandChoiceTile({
-    required this.intent,
-    required this.onTap,
-  });
-
-  final CommandIntent intent;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final visuals = _eventVisuals(intent.tool.storageKey);
-    return Material(
-      color: const Color(0xFFF8FAFC),
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: visuals.backgroundColor,
-                child: Icon(
-                  visuals.icon,
-                  size: 18,
-                  color: visuals.foregroundColor,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      intent.tool.label,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      intent.preview,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.chevron_right,
-                color: Color(0xFF94A3B8),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1767,144 +3019,6 @@ _EventVisuals _eventVisuals(String type) {
         backgroundColor: Color(0xFFE2E8F0),
         foregroundColor: Color(0xFF475569),
       );
-  }
-}
-
-class _TimelineEventRow extends StatelessWidget {
-  const _TimelineEventRow({required this.event, required this.onTap});
-
-  final TimelineEvent event;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final visuals = _eventVisuals(event.type);
-    final insight = AiInsightSummary.fromPayload(event.payload);
-    final summary = insight?.summary ?? '';
-    final hasSummary = summary.trim().isNotEmpty;
-    final summaryColor = insight?.isUnavailable == true
-        ? const Color(0xFF9A3412)
-        : const Color(0xFFB91C1C);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: Key('timelineEvent-${event.id}'),
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: visuals.backgroundColor,
-                child: Icon(
-                  visuals.icon,
-                  size: 18,
-                  color: visuals.foregroundColor,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      event.title,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${event.type.toUpperCase()} • ${_formatTimestamp(event.createdAt)}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF64748B),
-                      ),
-                    ),
-                    if (hasSummary) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'AI: ${_truncate(summary, 90)}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: summaryColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.chevron_right,
-                color: Color(0xFF94A3B8),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ToolSessionRow extends StatelessWidget {
-  const _ToolSessionRow({required this.session});
-
-  final ToolSession session;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            radius: 16,
-            backgroundColor: Color(0xFFDBEAFE),
-            child: Icon(
-              Icons.work_outline,
-              size: 18,
-              color: Color(0xFF1D4ED8),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  session.label,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${session.status.toUpperCase()} • ${_formatTimestamp(session.createdAt)}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF64748B),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -2504,6 +3618,7 @@ AiInsightSummary? _buildTerminalInsight({
   required List<TerminalOutputEntry> entries,
   required String status,
   String? errorMessage,
+  int? exitCode,
   required String? agentBaseUrl,
 }) {
   final loweredStatus = status.toLowerCase();
@@ -2514,6 +3629,7 @@ AiInsightSummary? _buildTerminalInsight({
       .toList();
   final hasError = stderrLines.isNotEmpty ||
       errorMessage != null ||
+      (exitCode != null && exitCode != 0) ||
       loweredStatus == 'disconnected' ||
       loweredStatus == 'failed' ||
       loweredStatus == 'error';
@@ -2536,6 +3652,12 @@ AiInsightSummary? _buildTerminalInsight({
     return AiInsightSummary(
       status: 'complete',
       summary: 'Terminal error: ${_truncate(stderrLines.first, 160)}',
+    );
+  }
+  if (exitCode != null && exitCode != 0) {
+    return AiInsightSummary(
+      status: 'complete',
+      summary: 'Terminal exited with code $exitCode.',
     );
   }
   if (loweredStatus == 'disconnected') {
@@ -3485,26 +4607,264 @@ class TerminalSessionView {
   const TerminalSessionView({
     required this.session,
     required this.output,
+    this.nextSeq = 0,
+    this.exitCode,
     this.lastCommand,
     this.lastEvent,
   });
 
   final ToolSession session;
   final List<TerminalOutputEntry> output;
+  final int nextSeq;
+  final int? exitCode;
   final String? lastCommand;
   final TimelineEvent? lastEvent;
 
   TerminalSessionView copyWith({
     ToolSession? session,
     List<TerminalOutputEntry>? output,
+    int? nextSeq,
+    int? exitCode,
     String? lastCommand,
     TimelineEvent? lastEvent,
   }) {
     return TerminalSessionView(
       session: session ?? this.session,
       output: output ?? this.output,
+      nextSeq: nextSeq ?? this.nextSeq,
+      exitCode: exitCode ?? this.exitCode,
       lastCommand: lastCommand ?? this.lastCommand,
       lastEvent: lastEvent ?? this.lastEvent,
+    );
+  }
+}
+
+class _TerminalGrid {
+  const _TerminalGrid({required this.cols, required this.rows});
+
+  final int cols;
+  final int rows;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TerminalGrid &&
+        other.cols == cols &&
+        other.rows == rows;
+  }
+
+  @override
+  int get hashCode => Object.hash(cols, rows);
+}
+
+class _TerminalKeySpec {
+  const _TerminalKeySpec({
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+    this.isActive = false,
+    this.isLocked = false,
+    this.isEmphasis = false,
+    this.isRepeatable = false,
+    this.minWidth,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final bool isActive;
+  final bool isLocked;
+  final bool isEmphasis;
+  final bool isRepeatable;
+  final double? minWidth;
+}
+
+class _TerminalSearchMatch {
+  const _TerminalSearchMatch({
+    required this.line,
+    required this.start,
+    required this.end,
+  });
+
+  final int line;
+  final int start;
+  final int end;
+}
+
+class _TerminalThemeSpec {
+  const _TerminalThemeSpec({
+    required this.label,
+    required this.theme,
+  });
+
+  final String label;
+  final TerminalTheme theme;
+}
+
+class _TerminalToolAction {
+  const _TerminalToolAction({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.isActive = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool isActive;
+}
+
+class _TerminalKeyButton extends StatefulWidget {
+  const _TerminalKeyButton({required this.spec});
+
+  final _TerminalKeySpec spec;
+
+  @override
+  State<_TerminalKeyButton> createState() => _TerminalKeyButtonState();
+}
+
+class _TerminalKeyButtonState extends State<_TerminalKeyButton> {
+  Timer? _repeatTimer;
+  Timer? _repeatStartTimer;
+
+  @override
+  void dispose() {
+    _cancelRepeat();
+    super.dispose();
+  }
+
+  void _cancelRepeat() {
+    _repeatStartTimer?.cancel();
+    _repeatStartTimer = null;
+    _repeatTimer?.cancel();
+    _repeatTimer = null;
+  }
+
+  void _startRepeat() {
+    if (!widget.spec.isRepeatable) {
+      return;
+    }
+    widget.spec.onTap();
+    _repeatStartTimer = Timer(const Duration(milliseconds: 300), () {
+      _repeatTimer = Timer.periodic(
+        const Duration(milliseconds: 70),
+        (_) => widget.spec.onTap(),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final spec = widget.spec;
+    final isLocked = spec.isLocked;
+    final isActive = spec.isActive;
+    final baseColor = isLocked
+        ? const Color(0xFF7DD3FC)
+        : (isActive
+            ? const Color(0xFF34D399)
+            : (spec.isEmphasis
+                ? const Color(0xFFF8FAFC)
+                : const Color(0xFFCBD5F5)));
+    final background = isLocked
+        ? const Color(0xFF0B1F33)
+        : (isActive ? const Color(0xFF0B3B2E) : const Color(0xFF111827));
+    final borderColor = isLocked
+        ? const Color(0xFF38BDF8)
+        : (isActive
+            ? const Color(0xFF34D399)
+            : (spec.isEmphasis
+                ? const Color(0xFF475569)
+                : const Color(0xFF1F2937)));
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        spec.onTap();
+      },
+      onLongPressStart: (_) {
+        if (spec.onLongPress != null) {
+          HapticFeedback.selectionClick();
+          spec.onLongPress!();
+          return;
+        }
+        _startRepeat();
+      },
+      onLongPressEnd: (_) => _cancelRepeat(),
+      onLongPressCancel: _cancelRepeat,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        constraints: BoxConstraints(minWidth: spec.minWidth ?? 0),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 6,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Text(
+          spec.label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: baseColor,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+              ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TerminalToolButton extends StatelessWidget {
+  const _TerminalToolButton({required this.action});
+
+  final _TerminalToolAction action;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = action.isActive
+        ? const Color(0xFFE2E8F0)
+        : const Color(0xFFCBD5F5);
+    final background = action.isActive
+        ? const Color(0xFF1E293B)
+        : const Color(0xFF0F172A);
+    final borderColor = action.isActive
+        ? const Color(0xFF38BDF8)
+        : const Color(0xFF1F2937);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          action.onTap();
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            children: [
+              Icon(action.icon, size: 16, color: foreground),
+              const SizedBox(width: 6),
+              Text(
+                action.label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3516,12 +4876,14 @@ class TerminalWorkspaceScreen extends StatefulWidget {
     required this.agentBaseUrl,
     this.initialSession,
     this.initialEvent,
+    this.agentId,
   });
 
   final StorageRepository storage;
   final String? agentBaseUrl;
   final ToolSession? initialSession;
   final TimelineEvent? initialEvent;
+  final String? agentId;
 
   @override
   State<TerminalWorkspaceScreen> createState() =>
@@ -3529,30 +4891,85 @@ class TerminalWorkspaceScreen extends StatefulWidget {
 }
 
 class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
-  final TextEditingController _commandController = TextEditingController();
-  String? _commandError;
-  String? _commandFeedback;
+  static const int _defaultCols = 120;
+  static const int _defaultRows = 32;
+  static const int _maxOutputEntries = 800;
+  static const int _terminalMaxLines = 8000;
+  static const Duration _pollInterval = Duration(milliseconds: 900);
+  static const Duration _terminalPersistInterval = Duration(milliseconds: 900);
+
+  final FocusNode _terminalFocusNode = FocusNode();
+  final TerminalController _terminalController = TerminalController();
+  final ScrollController _terminalScrollController = ScrollController();
+  Map<String, Terminal> _terminals = {};
+  final Map<String, List<int>> _commandBuffers = {};
+  String? _statusMessage;
+  bool _statusIsError = false;
   bool _isLoading = true;
   String? _loadError;
-  bool _isSending = false;
   bool _autoRunTriggered = false;
   List<TerminalSessionView> _sessions = [];
   String? _activeSessionId;
   http.Client? _httpClient;
   AgentCommandClient? _agentClient;
-  int _streamTokenCounter = 0;
-  final Map<String, int> _streamTokens = {};
+  Timer? _pollTimer;
+  bool _isPolling = false;
+  WebSocketChannel? _terminalChannel;
+  StreamSubscription<dynamic>? _terminalChannelSub;
+  String? _terminalChannelSessionId;
+  bool _terminalChannelReady = false;
+  final Map<String, _TerminalGrid> _terminalSizes = {};
+  final Map<String, DateTime> _terminalPersistedAt = {};
+  Timer? _terminalReconnectTimer;
+  Timer? _terminalKeepaliveTimer;
+  int _terminalReconnectAttempts = 0;
+  bool _ctrlModifier = false;
+  bool _ctrlLocked = false;
+  bool _altModifier = false;
+  bool _altLocked = false;
+  bool _shiftModifier = false;
+  bool _shiftLocked = false;
+  bool _showFnRow = false;
+  int _secondaryKeyPage = 0;
+  bool _showKeyBar = true;
+  bool _showNavOnly = false;
+  bool _mouseInputEnabled = false;
+  bool _hardwareKeyboardOnly = false;
+  bool _isTerminalAtBottom = true;
+  SelectionMode _selectionMode = SelectionMode.line;
+  double _terminalFontSize = 13;
+  int _terminalThemeIndex = 0;
+  String _terminalSearchQuery = '';
+  bool _terminalSearchCaseSensitive = false;
+  int _terminalSearchIndex = -1;
+  final List<_TerminalSearchMatch> _terminalSearchMatches = [];
+  final List<TerminalHighlight> _terminalSearchHighlights = [];
+  Timer? _terminalSearchRefreshTimer;
+
+  bool get _hasActiveModifiers =>
+      _ctrlModifier || _altModifier || _shiftModifier;
 
   @override
   void initState() {
     super.initState();
     _configureAgentClient();
+    _terminalController.setSelectionMode(_selectionMode);
+    _applyPointerInputMode();
+    _terminalScrollController.addListener(_handleTerminalScroll);
     _loadSessions();
   }
 
   @override
   void dispose() {
-    _commandController.dispose();
+    _terminalFocusNode.dispose();
+    _terminalScrollController
+      ..removeListener(_handleTerminalScroll)
+      ..dispose();
+    _pollTimer?.cancel();
+    _disconnectTerminalStream();
+    _terminalReconnectTimer?.cancel();
+    _terminalKeepaliveTimer?.cancel();
+    _terminalSearchRefreshTimer?.cancel();
     _httpClient?.close();
     super.dispose();
   }
@@ -3570,6 +4987,1270 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
   }
 
+  Uri? _terminalWsUri(String baseUrl, String sessionId) {
+    Uri base;
+    try {
+      base = Uri.parse(baseUrl);
+    } catch (_) {
+      return null;
+    }
+    final scheme = switch (base.scheme) {
+      'https' => 'wss',
+      'http' => 'ws',
+      'wss' => 'wss',
+      'ws' => 'ws',
+      _ => '',
+    };
+    if (scheme.isEmpty) {
+      return null;
+    }
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
+    final path =
+        basePath.isEmpty ? '/terminal/$sessionId' : '$basePath/terminal/$sessionId';
+    return base.replace(scheme: scheme, path: path);
+  }
+
+  TerminalTargetPlatform _resolveTerminalPlatform() {
+    if (kIsWeb) {
+      return TerminalTargetPlatform.web;
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return TerminalTargetPlatform.android;
+      case TargetPlatform.iOS:
+        return TerminalTargetPlatform.ios;
+      case TargetPlatform.fuchsia:
+        return TerminalTargetPlatform.fuchsia;
+      case TargetPlatform.linux:
+        return TerminalTargetPlatform.linux;
+      case TargetPlatform.macOS:
+        return TerminalTargetPlatform.macos;
+      case TargetPlatform.windows:
+        return TerminalTargetPlatform.windows;
+    }
+  }
+
+  Terminal _buildTerminalForSession(String sessionId) {
+    final terminal = Terminal(
+      maxLines: _terminalMaxLines,
+      platform: _resolveTerminalPlatform(),
+      onOutput: (data) => _handleTerminalInput(sessionId, data),
+    );
+    terminal.onResize = (cols, rows, pixelWidth, pixelHeight) {
+      // Keep pixel values unused for now; grid size drives PTY resize.
+      unawaited(_sendTerminalResize(sessionId, cols, rows));
+    };
+    return terminal;
+  }
+
+  void _hydrateTerminal(
+    String sessionId,
+    Terminal terminal,
+    List<TerminalOutputEntry> entries,
+  ) {
+    if (entries.isEmpty) {
+      return;
+    }
+    final buffer = StringBuffer();
+    for (final entry in entries) {
+      buffer.write(entry.text);
+    }
+    terminal.write(buffer.toString());
+    if (sessionId == _activeSessionId) {
+      if (_isTerminalAtBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _jumpToTerminalBottom();
+          }
+        });
+      }
+      _scheduleTerminalSearchRefresh();
+    }
+  }
+
+  void _focusTerminal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      FocusScope.of(context).requestFocus(_terminalFocusNode);
+    });
+  }
+
+  Terminal? _activeTerminal() {
+    final active = _activeSession;
+    if (active == null) {
+      return null;
+    }
+    return _terminals[active.session.id];
+  }
+
+  void _setTerminalStatusMessage(String message, {bool isError = false}) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _statusMessage = message;
+      _statusIsError = isError;
+    });
+  }
+
+  Terminal? _requireActiveTerminal() {
+    final active = _activeSession;
+    if (active == null) {
+      _setTerminalStatusMessage('Create a session to start.');
+      return null;
+    }
+    final status = active.session.status.toLowerCase();
+    if (_isTerminalClosed(status)) {
+      _setTerminalStatusMessage(
+        'This session is no longer active.',
+        isError: true,
+      );
+      return null;
+    }
+    if (status == 'disconnected' || status == 'error') {
+      _setTerminalStatusMessage(
+        'Session disconnected. Reconnect to type.',
+        isError: true,
+      );
+      return null;
+    }
+    return _terminals[active.session.id];
+  }
+
+  void _toggleCtrlModifier() {
+    setState(() {
+      if (_ctrlLocked) {
+        _ctrlLocked = false;
+        _ctrlModifier = false;
+      } else {
+        _ctrlModifier = !_ctrlModifier;
+        _ctrlLocked = false;
+      }
+    });
+    _focusTerminal();
+  }
+
+  void _toggleCtrlLock() {
+    setState(() {
+      _ctrlLocked = !_ctrlLocked;
+      _ctrlModifier = _ctrlLocked;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleAltModifier() {
+    setState(() {
+      if (_altLocked) {
+        _altLocked = false;
+        _altModifier = false;
+      } else {
+        _altModifier = !_altModifier;
+        _altLocked = false;
+      }
+    });
+    _focusTerminal();
+  }
+
+  void _toggleAltLock() {
+    setState(() {
+      _altLocked = !_altLocked;
+      _altModifier = _altLocked;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleShiftModifier() {
+    setState(() {
+      if (_shiftLocked) {
+        _shiftLocked = false;
+        _shiftModifier = false;
+      } else {
+        _shiftModifier = !_shiftModifier;
+        _shiftLocked = false;
+      }
+    });
+    _focusTerminal();
+  }
+
+  void _toggleShiftLock() {
+    setState(() {
+      _shiftLocked = !_shiftLocked;
+      _shiftModifier = _shiftLocked;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleFnRow() {
+    setState(() {
+      _showFnRow = !_showFnRow;
+    });
+    _focusTerminal();
+  }
+
+  void _showBaseKeys() {
+    setState(() {
+      _secondaryKeyPage = 0;
+    });
+    _focusTerminal();
+  }
+
+  void _showAdvancedKeys() {
+    setState(() {
+      _secondaryKeyPage = 1;
+    });
+    _focusTerminal();
+  }
+
+  void _showSymbolKeys() {
+    setState(() {
+      _secondaryKeyPage = 2;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleNavOnly() {
+    setState(() {
+      _showNavOnly = !_showNavOnly;
+    });
+    _focusTerminal();
+  }
+
+  void _clearModifiers() {
+    setState(() {
+      _ctrlModifier = false;
+      _ctrlLocked = false;
+      _altModifier = false;
+      _altLocked = false;
+      _shiftModifier = false;
+      _shiftLocked = false;
+    });
+    _focusTerminal();
+  }
+
+  void _consumeOneShotModifiers() {
+    if ((!_ctrlModifier || _ctrlLocked) &&
+        (!_altModifier || _altLocked) &&
+        (!_shiftModifier || _shiftLocked)) {
+      return;
+    }
+    setState(() {
+      if (_ctrlModifier && !_ctrlLocked) {
+        _ctrlModifier = false;
+      }
+      if (_altModifier && !_altLocked) {
+        _altModifier = false;
+      }
+      if (_shiftModifier && !_shiftLocked) {
+        _shiftModifier = false;
+      }
+    });
+  }
+
+  void _applyPointerInputMode() {
+    _terminalController.setPointerInputs(
+      _mouseInputEnabled
+          ? const PointerInputs.all()
+          : const PointerInputs.none(),
+    );
+  }
+
+  void _handleTerminalScroll() {
+    if (!_terminalScrollController.hasClients) {
+      return;
+    }
+    final position = _terminalScrollController.position;
+    final isAtBottom = position.pixels >= position.maxScrollExtent - 4;
+    if (isAtBottom == _isTerminalAtBottom) {
+      return;
+    }
+    setState(() {
+      _isTerminalAtBottom = isAtBottom;
+    });
+  }
+
+  void _jumpToTerminalBottom() {
+    if (!_terminalScrollController.hasClients) {
+      return;
+    }
+    _terminalScrollController.animateTo(
+      _terminalScrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _toggleMouseInput() {
+    setState(() {
+      _mouseInputEnabled = !_mouseInputEnabled;
+    });
+    _applyPointerInputMode();
+    _focusTerminal();
+  }
+
+  void _toggleHardwareKeyboardOnly() {
+    setState(() {
+      _hardwareKeyboardOnly = !_hardwareKeyboardOnly;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleSelectionMode() {
+    setState(() {
+      _selectionMode = _selectionMode == SelectionMode.line
+          ? SelectionMode.block
+          : SelectionMode.line;
+    });
+    _terminalController.setSelectionMode(_selectionMode);
+    _focusTerminal();
+  }
+
+  void _adjustTerminalFontSize(double nextSize) {
+    setState(() {
+      _terminalFontSize = nextSize;
+    });
+    _focusTerminal();
+  }
+
+  void _setTerminalTheme(int index) {
+    setState(() {
+      _terminalThemeIndex = index;
+    });
+    _focusTerminal();
+  }
+
+  void _sendTerminalKey(TerminalKey key, {bool shift = false}) {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.keyInput(
+      key,
+      ctrl: _ctrlModifier,
+      alt: _altModifier,
+      shift: shift || _shiftModifier,
+    );
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendTerminalKeyCombo(
+    TerminalKey key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+  }) {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.keyInput(
+      key,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+    );
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendTerminalChar(String value) {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null || value.isEmpty) {
+      return;
+    }
+    if (_ctrlModifier && value == ' ') {
+      terminal.textInput('\x00');
+      _focusTerminal();
+      return;
+    }
+    if (_altModifier && value == ' ') {
+      terminal.textInput('\x1b ');
+      _focusTerminal();
+      return;
+    }
+    final normalized = _shiftModifier ? value.toUpperCase() : value;
+    final charCode = normalized.runes.first;
+    if (_ctrlModifier || _altModifier) {
+      final handled = terminal.charInput(
+        charCode,
+        ctrl: _ctrlModifier,
+        alt: _altModifier,
+      );
+      if (!handled) {
+        terminal.textInput(normalized);
+      }
+    } else {
+      terminal.textInput(normalized);
+    }
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendCtrlCombo(String value) {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null || value.isEmpty) {
+      return;
+    }
+    terminal.charInput(value.runes.first, ctrl: true);
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendCtrlNull() {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.textInput('\x00');
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendAltCombo(String value) {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null || value.isEmpty) {
+      return;
+    }
+    terminal.charInput(value.runes.first, alt: true);
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendPairedChars(String open, String close) {
+    if (_hasActiveModifiers) {
+      _sendTerminalChar(open);
+      return;
+    }
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.textInput('$open$close');
+    terminal.keyInput(TerminalKey.arrowLeft);
+    _focusTerminal();
+  }
+
+  String _applyTerminalModifiers(String data) {
+    if (!_hasActiveModifiers || data.isEmpty) {
+      return data;
+    }
+    final runes = data.runes.toList(growable: false);
+    if (runes.length != 1) {
+      return data;
+    }
+    final rune = runes.first;
+    if (rune < 32 || rune == 127) {
+      return data;
+    }
+    if (_ctrlModifier && rune == 32) {
+      return '\x00';
+    }
+    if (_altModifier && rune == 32) {
+      return '\x1b ';
+    }
+    var normalized = data;
+    if (_shiftModifier) {
+      final upper = data.toUpperCase();
+      if (upper.runes.length == 1) {
+        normalized = upper;
+      }
+    }
+    final normalizedRune = normalized.runes.first;
+    if (_ctrlModifier) {
+      final mapped = _mapCtrlRune(normalizedRune);
+      if (mapped != null) {
+        return String.fromCharCode(mapped);
+      }
+    }
+    if (_altModifier &&
+        _resolveTerminalPlatform() != TerminalTargetPlatform.macos) {
+      final mapped = _mapAltRune(normalizedRune);
+      if (mapped != null) {
+        return String.fromCharCodes([0x1b, mapped]);
+      }
+    }
+    return normalized;
+  }
+
+  int? _mapCtrlRune(int rune) {
+    if (rune >= 97 && rune <= 122) {
+      return rune - 96;
+    }
+    if (rune >= 91 && rune <= 95) {
+      return rune - 91 + 27;
+    }
+    return null;
+  }
+
+  int? _mapAltRune(int rune) {
+    if (rune >= 97 && rune <= 122) {
+      return rune - 97 + 65;
+    }
+    return null;
+  }
+
+  Future<void> _copySelection() async {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    final selection = _terminalController.selection;
+    if (selection == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No selection to copy.')),
+      );
+      return;
+    }
+    final text = terminal.buffer.getText(selection);
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied to clipboard.')),
+    );
+  }
+
+  Future<void> _pasteClipboard() async {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) {
+      return;
+    }
+    terminal.paste(text);
+    _focusTerminal();
+  }
+
+  void _selectAllInTerminal() {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    _terminalController.setSelection(
+      terminal.buffer.createAnchor(
+        0,
+        terminal.buffer.height - terminal.viewHeight,
+      ),
+      terminal.buffer.createAnchor(
+        terminal.viewWidth,
+        terminal.buffer.height - 1,
+      ),
+      mode: SelectionMode.line,
+    );
+    _focusTerminal();
+  }
+
+  void _clearSelection() {
+    _terminalController.clearSelection();
+    _focusTerminal();
+  }
+
+  void _clearTerminal() {
+    _sendCtrlCombo('l');
+  }
+
+  void _resetTerminal() {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.textInput('\x1bc');
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _sendAltBackspace() {
+    final terminal = _requireActiveTerminal();
+    if (terminal == null) {
+      return;
+    }
+    terminal.keyInput(TerminalKey.backspace, alt: true);
+    _consumeOneShotModifiers();
+    _focusTerminal();
+  }
+
+  void _clearTerminalSearchHighlights({bool clearQuery = false}) {
+    for (final highlight in _terminalSearchHighlights) {
+      highlight.dispose();
+    }
+    _terminalSearchHighlights.clear();
+    _terminalSearchMatches.clear();
+    _terminalSearchIndex = -1;
+    if (clearQuery) {
+      _terminalSearchQuery = '';
+    }
+  }
+
+  void _runTerminalSearch(
+    String query, {
+    bool? caseSensitive,
+    bool preserveSelection = false,
+  }) {
+    final terminal = _activeTerminal();
+    if (terminal == null) {
+      return;
+    }
+    final useCase = caseSensitive ?? _terminalSearchCaseSensitive;
+    _clearTerminalSearchHighlights(clearQuery: false);
+    if (query.trim().isEmpty) {
+      setState(() {
+        _terminalSearchQuery = '';
+        _terminalSearchCaseSensitive = useCase;
+      });
+      return;
+    }
+    final matches = <_TerminalSearchMatch>[];
+    final needle = useCase ? query : query.toLowerCase();
+    final buffer = terminal.buffer;
+    const maxMatches = 240;
+    for (var lineIndex = 0; lineIndex < buffer.height; lineIndex++) {
+      final lineText = buffer.lines[lineIndex].getText();
+      if (lineText.isEmpty) {
+        continue;
+      }
+      final haystack = useCase ? lineText : lineText.toLowerCase();
+      var searchIndex = 0;
+      while (true) {
+        final found = haystack.indexOf(needle, searchIndex);
+        if (found == -1) {
+          break;
+        }
+        matches.add(
+          _TerminalSearchMatch(
+            line: lineIndex,
+            start: found,
+            end: found + needle.length,
+          ),
+        );
+        if (matches.length >= maxMatches) {
+          break;
+        }
+        searchIndex = found + needle.length;
+      }
+      if (matches.length >= maxMatches) {
+        break;
+      }
+    }
+
+    final highlights = <TerminalHighlight>[];
+    for (final match in matches) {
+      final start = match.start.clamp(0, buffer.viewWidth);
+      final end = match.end.clamp(start, buffer.viewWidth);
+      if (end == start) {
+        continue;
+      }
+      highlights.add(
+        _terminalController.highlight(
+          p1: buffer.createAnchor(start, match.line),
+          p2: buffer.createAnchor(end, match.line),
+          color: const Color(0x5538BDF8),
+        ),
+      );
+    }
+
+    setState(() {
+      _terminalSearchQuery = query;
+      _terminalSearchCaseSensitive = useCase;
+      _terminalSearchMatches.addAll(matches);
+      _terminalSearchHighlights.addAll(highlights);
+      if (matches.isEmpty) {
+        _terminalSearchIndex = -1;
+      } else if (preserveSelection && _terminalSearchIndex >= 0) {
+        _terminalSearchIndex =
+            _terminalSearchIndex.clamp(0, matches.length - 1);
+      } else {
+        _terminalSearchIndex = 0;
+      }
+    });
+
+    if (_terminalSearchIndex >= 0) {
+      _selectTerminalSearchMatch(_terminalSearchIndex);
+    }
+  }
+
+  void _scheduleTerminalSearchRefresh() {
+    if (_terminalSearchQuery.isEmpty) {
+      return;
+    }
+    _terminalSearchRefreshTimer?.cancel();
+    _terminalSearchRefreshTimer =
+        Timer(const Duration(milliseconds: 260), () {
+      if (!mounted) {
+        return;
+      }
+      _runTerminalSearch(
+        _terminalSearchQuery,
+        caseSensitive: _terminalSearchCaseSensitive,
+        preserveSelection: true,
+      );
+    });
+  }
+
+  void _navigateTerminalSearch(int delta) {
+    if (_terminalSearchMatches.isEmpty) {
+      return;
+    }
+    if (_terminalSearchIndex < 0) {
+      _selectTerminalSearchMatch(0);
+      return;
+    }
+    final nextIndex = (_terminalSearchIndex + delta) %
+        _terminalSearchMatches.length;
+    _selectTerminalSearchMatch(nextIndex < 0
+        ? _terminalSearchMatches.length - 1
+        : nextIndex);
+  }
+
+  void _selectTerminalSearchMatch(int index) {
+    if (index < 0 || index >= _terminalSearchMatches.length) {
+      return;
+    }
+    final terminal = _activeTerminal();
+    if (terminal == null) {
+      return;
+    }
+    final match = _terminalSearchMatches[index];
+    final buffer = terminal.buffer;
+    final start = match.start.clamp(0, buffer.viewWidth);
+    final end = match.end.clamp(start, buffer.viewWidth);
+    if (start == end) {
+      return;
+    }
+    _terminalController.setSelection(
+      buffer.createAnchor(start, match.line),
+      buffer.createAnchor(end, match.line),
+      mode: SelectionMode.line,
+    );
+    setState(() {
+      _terminalSearchIndex = index;
+    });
+    _scrollToTerminalLine(match.line);
+  }
+
+  void _scrollToTerminalLine(int lineIndex) {
+    if (!_terminalScrollController.hasClients) {
+      return;
+    }
+    final terminal = _activeTerminal();
+    if (terminal == null) {
+      return;
+    }
+    final extraLines = terminal.buffer.height - terminal.viewHeight;
+    if (extraLines <= 0) {
+      return;
+    }
+    final maxExtent = _terminalScrollController.position.maxScrollExtent;
+    final lineHeight = maxExtent / extraLines;
+    final target = (lineIndex * lineHeight).clamp(0.0, maxExtent);
+    _terminalScrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOut,
+    );
+  }
+
+  List<_TerminalThemeSpec> _terminalThemeOptions() {
+    const midnight = TerminalTheme(
+      cursor: Color(0xFFE2E8F0),
+      selection: Color(0x33475569),
+      foreground: Color(0xFFE2E8F0),
+      background: Color(0xFF0B1120),
+      black: Color(0xFF020617),
+      red: Color(0xFFF87171),
+      green: Color(0xFF4ADE80),
+      yellow: Color(0xFFFACC15),
+      blue: Color(0xFF60A5FA),
+      magenta: Color(0xFFD946EF),
+      cyan: Color(0xFF22D3EE),
+      white: Color(0xFFF8FAFC),
+      brightBlack: Color(0xFF334155),
+      brightRed: Color(0xFFFCA5A5),
+      brightGreen: Color(0xFF86EFAC),
+      brightYellow: Color(0xFFFDE047),
+      brightBlue: Color(0xFF93C5FD),
+      brightMagenta: Color(0xFFF0ABFC),
+      brightCyan: Color(0xFF67E8F9),
+      brightWhite: Color(0xFFFFFFFF),
+      searchHitBackground: Color(0xFF1F2937),
+      searchHitBackgroundCurrent: Color(0xFF334155),
+      searchHitForeground: Color(0xFFE2E8F0),
+    );
+    const slate = TerminalTheme(
+      cursor: Color(0xFFE2E8F0),
+      selection: Color(0x332E3A59),
+      foreground: Color(0xFFE2E8F0),
+      background: Color(0xFF111827),
+      black: Color(0xFF020617),
+      red: Color(0xFFFB7185),
+      green: Color(0xFF22C55E),
+      yellow: Color(0xFFFBBF24),
+      blue: Color(0xFF38BDF8),
+      magenta: Color(0xFFC084FC),
+      cyan: Color(0xFF2DD4BF),
+      white: Color(0xFFF8FAFC),
+      brightBlack: Color(0xFF334155),
+      brightRed: Color(0xFFFDA4AF),
+      brightGreen: Color(0xFF86EFAC),
+      brightYellow: Color(0xFFFCD34D),
+      brightBlue: Color(0xFF7DD3FC),
+      brightMagenta: Color(0xFFE9D5FF),
+      brightCyan: Color(0xFF5EEAD4),
+      brightWhite: Color(0xFFFFFFFF),
+      searchHitBackground: Color(0xFF1F2937),
+      searchHitBackgroundCurrent: Color(0xFF475569),
+      searchHitForeground: Color(0xFFE2E8F0),
+    );
+    const paper = TerminalTheme(
+      cursor: Color(0xFF0F172A),
+      selection: Color(0x33475569),
+      foreground: Color(0xFF0F172A),
+      background: Color(0xFFF8FAFC),
+      black: Color(0xFF0F172A),
+      red: Color(0xFFDC2626),
+      green: Color(0xFF16A34A),
+      yellow: Color(0xFFD97706),
+      blue: Color(0xFF2563EB),
+      magenta: Color(0xFF7C3AED),
+      cyan: Color(0xFF0891B2),
+      white: Color(0xFFE2E8F0),
+      brightBlack: Color(0xFF64748B),
+      brightRed: Color(0xFFF87171),
+      brightGreen: Color(0xFF4ADE80),
+      brightYellow: Color(0xFFFACC15),
+      brightBlue: Color(0xFF60A5FA),
+      brightMagenta: Color(0xFFC4B5FD),
+      brightCyan: Color(0xFF22D3EE),
+      brightWhite: Color(0xFF0F172A),
+      searchHitBackground: Color(0xFFE2E8F0),
+      searchHitBackgroundCurrent: Color(0xFFCBD5F5),
+      searchHitForeground: Color(0xFF0F172A),
+    );
+    return const [
+      _TerminalThemeSpec(label: 'Midnight', theme: midnight),
+      _TerminalThemeSpec(label: 'Slate', theme: slate),
+      _TerminalThemeSpec(label: 'Paper', theme: paper),
+    ];
+  }
+
+  Future<void> _showTerminalSearchSheet() async {
+    final controller = TextEditingController(text: _terminalSearchQuery);
+    bool caseSensitive = _terminalSearchCaseSensitive;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF8FAFC),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final matches = _terminalSearchMatches.length;
+            final index =
+                _terminalSearchIndex >= 0 ? _terminalSearchIndex + 1 : 0;
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 12,
+                bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Search in terminal',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    textInputAction: TextInputAction.search,
+                    decoration: const InputDecoration(
+                      hintText: 'Find text...',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) {
+                      _runTerminalSearch(
+                        value,
+                        caseSensitive: caseSensitive,
+                      );
+                      setSheetState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilterChip(
+                        label: const Text('Case sensitive'),
+                        selected: caseSensitive,
+                        onSelected: (selected) {
+                          caseSensitive = selected;
+                          _runTerminalSearch(
+                            controller.text,
+                            caseSensitive: caseSensitive,
+                          );
+                          setSheetState(() {});
+                        },
+                      ),
+                      if (_terminalSearchQuery.isNotEmpty)
+                        ActionChip(
+                          label: const Text('Clear'),
+                          onPressed: () {
+                            controller.clear();
+                            _clearTerminalSearchHighlights(clearQuery: true);
+                            setState(() {});
+                            setSheetState(() {});
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Text(
+                        matches == 0
+                            ? 'No matches'
+                            : '$index / $matches',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: const Color(0xFF475569),
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'Previous match',
+                        onPressed:
+                            matches == 0 ? null : () => _navigateTerminalSearch(-1),
+                        icon: const Icon(Icons.keyboard_arrow_up),
+                      ),
+                      IconButton(
+                        tooltip: 'Next match',
+                        onPressed:
+                            matches == 0 ? null : () => _navigateTerminalSearch(1),
+                        icon: const Icon(Icons.keyboard_arrow_down),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showTerminalFontSheet() async {
+    var current = _terminalFontSize;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF8FAFC),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Font size',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  Slider(
+                    value: current,
+                    min: 11,
+                    max: 18,
+                    divisions: 14,
+                    label: current.toStringAsFixed(1),
+                    onChanged: (value) {
+                      setSheetState(() {
+                        current = value;
+                      });
+                      _adjustTerminalFontSize(value);
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tap outside to close.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF64748B),
+                        ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showTerminalThemeSheet() async {
+    final options = _terminalThemeOptions();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF8FAFC),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Terminal theme',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              ...List.generate(options.length, (index) {
+                final theme = options[index];
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: theme.theme.background,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: index == _terminalThemeIndex
+                          ? const Color(0xFF38BDF8)
+                          : const Color(0xFFE2E8F0),
+                      width: index == _terminalThemeIndex ? 2 : 1,
+                    ),
+                  ),
+                  child: RadioListTile<int>(
+                    value: index,
+                    groupValue: _terminalThemeIndex,
+                    activeColor: theme.theme.foreground,
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      _setTerminalTheme(value);
+                    },
+                    title: Text(
+                      theme.label,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: theme.theme.foreground,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                    subtitle: Text(
+                      theme.theme.background == const Color(0xFFF8FAFC)
+                          ? 'Light surface'
+                          : 'Dark surface',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: theme.theme.foreground.withAlpha(180),
+                          ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildKeyRow(List<_TerminalKeySpec> keys) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: keys
+            .map(
+              (key) => Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _TerminalKeyButton(spec: key),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
+  Future<void> _connectTerminalStream() async {
+    final active = _activeSession;
+    final baseUrl = widget.agentBaseUrl?.trim();
+    if (active == null || baseUrl == null || baseUrl.isEmpty) {
+      _disconnectTerminalStream();
+      return;
+    }
+    if (_terminalChannelReady &&
+        _terminalChannelSessionId == active.session.id) {
+      return;
+    }
+    _terminalReconnectTimer?.cancel();
+    _terminalReconnectTimer = null;
+    _disconnectTerminalStream();
+    final ready = await _ensureRemoteSession(active, forceAttach: true);
+    if (!ready) {
+      _startPolling();
+      return;
+    }
+    final uri = _terminalWsUri(baseUrl, active.session.id);
+    if (uri == null) {
+      _startPolling();
+      return;
+    }
+    WebSocketChannel channel;
+    try {
+      channel = WebSocketChannel.connect(uri);
+    } catch (_) {
+      _scheduleTerminalReconnect();
+      _startPolling();
+      return;
+    }
+    _terminalChannel = channel;
+    _terminalChannelSessionId = active.session.id;
+    _terminalChannelReady = true;
+    _terminalReconnectAttempts = 0;
+    _pollTimer?.cancel();
+    _startTerminalKeepalive();
+    _terminalChannelSub = channel.stream.listen(
+      _handleTerminalStreamMessage,
+      onError: (_) {
+        _disconnectTerminalStream();
+        _scheduleTerminalReconnect();
+        _startPolling();
+      },
+      onDone: () {
+        _disconnectTerminalStream();
+        _scheduleTerminalReconnect();
+        _startPolling();
+      },
+    );
+
+    try {
+      channel.sink.add(jsonEncode({'action': 'status'}));
+    } catch (_) {
+      // Ignore send errors; stream listener will handle disconnects.
+    }
+  }
+
+  void _disconnectTerminalStream() {
+    _terminalChannelSub?.cancel();
+    _terminalChannelSub = null;
+    _terminalChannel?.sink.close();
+    _terminalChannel = null;
+    _terminalChannelReady = false;
+    _terminalChannelSessionId = null;
+    _terminalKeepaliveTimer?.cancel();
+    _terminalKeepaliveTimer = null;
+  }
+
+  void _startTerminalKeepalive() {
+    _terminalKeepaliveTimer?.cancel();
+    _terminalKeepaliveTimer = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) {
+        if (!_terminalChannelReady) {
+          return;
+        }
+        try {
+          _terminalChannel?.sink.add(jsonEncode({'action': 'keepalive'}));
+        } catch (_) {
+          _disconnectTerminalStream();
+          _scheduleTerminalReconnect();
+          _startPolling();
+        }
+      },
+    );
+  }
+
+  void _scheduleTerminalReconnect() {
+    if (!mounted || _terminalReconnectTimer != null) {
+      return;
+    }
+    final active = _activeSession;
+    final baseUrl = widget.agentBaseUrl?.trim();
+    if (active == null || baseUrl == null || baseUrl.isEmpty) {
+      return;
+    }
+    _terminalReconnectAttempts =
+        (_terminalReconnectAttempts + 1).clamp(1, 6);
+    final seconds = 1 << (_terminalReconnectAttempts - 1);
+    final delay =
+        Duration(seconds: seconds > 12 ? 12 : seconds);
+    _terminalReconnectTimer = Timer(delay, () {
+      _terminalReconnectTimer = null;
+      _connectTerminalStream();
+    });
+  }
+
+  void _handleTerminalStreamMessage(dynamic event) {
+    final active = _activeSession;
+    final sessionId = _terminalChannelSessionId;
+    if (active == null || sessionId == null) {
+      return;
+    }
+    String? text;
+    if (event is String) {
+      text = event;
+    } else if (event is List<int>) {
+      text = utf8.decode(event);
+    } else if (event is Uint8List) {
+      text = utf8.decode(event);
+    }
+    if (text == null || text.trim().isEmpty) {
+      return;
+    }
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(text);
+    } catch (_) {
+      return;
+    }
+    if (decoded is! Map<String, dynamic>) {
+      return;
+    }
+    if (decoded['type'] != 'terminal' && decoded['status'] == null) {
+      return;
+    }
+    _terminalReconnectAttempts = 0;
+    unawaited(
+      _applyTerminalPayload(
+        sessionId: sessionId,
+        payload: decoded,
+        event: active.lastEvent,
+        command: active.lastCommand,
+      ),
+    );
+  }
+
   Future<void> _loadSessions() async {
     setState(() {
       _isLoading = true;
@@ -3578,8 +6259,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     try {
       final sessions = await widget.storage.fetchToolSessions();
       final events = await widget.storage.fetchTimelineEvents();
+      final agentId = widget.agentId;
       final terminalSessions = sessions
           .where((session) => session.type.toLowerCase() == 'terminal')
+          .where((session) => agentId == null || session.agentId == agentId)
           .toList();
       final terminalEvents = events
           .where((event) => event.type.toLowerCase() == 'terminal')
@@ -3602,13 +6285,23 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
             ? <TerminalOutputEntry>[]
             : _parseOutputEntries(event.payload, event.createdAt);
         final lastCommand = event?.payload['command']?.toString();
+        final nextSeq = event == null ? 0 : _parseNextSeq(event.payload);
+        final exitCode = event == null ? null : _parseExitCode(event.payload);
         return TerminalSessionView(
           session: session,
           output: output,
+          nextSeq: nextSeq,
+          exitCode: exitCode,
           lastCommand: lastCommand,
           lastEvent: event,
         );
       }).toList();
+      final terminals = <String, Terminal>{};
+      for (final view in views) {
+        final terminal = _buildTerminalForSession(view.session.id);
+        _hydrateTerminal(view.session.id, terminal, view.output);
+        terminals[view.session.id] = terminal;
+      }
       if (!mounted) {
         return;
       }
@@ -3616,10 +6309,16 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         _sessions = views;
         _activeSessionId = initialSession?.id ??
             (views.isNotEmpty ? views.first.session.id : null);
+        _terminals = terminals;
+        _statusMessage = null;
+        _statusIsError = false;
         _isLoading = false;
       });
-      _seedCommandFromActive();
+      _startPolling();
+      unawaited(_pollActiveSession());
       _autoRunInitialCommand();
+      _focusTerminal();
+      _connectTerminalStream();
     } catch (_) {
       if (!mounted) {
         return;
@@ -3628,6 +6327,161 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         _isLoading = false;
         _loadError = 'Unable to load terminal sessions.';
       });
+    }
+  }
+
+  void _startPolling() {
+    if (_terminalChannelReady &&
+        _terminalChannelSessionId == _activeSessionId) {
+      return;
+    }
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      unawaited(_pollActiveSession());
+    });
+  }
+
+  Future<bool> _attachRemoteSession(TerminalSessionView view) async {
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      await _markSessionDisconnected(
+        view.session.id,
+        'Connect to the desktop agent to stream output.',
+        event: view.lastEvent,
+        command: view.lastCommand,
+      );
+      return false;
+    }
+    try {
+      final payload = await agentClient.sendTerminalAction(
+        action: 'status',
+        sessionId: view.session.id,
+      );
+      await _applyTerminalPayload(
+        sessionId: view.session.id,
+        payload: payload,
+        event: view.lastEvent,
+        command: view.lastCommand,
+      );
+      return true;
+    } on AgentCommandFailure catch (error) {
+      await _markSessionDisconnected(
+        view.session.id,
+        error.message,
+        event: view.lastEvent,
+        command: view.lastCommand,
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _startRemoteSession(ToolSession session) async {
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      await _markSessionDisconnected(
+        session.id,
+        'Connect to the desktop agent to start a session.',
+      );
+      return false;
+    }
+    try {
+      final payload = await agentClient.sendTerminalAction(
+        action: 'start',
+        sessionId: session.id,
+        cols: _defaultCols,
+        rows: _defaultRows,
+      );
+      await _applyTerminalPayload(
+        sessionId: session.id,
+        payload: payload,
+      );
+      return true;
+    } on AgentCommandFailure catch (error) {
+      if (error.code == 'session_exists') {
+        final view = _sessionById(session.id);
+        if (view != null) {
+          return _attachRemoteSession(view);
+        }
+      }
+      await _markSessionDisconnected(session.id, error.message);
+      return false;
+    }
+  }
+
+  Future<bool> _ensureRemoteSession(
+    TerminalSessionView view, {
+    bool forceAttach = false,
+  }) async {
+    final status = view.session.status.toLowerCase();
+    if (status == 'idle') {
+      return _startRemoteSession(view.session);
+    }
+    if ((status == 'disconnected' || status == 'error') && forceAttach) {
+      return _attachRemoteSession(view);
+    }
+    return true;
+  }
+
+  Future<void> _pollActiveSession({bool force = false}) async {
+    if (_isPolling) {
+      return;
+    }
+    final active = _activeSession;
+    if (active == null) {
+      return;
+    }
+    if (!force &&
+        _terminalChannelReady &&
+        _terminalChannelSessionId == active.session.id) {
+      return;
+    }
+    final status = active.session.status.toLowerCase();
+    if (!force &&
+        (status == 'closed' ||
+            status == 'killed' ||
+            status == 'disconnected' ||
+            status == 'error')) {
+      return;
+    }
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      if (status != 'disconnected') {
+        await _markSessionDisconnected(
+          active.session.id,
+          'Connect to the desktop agent to stream output.',
+          event: active.lastEvent,
+          command: active.lastCommand,
+        );
+      }
+      return;
+    }
+    _isPolling = true;
+    try {
+      final ready = await _ensureRemoteSession(active, forceAttach: force);
+      if (!ready) {
+        return;
+      }
+      final payload = await agentClient.sendTerminalAction(
+        action: 'poll',
+        sessionId: active.session.id,
+        since: active.nextSeq,
+        limit: _maxOutputEntries,
+      );
+      await _applyTerminalPayload(
+        sessionId: active.session.id,
+        payload: payload,
+        event: active.lastEvent,
+        command: active.lastCommand,
+      );
+    } on AgentCommandFailure catch (error) {
+      await _markSessionDisconnected(
+        active.session.id,
+        error.message,
+        event: active.lastEvent,
+        command: active.lastCommand,
+      );
+    } finally {
+      _isPolling = false;
     }
   }
 
@@ -3642,23 +6496,6 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       }
     }
     return null;
-  }
-
-  void _seedCommandFromActive() {
-    final active = _activeSession;
-    if (active == null) {
-      _commandController.clear();
-      return;
-    }
-    final command = active.lastCommand?.trim() ?? '';
-    if (command.isEmpty) {
-      _commandController.clear();
-      return;
-    }
-    _commandController.text = command;
-    _commandController.selection = TextSelection.collapsed(
-      offset: command.length,
-    );
   }
 
   void _autoRunInitialCommand() {
@@ -3682,13 +6519,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return;
     }
     _autoRunTriggered = true;
-    _commandController.text = command;
-    _commandController.selection = TextSelection.collapsed(
-      offset: command.length,
-    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _runCommand();
+        unawaited(_sendCommandLine(command));
       }
     });
   }
@@ -3696,18 +6529,106 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   bool _payloadHasOutput(Map<String, dynamic> payload) {
     final stdout = _coerceOutputList(payload['stdout']);
     final stderr = _coerceOutputList(payload['stderr']);
-    final preview = payload['output_preview'] ?? payload['output'];
-    final previewText = preview?.toString().trim() ?? '';
-    return stdout.isNotEmpty || stderr.isNotEmpty || previewText.isNotEmpty;
+    final output = payload['output'];
+    final outputPreview = payload['output_preview'];
+    final preview = outputPreview;
+    final previewText = preview?.toString() ?? '';
+    final hasOutput = output is List ? output.isNotEmpty : false;
+    return stdout.isNotEmpty ||
+        stderr.isNotEmpty ||
+        hasOutput ||
+        previewText.isNotEmpty;
   }
 
   void _setActiveSession(String sessionId) {
     setState(() {
       _activeSessionId = sessionId;
-      _commandError = null;
-      _commandFeedback = null;
+      _statusMessage = null;
+      _statusIsError = false;
+      _clearTerminalSearchHighlights(clearQuery: true);
     });
-    _seedCommandFromActive();
+    _terminalReconnectAttempts = 0;
+    _startPolling();
+    unawaited(_pollActiveSession(force: true));
+    _focusTerminal();
+    _connectTerminalStream();
+    _jumpToTerminalBottom();
+  }
+
+  Future<void> _openSessionPicker() async {
+    if (_sessions.isEmpty) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final maxHeight = MediaQuery.of(sheetContext).size.height * 0.7;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Sessions',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          unawaited(_createSession());
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('New'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: _sessions.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final session = _sessions[index];
+                        final status = session.session.status.toLowerCase();
+                        final canClose = status != 'closed' &&
+                            status != 'killed' &&
+                            status != 'exited';
+                        return _TerminalSessionRow(
+                          session: session,
+                          isActive: session.session.id == _activeSessionId,
+                          onSelect: () {
+                            Navigator.of(sheetContext).pop();
+                            _setActiveSession(session.session.id);
+                          },
+                          onClose: canClose
+                              ? () => _closeSession(session.session.id)
+                              : null,
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _createSession() async {
@@ -3750,12 +6671,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       type: 'terminal',
       label: sessionLabel,
       status: 'idle',
+      agentId: widget.agentId,
       createdAt: now,
     );
     await _persistSession(session);
     if (!mounted) {
       return;
     }
+    final terminal = _buildTerminalForSession(session.id);
     setState(() {
       _sessions = [
         TerminalSessionView(
@@ -3765,10 +6688,17 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         ..._sessions,
       ];
       _activeSessionId = session.id;
-      _commandError = null;
-      _commandFeedback = null;
+      _terminals = {
+        ..._terminals,
+        session.id: terminal,
+      };
+      _statusMessage = null;
+      _statusIsError = false;
     });
-    _commandController.clear();
+    unawaited(_startRemoteSession(session));
+    _startPolling();
+    unawaited(_pollActiveSession());
+    _focusTerminal();
   }
 
   Future<void> _closeSession(String sessionId) async {
@@ -3776,16 +6706,29 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     if (view == null) {
       return;
     }
-    final updated = _sessionWithStatus(view.session, 'closed');
+    final agentClient = _agentClient;
+    if (agentClient != null) {
+      try {
+        await agentClient.sendTerminalAction(
+          action: 'stop',
+          sessionId: sessionId,
+        );
+      } catch (_) {
+        // Best-effort kill; update local state regardless.
+      }
+    }
+    final updated = _sessionWithStatus(view.session, 'killed');
     await _persistSession(updated);
     if (!mounted) {
       return;
     }
-    _streamTokens[sessionId] = -1;
     _replaceSession(
       sessionId,
       view.copyWith(session: updated),
     );
+    if (sessionId == _terminalChannelSessionId) {
+      _disconnectTerminalStream();
+    }
   }
 
   TerminalSessionView? _sessionById(String sessionId) {
@@ -3808,123 +6751,231 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     });
   }
 
-  Future<void> _runCommand() async {
-    if (_isSending) {
+  bool _isTerminalClosed(String status) {
+    return status == 'closed' ||
+        status == 'killed' ||
+        status == 'exited';
+  }
+
+  void _handleTerminalInput(String sessionId, String data) {
+    final view = _sessionById(sessionId);
+    if (view == null) {
       return;
     }
+    final status = view.session.status.toLowerCase();
+    if (_isTerminalClosed(status)) {
+      _setTerminalStatusMessage(
+        'This session is no longer active.',
+        isError: true,
+      );
+      _consumeOneShotModifiers();
+      return;
+    }
+    if (status == 'disconnected' || status == 'error') {
+      _setTerminalStatusMessage(
+        'Session disconnected. Reconnect to type.',
+        isError: true,
+      );
+      _consumeOneShotModifiers();
+      return;
+    }
+    final resolved = _applyTerminalModifiers(data);
+    _updateCommandBuffer(sessionId, resolved);
+    unawaited(_sendTerminalInput(sessionId, resolved, view: view));
+    _consumeOneShotModifiers();
+  }
+
+  void _updateCommandBuffer(String sessionId, String data) {
+    final buffer = _commandBuffers.putIfAbsent(sessionId, () => <int>[]);
+    var skippingEscape = false;
+    for (final rune in data.runes) {
+      if (skippingEscape) {
+        if (rune >= 64 && rune <= 126) {
+          skippingEscape = false;
+        }
+        continue;
+      }
+      if (rune == 27) {
+        skippingEscape = true;
+        continue;
+      }
+      if (rune == 10 || rune == 13) {
+        final command = String.fromCharCodes(buffer).trim();
+        buffer.clear();
+        if (command.isNotEmpty) {
+          unawaited(_recordCommand(sessionId, command));
+        }
+        continue;
+      }
+      if (rune == 8 || rune == 127) {
+        if (buffer.isNotEmpty) {
+          buffer.removeLast();
+        }
+        continue;
+      }
+      if (rune < 32) {
+        continue;
+      }
+      buffer.add(rune);
+    }
+  }
+
+  Future<void> _recordCommand(String sessionId, String command) async {
+    final view = _sessionById(sessionId);
+    if (view == null) {
+      return;
+    }
+    final event = await _ensureTerminalEvent(view, command);
+    if (!mounted) {
+      return;
+    }
+    _replaceSession(
+      sessionId,
+      view.copyWith(lastCommand: command, lastEvent: event),
+    );
+    if (sessionId == _activeSessionId) {
+      unawaited(_pollActiveSession());
+    }
+  }
+
+  Future<void> _sendCommandLine(String command) async {
     final active = _activeSession;
     if (active == null) {
       setState(() {
-        _commandError = 'Create a session to run a command.';
+        _statusMessage = 'Create a session to run commands.';
+        _statusIsError = true;
       });
       return;
     }
-    if (active.session.status.toLowerCase() == 'closed') {
+    final status = active.session.status.toLowerCase();
+    if (_isTerminalClosed(status)) {
       setState(() {
-        _commandError = 'This session is closed.';
+        _statusMessage = 'This session is no longer active.';
+        _statusIsError = true;
       });
       return;
     }
-    final command = _commandController.text.trim();
-    if (command.isEmpty) {
-      setState(() {
-        _commandError = 'Enter a command to run.';
-      });
-      return;
-    }
-
-    setState(() {
-      _commandError = null;
-      _commandFeedback = null;
-      _isSending = true;
-    });
-
     final event = await _ensureTerminalEvent(active, command);
     if (!mounted) {
       return;
     }
-    final seededView = active.copyWith(
+    final updatedView = active.copyWith(
       lastCommand: command,
       lastEvent: event,
     );
-    _replaceSession(active.session.id, seededView);
+    _replaceSession(active.session.id, updatedView);
+    await _sendTerminalInput(
+      active.session.id,
+      command.endsWith('\n') ? command : '$command\n',
+      view: updatedView,
+      triggerPoll: true,
+    );
+  }
 
+  Future<void> _sendTerminalInput(
+    String sessionId,
+    String data, {
+    TerminalSessionView? view,
+    bool triggerPoll = false,
+  }) async {
+    final activeView = view ?? _sessionById(sessionId);
+    if (activeView == null) {
+      return;
+    }
+    if (_terminalChannelReady && _terminalChannelSessionId == sessionId) {
+      try {
+        _terminalChannel?.sink.add(jsonEncode({
+          'action': 'input',
+          'data': data,
+        }));
+      } catch (_) {
+        _disconnectTerminalStream();
+        _startPolling();
+      }
+      return;
+    }
     final agentClient = _agentClient;
     if (agentClient == null) {
       await _markSessionDisconnected(
-        active.session.id,
+        sessionId,
         'Connect to the desktop agent to run terminal commands.',
-        event: event,
-        command: command,
+        event: activeView.lastEvent,
+        command: activeView.lastCommand,
       );
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-        });
-      }
       return;
     }
-
     try {
-      await agentClient.sendTerminalCommand(command: command);
+      final ready = await _ensureRemoteSession(activeView);
+      if (!ready) {
+        return;
+      }
+      await agentClient.sendTerminalAction(
+        action: 'input',
+        sessionId: sessionId,
+        input: data,
+      );
+      if (triggerPoll) {
+        _startPolling();
+        unawaited(_pollActiveSession());
+      }
     } on AgentCommandFailure catch (error) {
       await _markSessionDisconnected(
-        active.session.id,
+        sessionId,
         error.message,
-        event: event,
-        command: command,
+        event: activeView.lastEvent,
+        command: activeView.lastCommand,
       );
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-        });
-      }
-      return;
     } catch (error) {
       await _markSessionDisconnected(
-        active.session.id,
+        sessionId,
         'Terminal command failed: ${error.toString()}',
-        event: event,
-        command: command,
+        event: activeView.lastEvent,
+        command: activeView.lastCommand,
       );
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-        });
+    }
+  }
+
+  Future<void> _sendTerminalResize(
+    String sessionId,
+    int cols,
+    int rows,
+  ) async {
+    if (cols <= 0 || rows <= 0) {
+      return;
+    }
+    final nextGrid = _TerminalGrid(cols: cols, rows: rows);
+    final lastGrid = _terminalSizes[sessionId];
+    if (lastGrid != null && lastGrid == nextGrid) {
+      return;
+    }
+    _terminalSizes[sessionId] = nextGrid;
+    if (_terminalChannelReady && _terminalChannelSessionId == sessionId) {
+      try {
+        _terminalChannel?.sink.add(jsonEncode({
+          'action': 'resize',
+          'cols': cols,
+          'rows': rows,
+        }));
+      } catch (_) {
+        _disconnectTerminalStream();
+        _startPolling();
       }
       return;
     }
-
-    final updatedSession = _sessionWithStatus(active.session, 'running');
-    await _persistSession(updatedSession);
-    final updatedView = seededView.copyWith(
-      session: updatedSession,
-    );
-    if (!mounted) {
+    final agentClient = _agentClient;
+    if (agentClient == null) {
       return;
     }
-    _replaceSession(active.session.id, updatedView);
-
-    await _persistTerminalEvent(
-      event: event,
-      command: command,
-      entries: const <TerminalOutputEntry>[],
-      status: 'running',
-    );
-
-    setState(() {
-      _isSending = false;
-    });
-
-    final entries = _buildTerminalScript(command);
-    unawaited(
-      _streamOutput(
-        sessionId: active.session.id,
-        command: command,
-        event: event,
-        entries: entries,
-      ),
-    );
+    try {
+      await agentClient.sendTerminalAction(
+        action: 'resize',
+        sessionId: sessionId,
+        cols: cols,
+        rows: rows,
+      );
+    } catch (_) {
+      // Best-effort resize.
+    }
   }
 
   Future<void> _markSessionDisconnected(
@@ -3945,16 +6996,25 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final updatedView = view.copyWith(session: updated);
     _replaceSession(sessionId, updatedView);
     if (event != null && command != null) {
-      await _persistTerminalEvent(
+      final updatedEvent = await _persistTerminalEvent(
         event: event,
         command: command,
         entries: updatedView.output,
         status: 'disconnected',
+        nextSeq: updatedView.nextSeq,
+        exitCode: updatedView.exitCode,
         errorMessage: message,
       );
+      if (updatedEvent != null) {
+        _replaceSession(
+          sessionId,
+          updatedView.copyWith(lastEvent: updatedEvent),
+        );
+      }
     }
     setState(() {
-      _commandError = message;
+      _statusMessage = message;
+      _statusIsError = true;
     });
   }
 
@@ -3973,19 +7033,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return;
     }
     _configureAgentClient();
-    final updated = _sessionWithStatus(active.session, 'idle');
-    await _persistSession(updated);
-    if (!mounted) {
-      return;
-    }
-    _replaceSession(
-      active.session.id,
-      active.copyWith(session: updated),
-    );
     setState(() {
-      _commandFeedback = 'Session reconnected.';
-      _commandError = null;
+      _statusMessage = 'Reconnecting...';
+      _statusIsError = false;
     });
+    await _pollActiveSession(force: true);
+    unawaited(_connectTerminalStream());
   }
 
   ToolSession _sessionWithStatus(ToolSession session, String status) {
@@ -3994,6 +7047,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       type: session.type,
       label: session.label,
       status: status,
+      agentId: session.agentId,
       createdAt: session.createdAt,
     );
   }
@@ -4034,6 +7088,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       payload: {
         'command': command,
         'status': 'queued',
+        'next_seq': session.nextSeq,
       },
       createdAt: now,
     );
@@ -4053,16 +7108,19 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     return event;
   }
 
-  Future<void> _persistTerminalEvent({
+  Future<TimelineEvent?> _persistTerminalEvent({
     required TimelineEvent event,
     required String command,
     required List<TerminalOutputEntry> entries,
     required String status,
+    int? nextSeq,
+    int? exitCode,
     String? errorMessage,
   }) async {
     final payload = Map<String, dynamic>.from(event.payload);
     payload['command'] = command;
     payload['status'] = status;
+    payload['output'] = entries.map((entry) => entry.text).toList();
     payload['stdout'] = entries
         .where((entry) => entry.stream == TerminalStream.stdout)
         .map((entry) => entry.text)
@@ -4072,6 +7130,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         .map((entry) => entry.text)
         .toList();
     payload['output_preview'] = _buildOutputPreview(entries);
+    if (nextSeq != null) {
+      payload['next_seq'] = nextSeq;
+    }
+    if (exitCode != null) {
+      payload['exit_code'] = exitCode;
+    } else {
+      payload.remove('exit_code');
+    }
     payload['updated_at'] = DateTime.now().toIso8601String();
     if (errorMessage != null && errorMessage.trim().isNotEmpty) {
       payload['error_message'] = errorMessage;
@@ -4082,6 +7148,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       entries: entries,
       status: status,
       errorMessage: errorMessage,
+      exitCode: exitCode,
       agentBaseUrl: widget.agentBaseUrl,
     );
     final updatedPayload = _applyAiInsight(payload, insight);
@@ -4095,9 +7162,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     );
     try {
       await widget.storage.insertTimelineEvent(updatedEvent);
+      return updatedEvent;
     } catch (error) {
       if (!mounted) {
-        return;
+        return null;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -4107,62 +7175,239 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         ),
       );
     }
+    return null;
   }
 
-  Future<void> _streamOutput({
+  Future<void> _applyTerminalPayload({
     required String sessionId,
-    required String command,
-    required TimelineEvent event,
-    required List<TerminalOutputEntry> entries,
+    required Map<String, dynamic> payload,
+    TimelineEvent? event,
+    String? command,
   }) async {
-    final token = ++_streamTokenCounter;
-    _streamTokens[sessionId] = token;
-    for (final entry in entries) {
-      await Future<void>.delayed(const Duration(milliseconds: 280));
-      if (!mounted || _streamTokens[sessionId] != token) {
-        return;
-      }
-      _appendOutput(sessionId, entry);
-    }
-    if (!mounted || _streamTokens[sessionId] != token) {
-      return;
-    }
     final view = _sessionById(sessionId);
     if (view == null) {
       return;
     }
-    final updatedSession = _sessionWithStatus(view.session, 'complete');
+    final status = payload['status']?.toString() ?? view.session.status;
+    final nextSeq = _parseNextSeq(payload, fallback: view.nextSeq);
+    final parsedExitCode = _parseExitCode(payload);
+    final exitCode = parsedExitCode ??
+        (status.toLowerCase() == 'running' ? null : view.exitCode);
+    final outputEntries = _parseTerminalChunks(
+      payload['output'],
+      DateTime.now(),
+    );
+    final mergedOutput = _mergeOutputEntries(view.output, outputEntries);
+    final updatedSession = _sessionWithStatus(view.session, status);
+    final updatedView = view.copyWith(
+      session: updatedSession,
+      output: mergedOutput,
+      nextSeq: nextSeq,
+      exitCode: exitCode,
+    );
+    _replaceSession(sessionId, updatedView);
     await _persistSession(updatedSession);
-    if (!mounted) {
+    _appendTerminalOutput(sessionId, outputEntries);
+
+    final resolvedCommand =
+        command ?? event?.payload['command']?.toString() ?? '';
+    if (event != null && resolvedCommand.trim().isNotEmpty) {
+      final errorMessage = exitCode != null && exitCode != 0
+          ? 'Command exited with code $exitCode.'
+          : null;
+      if (_shouldPersistTerminalEvent(sessionId, status)) {
+        final updatedEvent = await _persistTerminalEvent(
+          event: event,
+          command: resolvedCommand,
+          entries: mergedOutput,
+          status: status,
+          nextSeq: nextSeq,
+          exitCode: exitCode,
+          errorMessage: errorMessage,
+        );
+        if (updatedEvent != null) {
+          _replaceSession(
+            sessionId,
+            updatedView.copyWith(lastEvent: updatedEvent),
+          );
+        }
+      }
+    }
+
+    if (!mounted || sessionId != _activeSessionId) {
       return;
     }
-    _replaceSession(sessionId, view.copyWith(session: updatedSession));
-    await _persistTerminalEvent(
-      event: event,
-      command: command,
-      entries: entries,
-      status: 'complete',
-    );
-    if (mounted) {
+    if (status.toLowerCase() == 'exited') {
       setState(() {
-        _commandFeedback = 'Command completed.';
+        _statusMessage = exitCode == null
+            ? 'Session exited.'
+            : 'Session exited with code $exitCode.';
+        _statusIsError = exitCode != null && exitCode != 0;
       });
     }
   }
 
-  void _appendOutput(String sessionId, TerminalOutputEntry entry) {
-    final view = _sessionById(sessionId);
-    if (view == null) {
+  List<TerminalOutputEntry> _mergeOutputEntries(
+    List<TerminalOutputEntry> existing,
+    List<TerminalOutputEntry> incoming,
+  ) {
+    if (incoming.isEmpty) {
+      return existing;
+    }
+    final merged = List<TerminalOutputEntry>.from(existing)..addAll(incoming);
+    if (merged.length > _maxOutputEntries) {
+      merged.removeRange(0, merged.length - _maxOutputEntries);
+    }
+    return merged;
+  }
+
+  void _appendTerminalOutput(
+    String sessionId,
+    List<TerminalOutputEntry> entries,
+  ) {
+    if (entries.isEmpty) {
       return;
     }
-    final updated = List<TerminalOutputEntry>.from(view.output)..add(entry);
-    _replaceSession(sessionId, view.copyWith(output: updated));
+    final terminal = _terminals[sessionId];
+    if (terminal == null) {
+      return;
+    }
+    final buffer = StringBuffer();
+    for (final entry in entries) {
+      buffer.write(entry.text);
+    }
+    terminal.write(buffer.toString());
+  }
+
+  bool _shouldPersistTerminalEvent(String sessionId, String status) {
+    final lowered = status.toLowerCase();
+    if (lowered == 'exited' ||
+        lowered == 'killed' ||
+        lowered == 'closed' ||
+        lowered == 'error' ||
+        lowered == 'disconnected') {
+      _terminalPersistedAt[sessionId] = DateTime.now();
+      return true;
+    }
+    final last = _terminalPersistedAt[sessionId];
+    final now = DateTime.now();
+    if (last == null ||
+        now.difference(last) > _terminalPersistInterval) {
+      _terminalPersistedAt[sessionId] = now;
+      return true;
+    }
+    return false;
+  }
+
+  List<TerminalOutputEntry> _parseTerminalChunks(
+    dynamic raw,
+    DateTime fallbackTimestamp,
+  ) {
+    if (raw == null) {
+      return [];
+    }
+    final entries = <TerminalOutputEntry>[];
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map) {
+          final text = item['data']?.toString() ?? '';
+          if (text.isEmpty) {
+            continue;
+          }
+          final ts = item['ts'];
+          final timestamp = _parseEpochSeconds(ts) ?? fallbackTimestamp;
+          entries.add(
+            TerminalOutputEntry(
+              stream: TerminalStream.stdout,
+              text: text,
+              timestamp: timestamp,
+            ),
+          );
+        } else if (item != null) {
+          final text = item.toString();
+          if (text.isEmpty) {
+            continue;
+          }
+          entries.add(
+            TerminalOutputEntry(
+              stream: TerminalStream.stdout,
+              text: text,
+              timestamp: fallbackTimestamp,
+            ),
+          );
+        }
+      }
+      return entries;
+    }
+    final text = raw.toString();
+    if (text.isEmpty) {
+      return entries;
+    }
+    entries.add(
+      TerminalOutputEntry(
+        stream: TerminalStream.stdout,
+        text: text,
+        timestamp: fallbackTimestamp,
+      ),
+    );
+    return entries;
+  }
+
+  DateTime? _parseEpochSeconds(dynamic raw) {
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(raw * 1000);
+    }
+    if (raw is num) {
+      return DateTime.fromMillisecondsSinceEpoch(raw.toInt() * 1000);
+    }
+    if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed != null) {
+        return DateTime.fromMillisecondsSinceEpoch(parsed * 1000);
+      }
+    }
+    return null;
+  }
+
+  int _parseNextSeq(Map<String, dynamic> payload, {int fallback = 0}) {
+    final raw = payload['next_seq'];
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+    return fallback;
+  }
+
+  int? _parseExitCode(Map<String, dynamic> payload) {
+    final raw = payload['exit_code'];
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    if (raw is String) {
+      return int.tryParse(raw);
+    }
+    return null;
   }
 
   List<TerminalOutputEntry> _parseOutputEntries(
     Map<String, dynamic> payload,
     DateTime createdAt,
   ) {
+    final streamed = _parseTerminalChunks(payload['output'], createdAt);
+    if (streamed.isNotEmpty) {
+      return streamed;
+    }
     final stdoutLines = _coerceOutputList(payload['stdout']);
     final stderrLines = _coerceOutputList(payload['stderr']);
     final entries = <TerminalOutputEntry>[];
@@ -4185,8 +7430,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
     }
     if (entries.isEmpty) {
-      final preview = payload['output_preview'] ?? payload['output'];
-      final previewText = preview?.toString().trim() ?? '';
+      final preview = payload['output_preview'];
+      final previewText = preview?.toString() ?? '';
       if (previewText.isNotEmpty) {
         entries.add(
           TerminalOutputEntry(
@@ -4207,13 +7452,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     if (raw is List) {
       return raw
           .map((entry) => entry?.toString() ?? '')
-          .where((line) => line.trim().isNotEmpty)
+          .where((line) => line.isNotEmpty)
           .toList();
     }
     if (raw is String) {
       return raw
           .split('\n')
-          .map((line) => line.trim())
           .where((line) => line.isNotEmpty)
           .toList();
     }
@@ -4226,46 +7470,6 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     }
     final preview = entries.take(3).map((entry) => entry.text).toList();
     return preview.join('\n');
-  }
-
-  List<TerminalOutputEntry> _buildTerminalScript(String command) {
-    final lower = command.toLowerCase();
-    final now = DateTime.now();
-    final entries = <TerminalOutputEntry>[];
-    void add(TerminalStream stream, String text) {
-      entries.add(
-        TerminalOutputEntry(stream: stream, text: text, timestamp: now),
-      );
-    }
-
-    add(TerminalStream.stdout, r'$ ' + command);
-    if (lower.contains('npm test')) {
-      add(TerminalStream.stdout, '> vibe-inspect@1.0.0 test');
-      add(TerminalStream.stdout, '> vitest run');
-      add(TerminalStream.stdout, ' RUN  v1.2.0 /workspace');
-      add(TerminalStream.stdout, ' ✓ src/app.spec.ts (3 tests)');
-      add(
-        TerminalStream.stderr,
-        ' FAIL  src/terminal.spec.ts > streams stderr',
-      );
-      add(
-        TerminalStream.stderr,
-        'Error: Expected stderr output but received stdout',
-      );
-      add(TerminalStream.stdout, ' Test Files 1 failed (2)');
-      add(TerminalStream.stdout, '      Tests 1 failed (4)');
-      add(TerminalStream.stdout, '   Duration 1.42s');
-      return entries;
-    }
-    if (lower.contains('npm') || lower.contains('yarn')) {
-      add(TerminalStream.stdout, 'Resolving packages...');
-      add(TerminalStream.stdout, 'Fetching metadata from registry...');
-      add(TerminalStream.stdout, 'Packages installed successfully.');
-      return entries;
-    }
-    add(TerminalStream.stdout, 'Running command on desktop agent...');
-    add(TerminalStream.stdout, 'Command completed with exit code 0.');
-    return entries;
   }
 
   @override
@@ -4292,227 +7496,832 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     }
 
     final active = _activeSession;
-    final output = active?.output ?? const <TerminalOutputEntry>[];
-    final stdoutEntries = output
-        .where((entry) => entry.stream == TerminalStream.stdout)
-        .toList();
-    final stderrEntries = output
-        .where((entry) => entry.stream == TerminalStream.stderr)
-        .toList();
     final status = active?.session.status.toLowerCase() ?? 'idle';
-    final isDisconnected = status == 'disconnected';
-    final isClosed = status == 'closed';
-    final isRunning = status == 'running';
-    final lastCommand = active?.lastCommand;
-    final lastEventTime = active?.lastEvent?.createdAt;
-    final lastEvent = active?.lastEvent;
-    final eventInsight = lastEvent == null
-        ? null
-        : AiInsightSummary.fromPayload(lastEvent.payload);
-    final aiInsight = eventInsight ??
-        (active == null
-            ? null
-            : _buildTerminalInsight(
-                entries: output,
-                status: active.session.status,
-                errorMessage: lastEvent?.payload['error_message']?.toString(),
-                agentBaseUrl: widget.agentBaseUrl,
-              ));
+    final isDisconnected = status == 'disconnected' || status == 'error';
+    final isEnded = _isTerminalClosed(status);
+    final statusStyle = _terminalStatusStyle(status);
+    final terminal = active == null ? null : _terminals[active.session.id];
+    final terminalThemes = _terminalThemeOptions();
+    final resolvedThemeIndex = _terminalThemeIndex
+        .clamp(0, terminalThemes.length - 1)
+        .toInt();
+    final terminalTheme = terminalThemes[resolvedThemeIndex].theme;
+    final terminalBackground = terminalTheme.background;
+    final terminalForeground = terminalTheme.foreground;
+    final isLightTerminal =
+        ThemeData.estimateBrightnessForColor(terminalBackground) ==
+            Brightness.light;
+    final terminalBorderColor =
+        isLightTerminal ? const Color(0xFFE2E8F0) : const Color(0xFF1E293B);
+    final terminalOverlayBackground =
+        isLightTerminal ? const Color(0xFFE2E8F0) : const Color(0xFF0F172A);
+    final terminalOverlayForeground =
+        isLightTerminal ? const Color(0xFF0F172A) : const Color(0xFFE2E8F0);
+    final terminalStyle = TerminalStyle.fromTextStyle(
+      GoogleFonts.jetBrainsMono(
+        fontSize: _terminalFontSize,
+        height: 1.4,
+      ),
+    );
+    final sessionLabel = active?.session.label ?? 'No session selected';
+    final sessionStatus =
+        active == null ? 'IDLE' : active.session.status.toUpperCase();
+    final connectionLabel = active == null
+        ? 'Create a session to start.'
+        : _terminalChannelReady
+            ? 'Live stream'
+            : 'Polling updates';
+    final headerStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.w700,
+      color: const Color(0xFF0F172A),
+    );
+    const dockBackground = Color(0xFF0B1220);
+    final keyRowPrimary = [
+      _TerminalKeySpec(
+        label: 'Esc',
+        onTap: () => _sendTerminalKey(TerminalKey.escape),
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Tab',
+        onTap: () => _sendTerminalKey(TerminalKey.tab),
+      ),
+      _TerminalKeySpec(
+        label: 'S-Tab',
+        onTap: () => _sendTerminalKey(TerminalKey.backtab),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl',
+        onTap: _toggleCtrlModifier,
+        onLongPress: _toggleCtrlLock,
+        isActive: _ctrlModifier,
+        isLocked: _ctrlLocked,
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Alt',
+        onTap: _toggleAltModifier,
+        onLongPress: _toggleAltLock,
+        isActive: _altModifier,
+        isLocked: _altLocked,
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Shift',
+        onTap: _toggleShiftModifier,
+        onLongPress: _toggleShiftLock,
+        isActive: _shiftModifier,
+        isLocked: _shiftLocked,
+      ),
+      _TerminalKeySpec(
+        label: _showFnRow ? 'Fn On' : 'Fn',
+        onTap: _toggleFnRow,
+        isActive: _showFnRow,
+      ),
+      _TerminalKeySpec(
+        label: '←',
+        onTap: () => _sendTerminalKey(TerminalKey.arrowLeft),
+        isRepeatable: true,
+      ),
+      _TerminalKeySpec(
+        label: '↓',
+        onTap: () => _sendTerminalKey(TerminalKey.arrowDown),
+        isRepeatable: true,
+      ),
+      _TerminalKeySpec(
+        label: '↑',
+        onTap: () => _sendTerminalKey(TerminalKey.arrowUp),
+        isRepeatable: true,
+      ),
+      _TerminalKeySpec(
+        label: '→',
+        onTap: () => _sendTerminalKey(TerminalKey.arrowRight),
+        isRepeatable: true,
+      ),
+    ];
+    final keyRowSecondaryBase = [
+      _TerminalKeySpec(
+        label: 'Bksp',
+        onTap: () => _sendTerminalKey(TerminalKey.backspace),
+        isRepeatable: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Enter',
+        onTap: () => _sendTerminalKey(TerminalKey.enter),
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'PgUp',
+        onTap: () => _sendTerminalKey(TerminalKey.pageUp),
+      ),
+      _TerminalKeySpec(
+        label: 'PgDn',
+        onTap: () => _sendTerminalKey(TerminalKey.pageDown),
+      ),
+      _TerminalKeySpec(
+        label: 'Home',
+        onTap: () => _sendTerminalKey(TerminalKey.home),
+      ),
+      _TerminalKeySpec(
+        label: 'End',
+        onTap: () => _sendTerminalKey(TerminalKey.end),
+      ),
+      _TerminalKeySpec(
+        label: 'Del',
+        onTap: () => _sendTerminalKey(TerminalKey.delete),
+      ),
+      _TerminalKeySpec(
+        label: 'Ins',
+        onTap: () => _sendTerminalKey(TerminalKey.insert),
+      ),
+      _TerminalKeySpec(
+        label: '/',
+        onTap: () => _sendTerminalChar('/'),
+      ),
+      _TerminalKeySpec(
+        label: ':',
+        onTap: () => _sendTerminalChar(':'),
+      ),
+      _TerminalKeySpec(
+        label: '-',
+        onTap: () => _sendTerminalChar('-'),
+      ),
+      _TerminalKeySpec(
+        label: '|',
+        onTap: () => _sendTerminalChar('|'),
+      ),
+      _TerminalKeySpec(
+        label: '~',
+        onTap: () => _sendTerminalChar('~'),
+      ),
+      _TerminalKeySpec(
+        label: '_',
+        onTap: () => _sendTerminalChar('_'),
+      ),
+      _TerminalKeySpec(
+        label: '=',
+        onTap: () => _sendTerminalChar('='),
+      ),
+      _TerminalKeySpec(
+        label: '.',
+        onTap: () => _sendTerminalChar('.'),
+      ),
+      _TerminalKeySpec(
+        label: 'Space',
+        onTap: () => _sendTerminalChar(' '),
+        minWidth: 72,
+      ),
+    ];
 
+    final keyRowSecondarySymbols = [
+      _TerminalKeySpec(
+        label: '[]',
+        onTap: () => _sendPairedChars('[', ']'),
+        onLongPress: () => _sendTerminalChar('['),
+      ),
+      _TerminalKeySpec(
+        label: '()',
+        onTap: () => _sendPairedChars('(', ')'),
+        onLongPress: () => _sendTerminalChar('('),
+      ),
+      _TerminalKeySpec(
+        label: '{}',
+        onTap: () => _sendPairedChars('{', '}'),
+        onLongPress: () => _sendTerminalChar('{'),
+      ),
+      _TerminalKeySpec(
+        label: "''",
+        onTap: () => _sendPairedChars("'", "'"),
+        onLongPress: () => _sendTerminalChar("'"),
+      ),
+      _TerminalKeySpec(
+        label: '""',
+        onTap: () => _sendPairedChars('"', '"'),
+        onLongPress: () => _sendTerminalChar('"'),
+      ),
+      _TerminalKeySpec(
+        label: '<>',
+        onTap: () => _sendPairedChars('<', '>'),
+        onLongPress: () => _sendTerminalChar('<'),
+      ),
+      _TerminalKeySpec(
+        label: '`',
+        onTap: () => _sendTerminalChar('`'),
+      ),
+      _TerminalKeySpec(
+        label: '?',
+        onTap: () => _sendTerminalChar('?'),
+      ),
+      _TerminalKeySpec(
+        label: '!',
+        onTap: () => _sendTerminalChar('!'),
+      ),
+      _TerminalKeySpec(
+        label: '&',
+        onTap: () => _sendTerminalChar('&'),
+      ),
+      _TerminalKeySpec(
+        label: '#',
+        onTap: () => _sendTerminalChar('#'),
+      ),
+      _TerminalKeySpec(
+        label: '@',
+        onTap: () => _sendTerminalChar('@'),
+      ),
+      _TerminalKeySpec(
+        label: r'$',
+        onTap: () => _sendTerminalChar(r'$'),
+      ),
+      _TerminalKeySpec(
+        label: '%',
+        onTap: () => _sendTerminalChar('%'),
+      ),
+      _TerminalKeySpec(
+        label: '^',
+        onTap: () => _sendTerminalChar('^'),
+      ),
+    ];
+
+    final keyRowSecondaryAdvanced = [
+      _TerminalKeySpec(
+        label: 'Ctrl+A',
+        onTap: () => _sendCtrlCombo('a'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+C',
+        onTap: () => _sendCtrlCombo('c'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+R',
+        onTap: () => _sendCtrlCombo('r'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+L',
+        onTap: () => _sendCtrlCombo('l'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+D',
+        onTap: () => _sendCtrlCombo('d'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+Z',
+        onTap: () => _sendCtrlCombo('z'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+K',
+        onTap: () => _sendCtrlCombo('k'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+U',
+        onTap: () => _sendCtrlCombo('u'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+W',
+        onTap: () => _sendCtrlCombo('w'),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+Space',
+        onTap: _sendCtrlNull,
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+Bksp',
+        onTap: () => _sendTerminalKeyCombo(
+          TerminalKey.backspace,
+          ctrl: true,
+        ),
+      ),
+      _TerminalKeySpec(
+        label: 'Alt+B',
+        onTap: () => _sendAltCombo('b'),
+      ),
+      _TerminalKeySpec(
+        label: 'Alt+F',
+        onTap: () => _sendAltCombo('f'),
+      ),
+      _TerminalKeySpec(
+        label: 'Alt+Bksp',
+        onTap: _sendAltBackspace,
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+←',
+        onTap: () => _sendTerminalKeyCombo(
+          TerminalKey.arrowLeft,
+          ctrl: true,
+        ),
+      ),
+      _TerminalKeySpec(
+        label: 'Ctrl+→',
+        onTap: () => _sendTerminalKeyCombo(
+          TerminalKey.arrowRight,
+          ctrl: true,
+        ),
+      ),
+      _TerminalKeySpec(
+        label: 'Alt+←',
+        onTap: () => _sendTerminalKeyCombo(
+          TerminalKey.arrowLeft,
+          alt: true,
+        ),
+      ),
+      _TerminalKeySpec(
+        label: 'Alt+→',
+        onTap: () => _sendTerminalKeyCombo(
+          TerminalKey.arrowRight,
+          alt: true,
+        ),
+      ),
+    ];
+
+    final keyRowFn = [
+      _TerminalKeySpec(
+        label: 'F1',
+        onTap: () => _sendTerminalKey(TerminalKey.f1),
+      ),
+      _TerminalKeySpec(
+        label: 'F2',
+        onTap: () => _sendTerminalKey(TerminalKey.f2),
+      ),
+      _TerminalKeySpec(
+        label: 'F3',
+        onTap: () => _sendTerminalKey(TerminalKey.f3),
+      ),
+      _TerminalKeySpec(
+        label: 'F4',
+        onTap: () => _sendTerminalKey(TerminalKey.f4),
+      ),
+      _TerminalKeySpec(
+        label: 'F5',
+        onTap: () => _sendTerminalKey(TerminalKey.f5),
+      ),
+      _TerminalKeySpec(
+        label: 'F6',
+        onTap: () => _sendTerminalKey(TerminalKey.f6),
+      ),
+      _TerminalKeySpec(
+        label: 'F7',
+        onTap: () => _sendTerminalKey(TerminalKey.f7),
+      ),
+      _TerminalKeySpec(
+        label: 'F8',
+        onTap: () => _sendTerminalKey(TerminalKey.f8),
+      ),
+      _TerminalKeySpec(
+        label: 'F9',
+        onTap: () => _sendTerminalKey(TerminalKey.f9),
+      ),
+      _TerminalKeySpec(
+        label: 'F10',
+        onTap: () => _sendTerminalKey(TerminalKey.f10),
+      ),
+      _TerminalKeySpec(
+        label: 'F11',
+        onTap: () => _sendTerminalKey(TerminalKey.f11),
+      ),
+      _TerminalKeySpec(
+        label: 'F12',
+        onTap: () => _sendTerminalKey(TerminalKey.f12),
+      ),
+    ];
+
+    final isWideLayout = MediaQuery.of(context).size.width >= 900;
+    final allowPaging = !_showFnRow && !isWideLayout;
+    final baseKeys = List<_TerminalKeySpec>.from(keyRowSecondaryBase);
+    final advancedKeys = List<_TerminalKeySpec>.from(keyRowSecondaryAdvanced);
+    final symbolKeys = List<_TerminalKeySpec>.from(keyRowSecondarySymbols);
+    if (allowPaging) {
+      baseKeys.insert(
+        baseKeys.length - 1,
+        _TerminalKeySpec(
+          label: 'More',
+          onTap: _showAdvancedKeys,
+          isEmphasis: true,
+        ),
+      );
+      baseKeys.insert(
+        baseKeys.length - 1,
+        _TerminalKeySpec(
+          label: 'Sym',
+          onTap: _showSymbolKeys,
+          isEmphasis: true,
+        ),
+      );
+      advancedKeys.insert(
+        0,
+        _TerminalKeySpec(
+          label: 'Back',
+          onTap: _showBaseKeys,
+          isEmphasis: true,
+        ),
+      );
+      advancedKeys.insert(
+        1,
+        _TerminalKeySpec(
+          label: 'Sym',
+          onTap: _showSymbolKeys,
+          isEmphasis: true,
+        ),
+      );
+      symbolKeys.insert(
+        0,
+        _TerminalKeySpec(
+          label: 'Back',
+          onTap: _showBaseKeys,
+          isEmphasis: true,
+        ),
+      );
+      symbolKeys.insert(
+        1,
+        _TerminalKeySpec(
+          label: 'More',
+          onTap: _showAdvancedKeys,
+          isEmphasis: true,
+        ),
+      );
+    } else if (!_showFnRow) {
+      baseKeys.insert(
+        baseKeys.length - 1,
+        _TerminalKeySpec(
+          label: 'Sym',
+          onTap: _showSymbolKeys,
+          isEmphasis: true,
+        ),
+      );
+      symbolKeys.insert(
+        0,
+        _TerminalKeySpec(
+          label: 'Back',
+          onTap: _showBaseKeys,
+          isEmphasis: true,
+        ),
+      );
+    }
+    final keyRowSecondary = _showFnRow
+        ? keyRowFn
+        : (isWideLayout
+            ? baseKeys
+            : (_secondaryKeyPage == 2
+                ? symbolKeys
+                : (_secondaryKeyPage == 1 && allowPaging
+                    ? advancedKeys
+                    : baseKeys)));
+    final toolActions = [
+      _TerminalToolAction(
+        label: 'Paste',
+        icon: Icons.content_paste,
+        onTap: () => unawaited(_pasteClipboard()),
+      ),
+      _TerminalToolAction(
+        label: 'Copy',
+        icon: Icons.content_copy,
+        onTap: () => unawaited(_copySelection()),
+      ),
+      _TerminalToolAction(
+        label: 'Search',
+        icon: Icons.search,
+        onTap: () => unawaited(_showTerminalSearchSheet()),
+      ),
+      _TerminalToolAction(
+        label: _showNavOnly ? 'Nav On' : 'Nav',
+        icon: Icons.navigation,
+        onTap: _toggleNavOnly,
+        isActive: _showNavOnly,
+      ),
+      _TerminalToolAction(
+        label: 'Select',
+        icon: Icons.select_all,
+        onTap: _selectAllInTerminal,
+      ),
+      _TerminalToolAction(
+        label: 'Unselect',
+        icon: Icons.highlight_off_outlined,
+        onTap: _clearSelection,
+      ),
+      _TerminalToolAction(
+        label: 'Clear',
+        icon: Icons.cleaning_services_outlined,
+        onTap: _clearTerminal,
+      ),
+      _TerminalToolAction(
+        label: 'Reset',
+        icon: Icons.restart_alt,
+        onTap: _resetTerminal,
+      ),
+      if (!_isTerminalAtBottom)
+        _TerminalToolAction(
+          label: 'Bottom',
+          icon: Icons.vertical_align_bottom,
+          onTap: _jumpToTerminalBottom,
+        ),
+      if (_hasActiveModifiers)
+        _TerminalToolAction(
+          label: 'Mods Off',
+          icon: Icons.backspace_outlined,
+          onTap: _clearModifiers,
+          isActive: true,
+        ),
+      _TerminalToolAction(
+        label: _selectionMode == SelectionMode.block ? 'Block' : 'Line',
+        icon: Icons.text_fields,
+        onTap: _toggleSelectionMode,
+        isActive: _selectionMode == SelectionMode.block,
+      ),
+      _TerminalToolAction(
+        label: _mouseInputEnabled ? 'Mouse On' : 'Mouse',
+        icon: _mouseInputEnabled ? Icons.mouse : Icons.mouse_outlined,
+        onTap: _toggleMouseInput,
+        isActive: _mouseInputEnabled,
+      ),
+      _TerminalToolAction(
+        label: _hardwareKeyboardOnly ? 'HW KB' : 'Soft KB',
+        icon:
+            _hardwareKeyboardOnly ? Icons.keyboard_alt_outlined : Icons.keyboard,
+        onTap: _toggleHardwareKeyboardOnly,
+        isActive: _hardwareKeyboardOnly,
+      ),
+      _TerminalToolAction(
+        label: 'Font',
+        icon: Icons.format_size,
+        onTap: () => unawaited(_showTerminalFontSheet()),
+      ),
+      _TerminalToolAction(
+        label: 'Theme',
+        icon: Icons.palette_outlined,
+        onTap: () => unawaited(_showTerminalThemeSheet()),
+      ),
+    ];
     return _TimelineDetailScaffold(
       title: 'Terminal',
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Terminal sessions',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Create, switch, and close sessions while streaming output.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF64748B),
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (_commandFeedback != null) ...[
-              _InlineStatus(
-                message: _commandFeedback!,
-                isError: false,
-              ),
-              const SizedBox(height: 12),
-            ],
-            _ContextSectionCard(
-              title: 'Sessions',
-              subtitle: 'Tap a session to focus output and commands.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_sessions.isEmpty)
-                    const _EmptyHint(text: 'No terminal sessions yet.'),
-                  if (_sessions.isNotEmpty)
-                    Column(
-                      children: [
-                        for (final session in _sessions) ...[
-                          _TerminalSessionRow(
-                            session: session,
-                            isActive:
-                                session.session.id == _activeSessionId,
-                            onSelect: () =>
-                                _setActiveSession(session.session.id),
-                            onClose: session.session.status.toLowerCase() ==
-                                    'closed'
-                                ? null
-                                : () => _closeSession(session.session.id),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        sessionLabel,
+                        style: headerStyle,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Switch session',
+                      onPressed: _sessions.isEmpty
+                          ? null
+                          : () => _openSessionPicker(),
+                      icon: const Icon(Icons.layers_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'New session',
+                      onPressed: _createSession,
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusStyle.background,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          sessionStatus,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: statusStyle.foreground,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
                           ),
-                          if (session != _sessions.last)
-                            const SizedBox(height: 8),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        connectionLabel,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF64748B),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (_terminalSearchQuery.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE2E8F0),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Search: "${_terminalSearchQuery}"',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: const Color(0xFF334155),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (_statusMessage != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _statusMessage!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: _statusIsError
+                          ? const Color(0xFFB91C1C)
+                          : const Color(0xFF16A34A),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (isDisconnected) ...[
+                  const SizedBox(height: 6),
+                  _TerminalReconnectCard(onReconnect: _attemptReconnect),
+                ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: terminalBackground,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: terminalBorderColor),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: terminal == null
+                          ? Center(
+                              child: Text(
+                                'Create a session to start.',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: terminalForeground.withAlpha(180),
+                                ),
+                              ),
+                            )
+                          : TerminalView(
+                              terminal,
+                              controller: _terminalController,
+                              focusNode: _terminalFocusNode,
+                              scrollController: _terminalScrollController,
+                              autofocus: true,
+                              theme: terminalTheme,
+                              textStyle: terminalStyle,
+                              padding:
+                                  const EdgeInsets.fromLTRB(10, 8, 10, 12),
+                              backgroundOpacity: 0,
+                              cursorType: TerminalCursorType.block,
+                              keyboardType: TextInputType.text,
+                              keyboardAppearance: isLightTerminal
+                                  ? Brightness.light
+                                  : Brightness.dark,
+                              deleteDetection: true,
+                              hardwareKeyboardOnly: _hardwareKeyboardOnly,
+                              readOnly:
+                                  active == null || isEnded || isDisconnected,
+                            ),
+                    ),
+                    if (terminal != null && !_isTerminalAtBottom)
+                      Positioned(
+                        right: 12,
+                        bottom: 12,
+                        child: InkWell(
+                          onTap: _jumpToTerminalBottom,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: terminalOverlayBackground,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: terminalOverlayForeground
+                                    .withAlpha(isLightTerminal ? 40 : 70),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.vertical_align_bottom,
+                                  size: 14,
+                                  color: terminalOverlayForeground,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Bottom',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: terminalOverlayForeground,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Container(
+            padding: EdgeInsets.fromLTRB(
+              10,
+              6,
+              10,
+              _showKeyBar ? 10 : 6,
+            ),
+            decoration: const BoxDecoration(
+              color: dockBackground,
+              border: Border(
+                top: BorderSide(color: Color(0xFF1E293B)),
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Spacer(),
+                    IconButton(
+                      tooltip: _showKeyBar ? 'Hide keys' : 'Show keys',
+                      onPressed: () {
+                        setState(() {
+                          _showKeyBar = !_showKeyBar;
+                        });
+                      },
+                      icon: Icon(
+                        _showKeyBar
+                            ? Icons.keyboard_hide_outlined
+                            : Icons.keyboard_outlined,
+                        color: const Color(0xFFE2E8F0),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: toolActions
+                        .map(
+                          (action) => Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _TerminalToolButton(action: action),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                AnimatedCrossFade(
+                  duration: const Duration(milliseconds: 200),
+                  crossFadeState: _showKeyBar
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  firstChild: const SizedBox.shrink(),
+                  secondChild: Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Column(
+                      children: [
+                        _buildKeyRow(keyRowPrimary),
+                        if (!_showNavOnly) ...[
+                          const SizedBox(height: 6),
+                          _buildKeyRow(keyRowSecondary),
+                          if (isWideLayout && !_showFnRow) ...[
+                            const SizedBox(height: 6),
+                            _buildKeyRow(keyRowSecondaryAdvanced),
+                            if (_secondaryKeyPage == 2) ...[
+                              const SizedBox(height: 6),
+                              _buildKeyRow(keyRowSecondarySymbols),
+                            ],
+                          ],
                         ],
                       ],
                     ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _createSession,
-                    icon: const Icon(Icons.add),
-                    label: const Text('New session'),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            _ContextSectionCard(
-              title: 'Active session',
-              subtitle: active == null
-                  ? 'Create a session to start streaming.'
-                  : 'Session status and last activity.',
-              child: active == null
-                  ? const _EmptyHint(text: 'No active session selected.')
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _KeyValueRow(
-                          label: 'Name',
-                          value: active.session.label,
-                        ),
-                        _KeyValueRow(
-                          label: 'Status',
-                          value: active.session.status.toUpperCase(),
-                        ),
-                        _KeyValueRow(
-                          label: 'Created',
-                          value: _formatTimestamp(active.session.createdAt),
-                        ),
-                        if (lastCommand != null &&
-                            lastCommand.trim().isNotEmpty)
-                          _KeyValueRow(
-                            label: 'Last command',
-                            value: lastCommand,
-                          ),
-                        if (lastEventTime != null)
-                          _KeyValueRow(
-                            label: 'Last run',
-                            value: _formatTimestamp(lastEventTime),
-                          ),
-                      ],
-                    ),
-            ),
-            const SizedBox(height: 16),
-            if (isDisconnected) ...[
-              _TerminalReconnectCard(onReconnect: _attemptReconnect),
-              const SizedBox(height: 16),
-            ],
-            _ContextSectionCard(
-              title: 'Run command',
-              subtitle: 'Send a command to the desktop agent.',
-              child: active == null
-                  ? const _EmptyHint(text: 'Create a session to run commands.')
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextField(
-                          key: const Key('terminalCommandField'),
-                          controller: _commandController,
-                          enabled: !isClosed,
-                          decoration: InputDecoration(
-                            hintText: 'npm test',
-                            border: const OutlineInputBorder(),
-                            errorText: _commandError,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            FilledButton.icon(
-                              key: const Key('terminalRunButton'),
-                              onPressed: (isClosed || isDisconnected || _isSending)
-                                  ? null
-                                  : _runCommand,
-                              icon: _isSending
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.play_arrow),
-                              label: Text(
-                                _isSending
-                                    ? 'Sending'
-                                    : isRunning
-                                        ? 'Streaming'
-                                        : 'Run command',
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            OutlinedButton(
-                              onPressed: isClosed
-                                  ? null
-                                  : () => _commandController.clear(),
-                              child: const Text('Clear'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-            ),
-            const SizedBox(height: 16),
-            _ContextSectionCard(
-              title: 'Output streams',
-              subtitle: isRunning
-                  ? 'Streaming stdout and stderr separately.'
-                  : 'Latest output from this session.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _TerminalStreamPanel(
-                    label: 'STDOUT',
-                    entries: stdoutEntries,
-                    accentColor: const Color(0xFF2563EB),
-                    emptyText: 'No stdout captured yet.',
-                  ),
-                  const SizedBox(height: 12),
-                  _TerminalStreamPanel(
-                    label: 'STDERR',
-                    entries: stderrEntries,
-                    accentColor: const Color(0xFFDC2626),
-                    emptyText: 'No stderr captured yet.',
-                  ),
-                ],
-              ),
-            ),
-            if (aiInsight != null) ...[
-              const SizedBox(height: 16),
-              _AiInsightSummaryCard(insight: aiInsight),
-            ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -4539,6 +8348,7 @@ class TerminalSessionScreen extends StatelessWidget {
       agentBaseUrl: agentBaseUrl,
       initialSession: session,
       initialEvent: event,
+      agentId: session.agentId,
     );
   }
 }
@@ -4632,8 +8442,8 @@ class _TerminalSessionRow extends StatelessWidget {
                 const SizedBox(width: 8),
                 IconButton(
                   onPressed: onClose,
-                  icon: const Icon(Icons.close),
-                  tooltip: 'Close session',
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  tooltip: 'Kill session',
                 ),
               ],
             ],
@@ -4701,79 +8511,6 @@ class _TerminalReconnectCard extends StatelessWidget {
   }
 }
 
-class _TerminalStreamPanel extends StatelessWidget {
-  const _TerminalStreamPanel({
-    required this.label,
-    required this.entries,
-    required this.accentColor,
-    required this.emptyText,
-  });
-
-  final String label;
-  final List<TerminalOutputEntry> entries;
-  final Color accentColor;
-  final String emptyText;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: accentColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: accentColor,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (entries.isEmpty)
-            _EmptyHint(text: emptyText)
-          else
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: entries
-                  .map(
-                    (entry) => Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: SelectableText(
-                        entry.text,
-                        style: GoogleFonts.spaceMono(
-                          fontSize: 12,
-                          color: const Color(0xFF0F172A),
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _TerminalStatusStyle {
   const _TerminalStatusStyle(this.background, this.foreground);
 
@@ -4788,16 +8525,19 @@ _TerminalStatusStyle _terminalStatusStyle(String status) {
         Color(0xFFDBEAFE),
         Color(0xFF1D4ED8),
       );
+    case 'exited':
     case 'complete':
       return const _TerminalStatusStyle(
         Color(0xFFDCFCE7),
         Color(0xFF166534),
       );
+    case 'error':
     case 'disconnected':
       return const _TerminalStatusStyle(
         Color(0xFFFEE2E2),
         Color(0xFFB91C1C),
       );
+    case 'killed':
     case 'closed':
       return const _TerminalStatusStyle(
         Color(0xFFE2E8F0),
@@ -4910,43 +8650,120 @@ class VncSessionScreen extends StatefulWidget {
   State<VncSessionScreen> createState() => _VncSessionScreenState();
 }
 
+enum VncEncodingPreference {
+  zrle,
+  tight,
+  zlib,
+  raw,
+}
+
 class _VncSessionScreenState extends State<VncSessionScreen> {
-  static const Size _canvasSize = Size(1280, 720);
-  static const double _minZoom = 0.9;
-  static const double _maxZoom = 2.4;
+  static const List<double> _zoomStops = [0.5, 0.75, 1, 1.5, 2, 3];
   static const double _swipeThreshold = 120;
+  static const double _tapSlop = 8;
+  static const double _dragSlop = 6;
+  static const double _scrollStep = 18;
+  static const Duration _tapTimeout = Duration(milliseconds: 240);
+  static const Duration _dragHoldDelay = Duration(milliseconds: 360);
+  static const Duration _twoFingerTapTimeout = Duration(milliseconds: 240);
+  static const int _encodingRaw = 0;
+  static const int _encodingCopyRect = 1;
+  static const int _encodingZlib = 6;
+  static const int _encodingTight = 7;
+  static const int _encodingZrle = 16;
+  static const int _encodingCompressLevelBase = -256;
+  static const int _encodingQualityLevelBase = -32;
 
   late Offset _pointerPosition;
   late Offset _cameraCenter;
-  double _zoom = 1;
-  bool _trackpadMode = true;
+  int _zoomIndex = 2;
+  VncEncodingPreference _encodingPreference = VncEncodingPreference.zrle;
+  int _tightCompressionLevel = 6;
+  int _tightQualityLevel = 6;
+  bool _tightJpegEnabled = false;
   bool _isConnecting = false;
   String? _connectionError;
   Timer? _clickTimer;
+  Timer? _dragHoldTimer;
+  Timer? _focusTimer;
+  bool _showFocusPulse = false;
   bool _showClickPulse = false;
   double _swipeDistance = 0;
   late DateTime _lastUpdatedAt;
   http.Client? _httpClient;
   AgentCommandClient? _agentClient;
+  VncRfbClient? _vncClient;
+  ui.Image? _frameImage;
+  Size _frameSize = const Size(720, 1280);
+  bool _isDecoding = false;
+  VncFrame? _pendingFrame;
+  bool _controlsSheetOpen = false;
+  int _buttonMask = 0;
+  bool _isDragging = false;
+  Size _lastViewSize = Size.zero;
+  bool _directDragActive = false;
+  final Map<int, Offset> _activePointers = {};
+  Offset? _primaryDownPosition;
+  DateTime? _primaryDownTime;
+  Offset? _lastPrimaryPosition;
+  Offset? _twoFingerStartAverage;
+  DateTime? _twoFingerStartTime;
+  Offset? _lastScrollAverage;
+  bool _twoFingerTapPossible = false;
+  double _scrollAccumulator = 0;
+  bool _isFullscreen = false;
+  double _inputScaleX = 1;
+  double _inputScaleY = 1;
+  double _inputOffsetX = 0;
+  double _inputOffsetY = 0;
+  bool _directInputEnabled = false;
+  int? _selectedDisplayIndex;
+  List<VncDisplayInfo> _availableDisplays = const [];
+  bool _isAutoCalibrating = false;
+  int _calibrationStep = 0;
+  List<Offset> _calibrationTargets = const [];
+  final List<Offset> _calibrationSamples = [];
+  Timer? _calibrationSaveTimer;
+  Timer? _autoResizeTimer;
+  bool _autoSizedOnce = false;
+  double? _calibrationBackupScaleX;
+  double? _calibrationBackupScaleY;
+  double? _calibrationBackupOffsetX;
+  double? _calibrationBackupOffsetY;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
     _pointerPosition = Offset(
-      _canvasSize.width / 2,
-      _canvasSize.height / 2,
+      _frameSize.width / 2,
+      _frameSize.height / 2,
     );
-    _cameraCenter = _pointerPosition;
+    _cameraCenter = _applyInputCalibration(_pointerPosition);
+    _autoSizedOnce = false;
     _lastUpdatedAt = widget.event.createdAt;
     _configureAgentClient();
     _hydrateFromPayload();
+    unawaited(_loadDisplaySelection());
+    unawaited(_loadCalibration());
+    unawaited(_fetchDisplays());
     unawaited(_startStream());
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
     _clickTimer?.cancel();
+    _dragHoldTimer?.cancel();
+    _focusTimer?.cancel();
+    _calibrationSaveTimer?.cancel();
+    _autoResizeTimer?.cancel();
+    _vncClient?.close();
+    _frameImage?.dispose();
     _httpClient?.close();
+    if (_isFullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
@@ -4976,16 +8793,242 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     final zoomValue = widget.event.payload['zoom'];
     if (zoomValue is num) {
-      final normalized = zoomValue.toDouble().clamp(_minZoom, _maxZoom);
-      _zoom = normalized;
+      _zoomIndex = _closestZoomIndex(zoomValue.toDouble());
+    }
+  }
+
+  String _calibrationStorageKey() {
+    final agentId = widget.session.agentId ?? widget.session.id;
+    final displayIndex = _selectedDisplayIndex ?? 0;
+    return 'vnc_calibration:$agentId:$displayIndex';
+  }
+
+  Future<void> _loadCalibration() async {
+    final raw = await widget.storage.readKeyValue(_calibrationStorageKey());
+    if (!mounted) {
+      return;
+    }
+    if (raw == null || raw.trim().isEmpty) {
+      setState(() {
+        _inputScaleX = 1;
+        _inputScaleY = 1;
+        _inputOffsetX = 0;
+        _inputOffsetY = 0;
+        _cameraCenter = _applyInputCalibration(_pointerPosition);
+      });
+      _sendPointerEvent();
+      return;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return;
+      }
+      final scaleX = (decoded['scaleX'] as num?)?.toDouble();
+      final scaleY = (decoded['scaleY'] as num?)?.toDouble();
+      final offsetX = (decoded['offsetX'] as num?)?.toDouble();
+      final offsetY = (decoded['offsetY'] as num?)?.toDouble();
+      if (scaleX == null ||
+          scaleY == null ||
+          offsetX == null ||
+          offsetY == null) {
+        return;
+      }
+      setState(() {
+        _inputScaleX = scaleX;
+        _inputScaleY = scaleY;
+        _inputOffsetX = offsetX;
+        _inputOffsetY = offsetY;
+        _cameraCenter = _applyInputCalibration(_pointerPosition);
+      });
+      _sendPointerEvent();
+    } catch (_) {
+      return;
+    }
+  }
+
+  void _scheduleCalibrationSave() {
+    _calibrationSaveTimer?.cancel();
+    _calibrationSaveTimer = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_persistCalibration());
+    });
+  }
+
+  Future<void> _persistCalibration() async {
+    final payload = jsonEncode({
+      'scaleX': _inputScaleX,
+      'scaleY': _inputScaleY,
+      'offsetX': _inputOffsetX,
+      'offsetY': _inputOffsetY,
+    });
+    await widget.storage.writeKeyValue(_calibrationStorageKey(), payload);
+  }
+
+  Future<void> _resetCalibration() async {
+    setState(() {
+      _inputScaleX = 1;
+      _inputScaleY = 1;
+      _inputOffsetX = 0;
+      _inputOffsetY = 0;
+      _cameraCenter = _applyInputCalibration(_pointerPosition);
+    });
+    _sendPointerEvent();
+    await widget.storage.deleteKeyValue(_calibrationStorageKey());
+  }
+
+  String _displayStorageKey() {
+    final agentId = widget.session.agentId ?? widget.session.id;
+    return 'vnc_display:$agentId';
+  }
+
+  Future<void> _loadDisplaySelection() async {
+    final raw = await widget.storage.readKeyValue(_displayStorageKey());
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    final parsed = int.tryParse(raw);
+    if (parsed == null) {
+      return;
+    }
+    setState(() {
+      _selectedDisplayIndex = parsed;
+    });
+  }
+
+  Future<void> _persistDisplaySelection(int? index) async {
+    if (index == null) {
+      await widget.storage.deleteKeyValue(_displayStorageKey());
+      return;
+    }
+    await widget.storage.writeKeyValue(_displayStorageKey(), index.toString());
+  }
+
+  Future<void> _fetchDisplays() async {
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      return;
+    }
+    try {
+      final displays = await agentClient.fetchVncDisplays();
+      if (!mounted) {
+        return;
+      }
+      final previousIndex = _selectedDisplayIndex;
+      int? nextIndex = previousIndex;
+      if (displays.isNotEmpty) {
+        if (previousIndex == null ||
+            !displays.any((display) => display.index == previousIndex)) {
+          nextIndex = displays.first.index;
+        }
+      }
+      setState(() {
+        _availableDisplays = displays;
+        _selectedDisplayIndex = nextIndex;
+      });
+    if (nextIndex != previousIndex) {
+      unawaited(_persistDisplaySelection(nextIndex));
+      unawaited(_loadCalibration());
+      _autoSizedOnce = false;
+    }
+    } catch (_) {
+      return;
     }
   }
 
   String get _resolutionLabel =>
-      '${_canvasSize.width.toInt()}x${_canvasSize.height.toInt()}';
+      '${_frameSize.width.toInt()}x${_frameSize.height.toInt()}';
 
-  Future<void> _startStream() async {
-    if (_isConnecting) {
+  double get _zoom => _zoomStops[_zoomIndex];
+
+  int _closestZoomIndex(double value) {
+    var closest = 0;
+    var distance = double.infinity;
+    for (var index = 0; index < _zoomStops.length; index += 1) {
+      final delta = (_zoomStops[index] - value).abs();
+      if (delta < distance) {
+        distance = delta;
+        closest = index;
+      }
+    }
+    return closest;
+  }
+
+  Uri _buildVncWebsocketUri(VncSessionInfo info) {
+    final baseUri = Uri.parse(widget.agentBaseUrl!);
+    final scheme = baseUri.scheme == 'https' ? 'wss' : 'ws';
+    var basePath = baseUri.path;
+    if (basePath.isNotEmpty && !basePath.endsWith('/')) {
+      basePath = '$basePath/';
+    }
+    final wsPath = info.wsPath.startsWith('/') ? info.wsPath.substring(1) : info.wsPath;
+    final mergedPath = basePath.isEmpty ? '/$wsPath' : '$basePath$wsPath';
+    final queryParameters = Map<String, String>.from(baseUri.queryParameters);
+    queryParameters['token'] = info.token;
+    return baseUri.replace(
+      scheme: scheme,
+      path: mergedPath,
+      queryParameters: queryParameters,
+    );
+  }
+
+  void _handleFrame(VncFrame frame) {
+    if (!mounted || _isDisposed) {
+      return;
+    }
+    if (_isDecoding) {
+      _pendingFrame = frame;
+      return;
+    }
+    if (frame.width <= 0 || frame.height <= 0) {
+      return;
+    }
+    _isDecoding = true;
+    _pendingFrame = null;
+    final pixels = frame.pixels;
+    final expectedLength = frame.width * frame.height * 4;
+    final safePixels = pixels.length >= expectedLength
+        ? pixels.sublist(0, expectedLength)
+        : Uint8List.fromList(pixels);
+    ui.decodeImageFromPixels(
+      safePixels,
+      frame.width,
+      frame.height,
+      frame.format,
+      (image) {
+        if (!mounted || _isDisposed) {
+          image.dispose();
+          _isDecoding = false;
+          return;
+        }
+        setState(() {
+          _frameImage?.dispose();
+          _frameImage = image;
+          final newSize = Size(
+            frame.width.toDouble(),
+            frame.height.toDouble(),
+          );
+          if (newSize != _frameSize) {
+            _frameSize = newSize;
+            _pointerPosition = Offset(
+              _pointerPosition.dx.clamp(0, _frameSize.width),
+              _pointerPosition.dy.clamp(0, _frameSize.height),
+            );
+            _cameraCenter = _applyInputCalibration(_pointerPosition);
+          }
+        });
+        _isDecoding = false;
+        final pending = _pendingFrame;
+        _pendingFrame = null;
+        if (pending != null) {
+          _handleFrame(pending);
+        }
+      },
+      rowBytes: frame.width * 4,
+    );
+  }
+
+  Future<void> _startStream({Size? requestedSize}) async {
+    if (_isConnecting || _isDisposed) {
       return;
     }
     setState(() {
@@ -5003,19 +9046,46 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
 
     try {
-      await agentClient.sendVncCommand(
+      final desired = requestedSize ?? _preferredStreamSize();
+      final sessionInfo = await agentClient.sendVncCommand(
         action: 'start',
         sessionId: widget.session.id,
-        width: _canvasSize.width.toInt(),
-        height: _canvasSize.height.toInt(),
+        width: (desired?.width ?? _frameSize.width).round(),
+        height: (desired?.height ?? _frameSize.height).round(),
+        displayIndex: _selectedDisplayIndex,
       );
-      if (!mounted) {
+      final wsUri = _buildVncWebsocketUri(sessionInfo);
+      _vncClient?.close();
+      _vncClient = VncRfbClient(
+        uri: wsUri,
+        onFrame: _handleFrame,
+        onError: (message) => _setStreamFailure(message),
+        preferredEncodings: _buildEncodingList(),
+      );
+      await _vncClient!.connect();
+      if (!mounted || _isDisposed) {
         return;
       }
       setState(() {
         _isConnecting = false;
+        _frameSize = Size(
+          sessionInfo.width.toDouble(),
+          sessionInfo.height.toDouble(),
+        );
+        _pointerPosition = Offset(
+          _frameSize.width / 2,
+          _frameSize.height / 2,
+        );
+        _cameraCenter = _applyInputCalibration(_pointerPosition);
+        if (sessionInfo.displayIndex != null) {
+          _selectedDisplayIndex = sessionInfo.displayIndex;
+        }
       });
+      if (sessionInfo.displayIndex != null) {
+        unawaited(_persistDisplaySelection(sessionInfo.displayIndex));
+      }
       await _updateSession(status: 'connected');
+      _maybeAutoResizeStream();
     } on AgentCommandFailure catch (error) {
       await _setStreamFailure(error.message);
     } catch (error) {
@@ -5024,13 +9094,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }
 
   Future<void> _setStreamFailure(String message) async {
-    if (!mounted) {
+    if (!mounted || _isDisposed) {
       return;
     }
     setState(() {
       _isConnecting = false;
       _connectionError = message;
     });
+    _vncClient?.close();
     await _updateSession(status: 'failed', errorMessage: message);
   }
 
@@ -5038,7 +9109,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required String status,
     String? errorMessage,
   }) async {
-    if (!mounted) {
+    if (!mounted || _isDisposed) {
       return;
     }
     setState(() {
@@ -5087,15 +9158,33 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
   }
 
-  void _updateZoom(double value) {
+  void _updateZoomIndex(int index, {bool commit = false}) {
+    final clamped = index.clamp(0, _zoomStops.length - 1);
+    if (clamped == _zoomIndex) {
+      return;
+    }
+    final focus = _applyInputCalibration(_pointerPosition);
     setState(() {
-      _zoom = value.clamp(_minZoom, _maxZoom);
-      _cameraCenter = _pointerPosition;
+      _zoomIndex = clamped;
+      _cameraCenter = focus;
     });
+    _triggerFocusPulse();
+    if (commit) {
+      unawaited(_updateSession(status: _currentStatusLabel));
+    }
   }
 
-  void _commitZoom(double value) {
-    _updateZoom(value);
+  void _commitZoomIndex(int index) {
+    _updateZoomIndex(index, commit: true);
+  }
+
+  void _resetZoom() {
+    final focus = _applyInputCalibration(_pointerPosition);
+    setState(() {
+      _zoomIndex = _zoomStops.indexOf(1).clamp(0, _zoomStops.length - 1);
+      _cameraCenter = focus;
+    });
+    _triggerFocusPulse();
     unawaited(_updateSession(status: _currentStatusLabel));
   }
 
@@ -5123,35 +9212,532 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     });
   }
 
+  void _triggerFocusPulse() {
+    _focusTimer?.cancel();
+    setState(() {
+      _showFocusPulse = true;
+    });
+    _focusTimer = Timer(const Duration(milliseconds: 220), () {
+      if (mounted) {
+        setState(() {
+          _showFocusPulse = false;
+        });
+      }
+    });
+  }
+
+  Offset _applyTrackpadAcceleration(Offset delta, {double scale = 1}) {
+    final safeScale = scale <= 0 ? 1 : scale;
+    final distance = delta.distance / safeScale;
+    if (distance == 0) {
+      return delta;
+    }
+    final boost = (distance / 22).clamp(0.0, 2.5);
+    final factor = 1 + boost;
+    return delta * factor;
+  }
+
   void _movePointerBy(Offset delta) {
-    final scaled = delta / _zoom;
+    final viewSize = _lastViewSize;
+    if (viewSize.width <= 0 || viewSize.height <= 0) {
+      final accelerated = _applyTrackpadAcceleration(delta);
+      _setPointerPosition(_pointerPosition + accelerated / _zoom);
+      return;
+    }
+    final scale = _baseScale(viewSize) * _zoom;
+    if (scale == 0) {
+      return;
+    }
+    final accelerated = _applyTrackpadAcceleration(delta, scale: scale);
+    final scaled = accelerated / scale;
     _setPointerPosition(_pointerPosition + scaled);
   }
 
   void _setPointerPosition(Offset position) {
     final clamped = Offset(
-      position.dx.clamp(0, _canvasSize.width),
-      position.dy.clamp(0, _canvasSize.height),
+      position.dx.clamp(0, _frameSize.width),
+      position.dy.clamp(0, _frameSize.height),
     );
+    final adjusted = _applyInputCalibration(clamped);
     setState(() {
       _pointerPosition = clamped;
+      _cameraCenter = adjusted;
     });
+    _sendPointerEvent();
   }
 
-  void _movePointerTo(Offset localPosition, Size viewSize) {
-    final translation = _calculateTranslation(viewSize);
-    final content = (localPosition - translation) / _zoom;
-    _setPointerPosition(content);
+  Offset _applyInputCalibration(Offset position) {
+    final scaled = Offset(
+      position.dx * _inputScaleX + _inputOffsetX,
+      position.dy * _inputScaleY + _inputOffsetY,
+    );
+    return Offset(
+      scaled.dx.clamp(0, _frameSize.width),
+      scaled.dy.clamp(0, _frameSize.height),
+    );
+  }
+
+  Offset _effectivePointerPosition() {
+    return _applyInputCalibration(_pointerPosition);
+  }
+
+  double _baseScale(Size viewSize) {
+    if (_frameSize.width == 0) {
+      return 1;
+    }
+    return viewSize.width / _frameSize.width;
+  }
+
+  Offset _clampedCameraCenter() {
+    if (_frameSize.width == 0 || _frameSize.height == 0) {
+      return _cameraCenter;
+    }
+    final visibleWidth = _frameSize.width / _zoom;
+    final visibleHeight = _frameSize.height / _zoom;
+    final minX = visibleWidth >= _frameSize.width
+        ? _frameSize.width / 2
+        : visibleWidth / 2;
+    final maxX = visibleWidth >= _frameSize.width
+        ? _frameSize.width / 2
+        : _frameSize.width - visibleWidth / 2;
+    final minY = visibleHeight >= _frameSize.height
+        ? _frameSize.height / 2
+        : visibleHeight / 2;
+    final maxY = visibleHeight >= _frameSize.height
+        ? _frameSize.height / 2
+        : _frameSize.height - visibleHeight / 2;
+    return Offset(
+      _cameraCenter.dx.clamp(minX, maxX),
+      _cameraCenter.dy.clamp(minY, maxY),
+    );
   }
 
   Offset _calculateTranslation(Size viewSize) {
     final center = Offset(viewSize.width / 2, viewSize.height / 2);
-    return center - _cameraCenter * _zoom;
+    final scale = _baseScale(viewSize) * _zoom;
+    final camera = _clampedCameraCenter();
+    return center - camera * scale;
   }
 
   Offset _pointerToScreen(Size viewSize) {
+    final scale = _baseScale(viewSize) * _zoom;
     final translation = _calculateTranslation(viewSize);
-    return translation + _pointerPosition * _zoom;
+    return translation + _effectivePointerPosition() * scale;
+  }
+
+  Offset _frameToScreen(Offset framePosition, Size viewSize) {
+    final scale = _baseScale(viewSize) * _zoom;
+    final translation = _calculateTranslation(viewSize);
+    return translation + framePosition * scale;
+  }
+
+  Offset _screenToFrame(Offset screenPosition, Size viewSize) {
+    final scale = _baseScale(viewSize) * _zoom;
+    final translation = _calculateTranslation(viewSize);
+    if (scale == 0) {
+      return Offset.zero;
+    }
+    final raw = (screenPosition - translation) / scale;
+    return Offset(
+      raw.dx.clamp(0, _frameSize.width),
+      raw.dy.clamp(0, _frameSize.height),
+    );
+  }
+
+  void _sendPointerEvent() {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    final adjusted = _applyInputCalibration(_pointerPosition);
+    final maxX = _maxPointerX();
+    final maxY = _maxPointerY();
+    final x = adjusted.dx.round().clamp(0, maxX).toInt();
+    final y = adjusted.dy.round().clamp(0, maxY).toInt();
+    client.sendPointer(x: x, y: y, mask: _buttonMask);
+  }
+
+  List<int> _buildEncodingList() {
+    final ordered = <int>[];
+    switch (_encodingPreference) {
+      case VncEncodingPreference.zrle:
+        ordered.add(_encodingZrle);
+        break;
+      case VncEncodingPreference.tight:
+        ordered.add(_encodingTight);
+        break;
+      case VncEncodingPreference.zlib:
+        ordered.add(_encodingZlib);
+        break;
+      case VncEncodingPreference.raw:
+        ordered.add(_encodingRaw);
+        break;
+    }
+    const fallback = [
+      _encodingZrle,
+      _encodingTight,
+      _encodingZlib,
+      _encodingRaw,
+    ];
+    for (final encoding in fallback) {
+      if (!ordered.contains(encoding)) {
+        ordered.add(encoding);
+      }
+    }
+    if (!ordered.contains(_encodingCopyRect)) {
+      ordered.add(_encodingCopyRect);
+    }
+    if (ordered.contains(_encodingTight)) {
+      ordered.add(_encodingCompressLevelBase + _tightCompressionLevel);
+      if (_tightJpegEnabled) {
+        ordered.add(_encodingQualityLevelBase + _tightQualityLevel);
+      }
+    }
+    return ordered;
+  }
+
+  void _applyEncodingPreferences() {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    client.setEncodings(_buildEncodingList());
+  }
+
+  Size? _preferredStreamSize() {
+    if (!mounted) {
+      return null;
+    }
+    if (_lastViewSize.width <= 0 || _lastViewSize.height <= 0) {
+      return null;
+    }
+    double aspect = _frameSize.width > 0 && _frameSize.height > 0
+        ? _frameSize.width / _frameSize.height
+        : 1;
+    if (_selectedDisplayIndex != null && _availableDisplays.isNotEmpty) {
+      final display = _availableDisplays.firstWhere(
+        (item) => item.index == _selectedDisplayIndex,
+        orElse: () => _availableDisplays.first,
+      );
+      if (display.width > 0 && display.height > 0) {
+        aspect = display.width / display.height;
+      }
+    }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    var targetWidth = (_lastViewSize.width * dpr).round().clamp(1, 4096);
+    var targetHeight = (targetWidth / aspect).round().clamp(1, 4096);
+    final maxHeight = (_lastViewSize.height * dpr).round();
+    if (targetHeight > maxHeight && maxHeight > 0) {
+      targetHeight = maxHeight;
+      targetWidth = (targetHeight * aspect).round().clamp(1, 4096);
+    }
+    return Size(targetWidth.toDouble(), targetHeight.toDouble());
+  }
+
+  void _maybeAutoResizeStream() {
+    if (!mounted || _isDisposed) {
+      return;
+    }
+    if (_autoSizedOnce || _isConnecting || _vncClient == null) {
+      return;
+    }
+    final desired = _preferredStreamSize();
+    if (desired == null) {
+      return;
+    }
+    final delta = (desired.width - _frameSize.width).abs() +
+        (desired.height - _frameSize.height).abs();
+    if (delta < 40) {
+      _autoSizedOnce = true;
+      return;
+    }
+    _autoSizedOnce = true;
+    _autoResizeTimer?.cancel();
+    _autoResizeTimer = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      unawaited(_startStream(requestedSize: desired));
+    });
+  }
+
+  void _sendClick(int mask) {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    _buttonMask = mask;
+    _sendPointerEvent();
+    _buttonMask = 0;
+    _sendPointerEvent();
+    _triggerClickPulse();
+  }
+
+  void _sendScrollStep(double direction) {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    final adjusted = _applyInputCalibration(_pointerPosition);
+    final maxX = _maxPointerX();
+    final maxY = _maxPointerY();
+    final x = adjusted.dx.round().clamp(0, maxX).toInt();
+    final y = adjusted.dy.round().clamp(0, maxY).toInt();
+    client.sendScroll(x: x, y: y, delta: direction.isNegative ? -1 : 1);
+  }
+
+  int _maxPointerX() {
+    final max = _frameSize.width.floor() - 1;
+    return max < 0 ? 0 : max;
+  }
+
+  int _maxPointerY() {
+    final max = _frameSize.height.floor() - 1;
+    return max < 0 ? 0 : max;
+  }
+
+  void _scheduleDragHold() {
+    _dragHoldTimer?.cancel();
+    _dragHoldTimer = Timer(_dragHoldDelay, () {
+      if (_activePointers.length == 1 && !_isDragging) {
+        _isDragging = true;
+        _buttonMask |= 1;
+        _sendPointerEvent();
+      }
+    });
+  }
+
+  void _cancelDragHold() {
+    _dragHoldTimer?.cancel();
+    _dragHoldTimer = null;
+  }
+
+  void _endDrag() {
+    if (!_isDragging) {
+      return;
+    }
+    _isDragging = false;
+    _buttonMask &= ~1;
+    _sendPointerEvent();
+  }
+
+  Offset _averagePointerPosition() {
+    if (_activePointers.isEmpty) {
+      return Offset.zero;
+    }
+    var sum = Offset.zero;
+    for (final position in _activePointers.values) {
+      sum += position;
+    }
+    return sum / _activePointers.length.toDouble();
+  }
+
+  bool _isTapCandidate(DateTime now) {
+    if (_primaryDownTime == null || _primaryDownPosition == null) {
+      return false;
+    }
+    if (now.difference(_primaryDownTime!) > _tapTimeout) {
+      return false;
+    }
+    final last = _lastPrimaryPosition ?? _primaryDownPosition!;
+    return (last - _primaryDownPosition!).distance <= _tapSlop;
+  }
+
+  void _resetPointerTracking() {
+    _primaryDownPosition = null;
+    _primaryDownTime = null;
+    _lastPrimaryPosition = null;
+    _twoFingerStartAverage = null;
+    _twoFingerStartTime = null;
+    _lastScrollAverage = null;
+    _twoFingerTapPossible = false;
+    _scrollAccumulator = 0;
+    _cancelDragHold();
+  }
+
+  void _handleTrackpadPointerDown(PointerDownEvent event) {
+    if (_connectionError != null || _isConnecting) {
+      return;
+    }
+    _activePointers[event.pointer] = event.position;
+    if (_activePointers.length == 1) {
+      _primaryDownPosition = event.position;
+      _primaryDownTime = DateTime.now();
+      _lastPrimaryPosition = event.position;
+      _scheduleDragHold();
+    } else if (_activePointers.length == 2) {
+      _cancelDragHold();
+      _twoFingerTapPossible = true;
+      _twoFingerStartTime = DateTime.now();
+      _twoFingerStartAverage = _averagePointerPosition();
+      _lastScrollAverage = _twoFingerStartAverage;
+      _scrollAccumulator = 0;
+    } else {
+      _cancelDragHold();
+    }
+  }
+
+  void _handleTrackpadPointerMove(PointerMoveEvent event) {
+    if (_connectionError != null || _isConnecting) {
+      return;
+    }
+    if (!_activePointers.containsKey(event.pointer)) {
+      return;
+    }
+    _activePointers[event.pointer] = event.position;
+    if (_activePointers.length == 1) {
+      final last = _lastPrimaryPosition ?? event.position;
+      final delta = event.position - last;
+      if (_primaryDownPosition != null &&
+          (event.position - _primaryDownPosition!).distance > _dragSlop) {
+        _cancelDragHold();
+      }
+      if (delta.distance != 0) {
+        _movePointerBy(delta);
+      }
+      _lastPrimaryPosition = event.position;
+    } else if (_activePointers.length == 2) {
+      final average = _averagePointerPosition();
+      final lastAverage = _lastScrollAverage ?? average;
+      final delta = average - lastAverage;
+      _lastScrollAverage = average;
+      if (_twoFingerTapPossible && _twoFingerStartAverage != null) {
+        if ((average - _twoFingerStartAverage!).distance > _tapSlop) {
+          _twoFingerTapPossible = false;
+        }
+      }
+      if (delta.dy.abs() > 0) {
+        _scrollAccumulator += delta.dy;
+        while (_scrollAccumulator.abs() >= _scrollStep) {
+          final direction = _scrollAccumulator.sign;
+          _scrollAccumulator -= _scrollStep * direction;
+          _sendScrollStep(direction);
+        }
+      }
+    }
+  }
+
+  void _handleTrackpadPointerUp(PointerUpEvent event) {
+    if (!_activePointers.containsKey(event.pointer)) {
+      return;
+    }
+    final wasTwoFinger = _activePointers.length >= 2;
+    _activePointers.remove(event.pointer);
+    if (_activePointers.isEmpty) {
+      final now = DateTime.now();
+      if (_isDragging) {
+        _endDrag();
+      } else if (wasTwoFinger &&
+          _twoFingerTapPossible &&
+          _twoFingerStartTime != null &&
+          now.difference(_twoFingerStartTime!) <= _twoFingerTapTimeout) {
+        _sendClick(4);
+      } else if (!wasTwoFinger && _isTapCandidate(now)) {
+        _sendClick(1);
+      }
+      _resetPointerTracking();
+    } else if (_activePointers.length == 1) {
+      final remaining = _activePointers.values.first;
+      _primaryDownPosition = remaining;
+      _primaryDownTime = DateTime.now();
+      _lastPrimaryPosition = remaining;
+      _twoFingerTapPossible = false;
+      _scheduleDragHold();
+    }
+  }
+
+  void _handleTrackpadPointerCancel(PointerCancelEvent event) {
+    _activePointers.remove(event.pointer);
+    _endDrag();
+    _resetPointerTracking();
+  }
+
+  void _sendKeyPress(int keysym) {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    client.sendKey(down: true, keysym: keysym);
+    client.sendKey(down: false, keysym: keysym);
+  }
+
+  Future<void> _showKeyboardInput() async {
+    if (!mounted) {
+      return;
+    }
+    if (_vncClient == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    final controller = TextEditingController();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            16 + MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Send keystrokes',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: 3,
+                minLines: 1,
+                textInputAction: TextInputAction.send,
+                decoration: const InputDecoration(
+                  hintText: 'Type and send to the remote session',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (value) {
+                  final trimmed = value.trim();
+                  if (trimmed.isNotEmpty) {
+                    _vncClient?.sendText(trimmed);
+                  }
+                  Navigator.of(context).maybePop();
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: () {
+                      final trimmed = controller.text.trim();
+                      if (trimmed.isNotEmpty) {
+                        _vncClient?.sendText(trimmed);
+                      }
+                      Navigator.of(context).maybePop();
+                    },
+                    child: const Text('Send'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _handleSwipeUpdate(DragUpdateDetails details) {
@@ -5165,9 +9751,1045 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _swipeDistance = 0;
   }
 
+  Future<void> _setFullscreen(bool value) async {
+    if (!mounted || _isFullscreen == value) {
+      return;
+    }
+    setState(() {
+      _isFullscreen = value;
+    });
+    if (value) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  }
+
+  void _startAutoCalibration() {
+    final margin = (_frameSize.shortestSide * 0.12).clamp(24.0, 96.0);
+    final targets = [
+      Offset(margin, margin),
+      Offset(_frameSize.width - margin, margin),
+      Offset(_frameSize.width - margin, _frameSize.height - margin),
+      Offset(margin, _frameSize.height - margin),
+    ];
+    setState(() {
+      _calibrationBackupScaleX = _inputScaleX;
+      _calibrationBackupScaleY = _inputScaleY;
+      _calibrationBackupOffsetX = _inputOffsetX;
+      _calibrationBackupOffsetY = _inputOffsetY;
+      _inputScaleX = 1;
+      _inputScaleY = 1;
+      _inputOffsetX = 0;
+      _inputOffsetY = 0;
+      _cameraCenter = _applyInputCalibration(_pointerPosition);
+      _isAutoCalibrating = true;
+      _calibrationStep = 0;
+      _calibrationTargets = targets;
+      _calibrationSamples.clear();
+    });
+    _sendPointerEvent();
+  }
+
+  void _cancelAutoCalibration() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isAutoCalibrating = false;
+      _calibrationStep = 0;
+      _calibrationTargets = const [];
+      _calibrationSamples.clear();
+      if (_calibrationBackupScaleX != null &&
+          _calibrationBackupScaleY != null &&
+          _calibrationBackupOffsetX != null &&
+          _calibrationBackupOffsetY != null) {
+        _inputScaleX = _calibrationBackupScaleX!;
+        _inputScaleY = _calibrationBackupScaleY!;
+        _inputOffsetX = _calibrationBackupOffsetX!;
+        _inputOffsetY = _calibrationBackupOffsetY!;
+      }
+      _cameraCenter = _applyInputCalibration(_pointerPosition);
+      _calibrationBackupScaleX = null;
+      _calibrationBackupScaleY = null;
+      _calibrationBackupOffsetX = null;
+      _calibrationBackupOffsetY = null;
+    });
+    _sendPointerEvent();
+  }
+
+  void _captureCalibrationPoint() {
+    if (!_isAutoCalibrating || _calibrationTargets.isEmpty) {
+      return;
+    }
+    _calibrationSamples.add(_pointerPosition);
+    if (_calibrationSamples.length < _calibrationTargets.length) {
+      setState(() {
+        _calibrationStep =
+            (_calibrationStep + 1).clamp(0, _calibrationTargets.length - 1);
+      });
+      return;
+    }
+    if (_calibrationSamples.length >= 2) {
+      final result = _solveLinearCalibration(
+        _calibrationSamples,
+        _calibrationTargets,
+      );
+      final scaleX = result.scaleX;
+      final scaleY = result.scaleY;
+      final offsetX = result.offsetX;
+      final offsetY = result.offsetY;
+      setState(() {
+        _inputScaleX = scaleX;
+        _inputScaleY = scaleY;
+        _inputOffsetX = offsetX;
+        _inputOffsetY = offsetY;
+        _cameraCenter = _applyInputCalibration(_pointerPosition);
+        _calibrationBackupScaleX = null;
+        _calibrationBackupScaleY = null;
+        _calibrationBackupOffsetX = null;
+        _calibrationBackupOffsetY = null;
+      });
+      unawaited(_persistCalibration());
+    }
+    _cancelAutoCalibration();
+  }
+
+  _CalibrationResult _solveLinearCalibration(
+    List<Offset> samples,
+    List<Offset> targets,
+  ) {
+    final count = samples.length.clamp(2, targets.length);
+    double sumSX = 0;
+    double sumSY = 0;
+    double sumTX = 0;
+    double sumTY = 0;
+    for (var i = 0; i < count; i += 1) {
+      sumSX += samples[i].dx;
+      sumSY += samples[i].dy;
+      sumTX += targets[i].dx;
+      sumTY += targets[i].dy;
+    }
+    final meanSX = sumSX / count;
+    final meanSY = sumSY / count;
+    final meanTX = sumTX / count;
+    final meanTY = sumTY / count;
+
+    double varSX = 0;
+    double varSY = 0;
+    double covX = 0;
+    double covY = 0;
+    for (var i = 0; i < count; i += 1) {
+      final dx = samples[i].dx - meanSX;
+      final dy = samples[i].dy - meanSY;
+      varSX += dx * dx;
+      varSY += dy * dy;
+      covX += dx * (targets[i].dx - meanTX);
+      covY += dy * (targets[i].dy - meanTY);
+    }
+
+    var scaleX = varSX.abs() < 0.0001 ? 1.0 : covX / varSX;
+    var scaleY = varSY.abs() < 0.0001 ? 1.0 : covY / varSY;
+    if (scaleX.isNaN || scaleX.isInfinite) {
+      scaleX = 1;
+    }
+    if (scaleY.isNaN || scaleY.isInfinite) {
+      scaleY = 1;
+    }
+    scaleX = scaleX.clamp(0.5, 2.0);
+    scaleY = scaleY.clamp(0.5, 2.0);
+
+    var offsetX = meanTX - scaleX * meanSX;
+    var offsetY = meanTY - scaleY * meanSY;
+    final maxOffsetX = _frameSize.width * 0.5;
+    final maxOffsetY = _frameSize.height * 0.5;
+    offsetX = offsetX.clamp(-maxOffsetX, maxOffsetX);
+    offsetY = offsetY.clamp(-maxOffsetY, maxOffsetY);
+
+    return _CalibrationResult(
+      scaleX: scaleX,
+      scaleY: scaleY,
+      offsetX: offsetX,
+      offsetY: offsetY,
+    );
+  }
+
+  Widget _buildVncCanvas({
+    required ThemeData theme,
+    required bool isInteractive,
+    required bool isLandscape,
+    required EdgeInsets safePadding,
+    bool isFullscreen = false,
+  }) {
+    return AspectRatio(
+      aspectRatio: _frameSize.width / _frameSize.height,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewSize = Size(
+            constraints.maxWidth,
+            constraints.maxHeight,
+          );
+          _lastViewSize = viewSize;
+          if (isInteractive) {
+            _maybeAutoResizeStream();
+          }
+          final pointerScreen = _pointerToScreen(viewSize);
+          final targetScreen = _isAutoCalibrating && _calibrationTargets.isNotEmpty
+              ? _frameToScreen(
+                  _calibrationTargets[_calibrationStep
+                      .clamp(0, _calibrationTargets.length - 1)],
+                  viewSize,
+                )
+              : null;
+          final translation = _calculateTranslation(viewSize);
+          final scale = _baseScale(viewSize) * _zoom;
+          final hasFrame = _frameImage != null;
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
+            child: Stack(
+              children: [
+                const Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Color(0xFF0B1120),
+                          Color(0xFF1E293B),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                  ),
+                ),
+                if (hasFrame)
+                  Positioned.fill(
+                    child: Transform(
+                      transform: Matrix4.identity()
+                        ..translateByDouble(
+                          translation.dx,
+                          translation.dy,
+                          0,
+                          1,
+                        )
+                        ..scaleByDouble(scale, scale, 1, 1),
+                      child: SizedBox(
+                        width: _frameSize.width,
+                        height: _frameSize.height,
+                        child: RawImage(
+                          image: _frameImage,
+                          fit: BoxFit.fill,
+                          filterQuality: FilterQuality.medium,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (!hasFrame)
+                  Center(
+                    child: Text(
+                      'Waiting for frames...',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                if (isInteractive && _directInputEnabled)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (details) {
+                        final framePos =
+                            _screenToFrame(details.localPosition, viewSize);
+                        _setPointerPosition(framePos);
+                        _sendClick(1);
+                      },
+                      onPanStart: (details) {
+                        _directDragActive = true;
+                        _buttonMask |= 1;
+                        final framePos =
+                            _screenToFrame(details.localPosition, viewSize);
+                        _setPointerPosition(framePos);
+                        _sendPointerEvent();
+                      },
+                      onPanUpdate: (details) {
+                        if (!_directDragActive) {
+                          return;
+                        }
+                        final framePos =
+                            _screenToFrame(details.localPosition, viewSize);
+                        _setPointerPosition(framePos);
+                      },
+                      onPanEnd: (_) {
+                        if (!_directDragActive) {
+                          return;
+                        }
+                        _directDragActive = false;
+                        _buttonMask &= ~1;
+                        _sendPointerEvent();
+                      },
+                      onPanCancel: () {
+                        if (!_directDragActive) {
+                          return;
+                        }
+                        _directDragActive = false;
+                        _buttonMask &= ~1;
+                        _sendPointerEvent();
+                      },
+                    ),
+                  ),
+                if (!isLandscape)
+                  Positioned(
+                    right: 12,
+                    bottom: 12,
+                    child: _VncShortcutOverlay(
+                      enabled: isInteractive,
+                      onEsc: () => _sendKeyPress(0xff1b),
+                      onCmd: () => _sendKeyPress(0xffe7),
+                      onTab: () => _sendKeyPress(0xff09),
+                      onCtrl: () => _sendKeyPress(0xffe3),
+                      onKeyboard: _showKeyboardInput,
+                    ),
+                  ),
+                if (isLandscape)
+                  Positioned(
+                    right: 12 + safePadding.right,
+                    bottom: 12 + safePadding.bottom,
+                    child: Tooltip(
+                      message: 'Controls',
+                      child: FloatingActionButton.small(
+                        heroTag: 'vncControlsFab-${widget.session.id}',
+                        onPressed: () => _openLandscapeControls(
+                          isInteractive: isInteractive,
+                        ),
+                        backgroundColor: isInteractive
+                            ? Colors.black.withAlpha(170)
+                            : Colors.black.withAlpha(100),
+                        foregroundColor: Colors.white,
+                        child: Icon(
+                          _controlsSheetOpen ? Icons.close : Icons.tune,
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  left: 12,
+                  top: 12,
+                  child: _VncOverlayIconButton(
+                    icon: _isFullscreen
+                        ? Icons.fullscreen_exit
+                        : Icons.fullscreen,
+                    label: _isFullscreen ? 'Exit' : 'Full',
+                    onPressed: () => _setFullscreen(!_isFullscreen),
+                  ),
+                ),
+                Positioned(
+                  right: 12,
+                  top: 12,
+                  child: _VncZoomBadge(value: _zoom),
+                ),
+                if (!isInteractive)
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black.withAlpha(80),
+                      child: Center(
+                        child: Text(
+                          _connectionError != null
+                              ? 'Stream unavailable'
+                              : 'Connecting...',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_isAutoCalibrating && targetScreen != null)
+                  Positioned(
+                    left: targetScreen.dx - 18,
+                    top: targetScreen.dy - 18,
+                    child: const _CalibrationTarget(),
+                  ),
+                if (_isAutoCalibrating)
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    top: 56,
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(160),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white.withAlpha(40)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '自动校准 ${_calibrationStep + 1}/${_calibrationTargets.length}',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '依次对准四个角标记，然后点“记录当前点”。',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white70,
+                                ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: _cancelAutoCalibration,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.white70,
+                                ),
+                                child: const Text('取消'),
+                              ),
+                              const Spacer(),
+                              FilledButton(
+                                onPressed: _captureCalibrationPoint,
+                                child: Text(
+                                  _calibrationStep + 1 >=
+                                          _calibrationTargets.length
+                                      ? '完成'
+                                      : '记录当前点',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (isInteractive)
+                  Positioned(
+                    left: pointerScreen.dx - 10,
+                    top: pointerScreen.dy - 10,
+                    child: _VncPointer(
+                      isClicking: _showClickPulse,
+                      isFocusing: _showFocusPulse,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTrackpadControls({
+    required bool isInteractive,
+    bool showCalibrationAction = true,
+    bool glassStyle = false,
+  }) {
+    final trackpadEnabled = isInteractive && !_directInputEnabled;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '输入模式',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 6),
+        ToggleButtons(
+          isSelected: [_directInputEnabled == false, _directInputEnabled == true],
+          onPressed: isInteractive
+              ? (index) {
+                  setState(() {
+                    _directInputEnabled = index == 1;
+                  });
+                }
+              : null,
+          borderRadius: BorderRadius.circular(12),
+          constraints: const BoxConstraints(minWidth: 96, minHeight: 36),
+          children: const [
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text('触控板'),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text('直接触摸'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_directInputEnabled)
+          Text(
+            '提示：直接在 VNC 画面上点击/拖动控制远端。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF94A3B8),
+                ),
+          ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 200,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 52,
+                child: _VncZoomBar(
+                  stops: _zoomStops,
+                  index: _zoomIndex,
+                  enabled: isInteractive,
+                  glassStyle: glassStyle,
+                  onIndexChanged: _updateZoomIndex,
+                  onIndexCommitted: _commitZoomIndex,
+                  onReset: _resetZoom,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _VncTrackpadSurface(
+                  enabled: trackpadEnabled,
+                  glassStyle: glassStyle,
+                  disabledMessage:
+                      _directInputEnabled ? 'Direct touch enabled' : null,
+                  onPointerDown: _handleTrackpadPointerDown,
+                  onPointerMove: _handleTrackpadPointerMove,
+                  onPointerUp: _handleTrackpadPointerUp,
+                  onPointerCancel: _handleTrackpadPointerCancel,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildGestureHints(glassStyle: glassStyle),
+        const SizedBox(height: 12),
+        Text(
+          '编码与质量',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<VncEncodingPreference>(
+          value: _encodingPreference,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: VncEncodingPreference.zrle,
+              child: Text('ZRLE（默认）'),
+            ),
+            DropdownMenuItem(
+              value: VncEncodingPreference.tight,
+              child: Text('Tight（可调压缩）'),
+            ),
+            DropdownMenuItem(
+              value: VncEncodingPreference.zlib,
+              child: Text('Zlib（兼容）'),
+            ),
+            DropdownMenuItem(
+              value: VncEncodingPreference.raw,
+              child: Text('Raw（无压缩）'),
+            ),
+          ],
+          onChanged: isInteractive
+              ? (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() {
+                    _encodingPreference = value;
+                  });
+                  _applyEncodingPreferences();
+                }
+              : null,
+        ),
+        const SizedBox(height: 8),
+        _CalibrationSlider(
+          label: '压缩级别 (${_tightCompressionLevel})',
+          value: _tightCompressionLevel.toDouble(),
+          min: 0,
+          max: 9,
+          enabled: isInteractive,
+          labelColor: glassStyle ? Colors.white70 : null,
+          onChanged: (value) {
+            setState(() {
+              _tightCompressionLevel = value.round().clamp(0, 9);
+            });
+            _applyEncodingPreferences();
+          },
+        ),
+        if (_encodingPreference == VncEncodingPreference.tight) ...[
+          SwitchListTile.adaptive(
+            title: const Text('JPEG 低带宽'),
+            subtitle: const Text('开启后画质会有损'),
+            value: _tightJpegEnabled,
+            onChanged: isInteractive
+                ? (value) {
+                    setState(() {
+                      _tightJpegEnabled = value;
+                    });
+                    _applyEncodingPreferences();
+                  }
+                : null,
+          ),
+          if (_tightJpegEnabled)
+            _CalibrationSlider(
+              label: 'JPEG 质量 (${_tightQualityLevel})',
+              value: _tightQualityLevel.toDouble(),
+              min: 0,
+              max: 9,
+              enabled: isInteractive,
+              labelColor: glassStyle ? Colors.white70 : null,
+              onChanged: (value) {
+                setState(() {
+                  _tightQualityLevel = value.round().clamp(0, 9);
+                });
+                _applyEncodingPreferences();
+              },
+            ),
+        ],
+        if (showCalibrationAction) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () =>
+                  _openCalibrationSheet(isInteractive: isInteractive),
+              icon: const Icon(Icons.tune),
+              label: const Text('校准触控坐标'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed:
+                  isInteractive ? () => unawaited(_resetCalibration()) : null,
+              icon: const Icon(Icons.restart_alt),
+              label: const Text('重置校准'),
+            ),
+          ),
+          if (_availableDisplays.length > 1) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _openDisplayPicker,
+                icon: const Icon(Icons.monitor),
+                label: const Text('选择显示器'),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildGestureHints({bool glassStyle = false}) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _VncGestureHint(
+          icon: Icons.open_with,
+          label: 'Move',
+          glassStyle: glassStyle,
+        ),
+        _VncGestureHint(
+          icon: Icons.touch_app,
+          label: 'Tap',
+          glassStyle: glassStyle,
+        ),
+        _VncGestureHint(
+          icon: Icons.swap_vert,
+          label: 'Scroll',
+          glassStyle: glassStyle,
+        ),
+        _VncGestureHint(
+          icon: Icons.drag_indicator,
+          label: 'Hold to drag',
+          glassStyle: glassStyle,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openLandscapeControls({required bool isInteractive}) async {
+    if (_controlsSheetOpen) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _controlsSheetOpen = true;
+    });
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              16 + MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Container(
+                  color: Colors.black.withAlpha(140),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 42,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withAlpha(160),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Controls',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _VncControlAction(
+                                icon: Icons.keyboard,
+                                label: 'Keyboard',
+                                onPressed:
+                                    isInteractive ? _showKeyboardInput : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.close,
+                                label: 'Esc',
+                                onPressed: isInteractive
+                                    ? () => _sendKeyPress(0xff1b)
+                                    : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.keyboard_command_key,
+                                label: 'Cmd',
+                                onPressed: isInteractive
+                                    ? () => _sendKeyPress(0xffe7)
+                                    : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.keyboard_tab,
+                                label: 'Tab',
+                                onPressed: isInteractive
+                                    ? () => _sendKeyPress(0xff09)
+                                    : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.keyboard_control_key,
+                                label: 'Ctrl',
+                                onPressed: isInteractive
+                                    ? () => _sendKeyPress(0xffe3)
+                                    : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.zoom_out_map,
+                                label: 'Reset zoom',
+                                onPressed: isInteractive ? _resetZoom : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.monitor,
+                                label: '显示器',
+                                onPressed: _availableDisplays.length > 1
+                                    ? _openDisplayPicker
+                                    : null,
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.tune,
+                                label: '校准',
+                                onPressed: () => _openCalibrationSheet(
+                                  isInteractive: isInteractive,
+                                ),
+                                glassStyle: true,
+                              ),
+                              _VncControlAction(
+                                icon: Icons.restart_alt,
+                                label: '重置校准',
+                                onPressed: () =>
+                                    unawaited(_resetCalibration()),
+                                glassStyle: true,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _buildTrackpadControls(
+                            isInteractive: isInteractive,
+                            showCalibrationAction: false,
+                            glassStyle: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _controlsSheetOpen = false;
+    });
+  }
+
+  Future<void> _openCalibrationSheet({required bool isInteractive}) async {
+    if (!mounted) {
+      return;
+    }
+    final maxOffsetX = _frameSize.width * 0.2;
+    final maxOffsetY = _frameSize.height * 0.2;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              void updateState(VoidCallback fn) {
+                if (mounted) {
+                  setState(() {
+                    fn();
+                    _cameraCenter = _applyInputCalibration(_pointerPosition);
+                  });
+                  setSheetState(() {});
+                  _scheduleCalibrationSave();
+                  _sendPointerEvent();
+                }
+              }
+
+              return SingleChildScrollView(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    12,
+                    20,
+                    16 + MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE2E8F0),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '输入校准',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF0F172A),
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '调节缩放与偏移，让触摸板光标与远端光标对齐。',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF64748B),
+                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: isInteractive
+                            ? () {
+                                Navigator.of(context).maybePop();
+                                _startAutoCalibration();
+                              }
+                            : null,
+                        icon: const Icon(Icons.auto_fix_high),
+                        label: const Text('自动校准（四点）'),
+                      ),
+                      const SizedBox(height: 16),
+                      _CalibrationSlider(
+                        label: 'X 缩放',
+                        value: _inputScaleX,
+                        min: 0.7,
+                        max: 1.3,
+                        enabled: isInteractive,
+                        onChanged: (value) =>
+                            updateState(() => _inputScaleX = value),
+                      ),
+                      _CalibrationSlider(
+                        label: 'Y 缩放',
+                        value: _inputScaleY,
+                        min: 0.7,
+                        max: 1.3,
+                        enabled: isInteractive,
+                        onChanged: (value) =>
+                            updateState(() => _inputScaleY = value),
+                      ),
+                      _CalibrationSlider(
+                        label: 'X 偏移 (${_inputOffsetX.round()}px)',
+                        value: _inputOffsetX,
+                        min: -maxOffsetX,
+                        max: maxOffsetX,
+                        enabled: isInteractive,
+                        onChanged: (value) =>
+                            updateState(() => _inputOffsetX = value),
+                      ),
+                      _CalibrationSlider(
+                        label: 'Y 偏移 (${_inputOffsetY.round()}px)',
+                        value: _inputOffsetY,
+                        min: -maxOffsetY,
+                        max: maxOffsetY,
+                        enabled: isInteractive,
+                        onChanged: (value) =>
+                            updateState(() => _inputOffsetY = value),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            child: const Text('完成'),
+                          ),
+                          const Spacer(),
+                          OutlinedButton.icon(
+                            onPressed: isInteractive
+                                ? () {
+                                    _resetCalibration();
+                                    setSheetState(() {});
+                                  }
+                                : null,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('重置'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openDisplayPicker() async {
+    if (!mounted) {
+      return;
+    }
+    if (_availableDisplays.isEmpty) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '选择显示器',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0F172A),
+                      ),
+                ),
+                const SizedBox(height: 12),
+                ..._availableDisplays.map((display) {
+                  final isSelected = _selectedDisplayIndex == display.index;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(display.label),
+                    trailing:
+                        isSelected ? const Icon(Icons.check) : const SizedBox(),
+                    onTap: () async {
+                      setState(() {
+                        _selectedDisplayIndex = display.index;
+                      });
+                      final navigator = Navigator.of(context);
+                      await _persistDisplaySelection(display.index);
+                      await _loadCalibration();
+                      if (!mounted) {
+                        return;
+                      }
+                      navigator.maybePop();
+                      unawaited(_startStream());
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final safePadding = MediaQuery.of(context).padding;
     final target = widget.event.payload['target']?.toString();
     final targetLabel =
         target == null || target.trim().isEmpty ? 'Remote desktop' : target;
@@ -5186,7 +10808,52 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         : _isConnecting
             ? const Color(0xFF92400E)
             : const Color(0xFF166534);
-    final isInteractive = _connectionError == null && !_isConnecting;
+    final isInteractive =
+        _connectionError == null && !_isConnecting && _vncClient != null;
+    final displayLabel = _selectedDisplayIndex == null
+        ? null
+        : _availableDisplays
+            .firstWhere(
+              (display) => display.index == _selectedDisplayIndex,
+              orElse: () => VncDisplayInfo(
+                index: _selectedDisplayIndex ?? 0,
+                width: _frameSize.width.toInt(),
+                height: _frameSize.height.toInt(),
+                isPrimary: false,
+              ),
+            )
+            .label;
+
+    if (_isFullscreen) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: _buildVncCanvas(
+                      theme: theme,
+                      isInteractive: isInteractive,
+                      isLandscape: isLandscape,
+                      safePadding: safePadding,
+                      isFullscreen: true,
+                    ),
+                  ),
+                ),
+              ),
+              if (!isLandscape)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: _buildTrackpadControls(isInteractive: isInteractive),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return _TimelineDetailScaffold(
       title: 'VNC Viewer',
@@ -5278,6 +10945,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                   ),
                   const SizedBox(height: 12),
                   _KeyValueRow(label: 'Target', value: targetLabel),
+                  if (displayLabel != null)
+                    _KeyValueRow(label: 'Display', value: displayLabel),
                   _KeyValueRow(
                     label: 'Last update',
                     value: _formatTimestamp(_lastUpdatedAt),
@@ -5299,175 +10968,24 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               const SizedBox(height: 16),
             ],
             _ContextSectionCard(
-              title: 'VNC stream',
-              subtitle: _trackpadMode
-                  ? 'Trackpad controls move the pointer without touching the stream.'
-                  : 'Direct touch lets you tap the stream to position the cursor.',
-              child: AspectRatio(
-                aspectRatio: _canvasSize.width / _canvasSize.height,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final viewSize = Size(
-                      constraints.maxWidth,
-                      constraints.maxHeight,
-                    );
-                    final pointerScreen = _pointerToScreen(viewSize);
-                    final translation = _calculateTranslation(viewSize);
-                    return GestureDetector(
-                      onTapDown: !isInteractive || _trackpadMode
-                          ? null
-                          : (details) {
-                              _movePointerTo(
-                                details.localPosition,
-                                viewSize,
-                              );
-                              _triggerClickPulse();
-                            },
-                      onPanUpdate: !isInteractive || _trackpadMode
-                          ? null
-                          : (details) =>
-                              _movePointerTo(details.localPosition, viewSize),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Stack(
-                          children: [
-                            Positioned.fill(
-                              child: Transform(
-                                transform: Matrix4.identity()
-                                  ..translateByDouble(
-                                    translation.dx,
-                                    translation.dy,
-                                    0,
-                                    1,
-                                  )
-                                  ..scaleByDouble(_zoom, _zoom, 1, 1),
-                                child: _VncMockDesktop(
-                                  targetLabel: targetLabel,
-                                  canvasSize: _canvasSize,
-                                ),
-                              ),
-                            ),
-                            if (!isInteractive)
-                              Positioned.fill(
-                                child: Container(
-                                  color: Colors.black.withAlpha(80),
-                                  child: Center(
-                                    child: Text(
-                                      _connectionError != null
-                                          ? 'Stream unavailable'
-                                          : 'Connecting...',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            if (isInteractive)
-                              Positioned(
-                                left: pointerScreen.dx - 10,
-                                top: pointerScreen.dy - 10,
-                                child: _VncPointer(
-                                  isClicking: _showClickPulse,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            _ContextSectionCard(
-              title: 'Zoom & focus',
-              subtitle:
-                  'Zoom centers on the active pointer for fast inspection.',
+              title: 'VNC view',
+              subtitle: isLandscape
+                  ? 'Landscape stream with hidden controls. Tap the floating button to open trackpad and zoom.'
+                  : 'Portrait stream with vertical zoom and a full-width trackpad.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        '${(_zoom * 100).round()}%',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF0F172A),
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _trackpadMode ? 'Trackpad' : 'Direct touch',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF64748B),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                  _buildVncCanvas(
+                    theme: theme,
+                    isInteractive: isInteractive,
+                    isLandscape: isLandscape,
+                    safePadding: safePadding,
+                    isFullscreen: false,
                   ),
-                  Slider(
-                    value: _zoom,
-                    min: _minZoom,
-                    max: _maxZoom,
-                    onChanged: isInteractive ? _updateZoom : null,
-                    onChangeEnd: isInteractive ? _commitZoom : null,
-                  ),
-                ],
-              ),
-            ),
-            _ContextSectionCard(
-              title: 'Pointer mode',
-              subtitle: _trackpadMode
-                  ? 'Drag on the trackpad to move. Tap to click.'
-                  : 'Tap the stream to place the pointer.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Trackpad'),
-                        selected: _trackpadMode,
-                        onSelected: (selected) {
-                          setState(() {
-                            _trackpadMode = selected;
-                          });
-                        },
-                      ),
-                      ChoiceChip(
-                        label: const Text('Direct touch'),
-                        selected: !_trackpadMode,
-                        onSelected: (selected) {
-                          setState(() {
-                            _trackpadMode = !selected;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  _VncTrackpadSurface(
-                    enabled: isInteractive && _trackpadMode,
-                    onPan: _movePointerBy,
-                    onTap: _triggerClickPulse,
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: const [
-                      _VncGestureHint(
-                        icon: Icons.open_with,
-                        label: 'Drag to move',
-                      ),
-                      SizedBox(width: 12),
-                      _VncGestureHint(
-                        icon: Icons.touch_app,
-                        label: 'Tap to click',
-                      ),
-                    ],
-                  ),
+                  if (!isLandscape) ...[
+                    const SizedBox(height: 12),
+                    _buildTrackpadControls(isInteractive: isInteractive),
+                  ],
                 ],
               ),
             ),
@@ -5539,249 +11057,14 @@ class _VncRecoveryCard extends StatelessWidget {
   }
 }
 
-class _VncMockDesktop extends StatelessWidget {
-  const _VncMockDesktop({
-    required this.targetLabel,
-    required this.canvasSize,
-  });
-
-  final String targetLabel;
-  final Size canvasSize;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: canvasSize.width,
-      height: canvasSize.height,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 46,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.black.withAlpha(120),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.desktop_windows,
-                    color: Colors.white70,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      targetLabel,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.white70,
-                            fontWeight: FontWeight.w600,
-                          ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.wifi,
-                    color: Colors.white54,
-                    size: 16,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 200,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF111827),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white12),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Navigator',
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Colors.white70,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                          ),
-                          const SizedBox(height: 12),
-                          _VncSidebarItem(
-                            icon: Icons.check_circle_outline,
-                            label: 'Login page',
-                          ),
-                          const SizedBox(height: 8),
-                          _VncSidebarItem(
-                            icon: Icons.visibility_outlined,
-                            label: 'Settings modal',
-                          ),
-                          const SizedBox(height: 8),
-                          _VncSidebarItem(
-                            icon: Icons.bug_report_outlined,
-                            label: 'Error toast',
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Preview',
-                              style:
-                                  Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: const Color(0xFF64748B),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                            ),
-                            const SizedBox(height: 12),
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withAlpha(20),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Login form',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w700,
-                                              color: const Color(0xFF0F172A),
-                                            ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        height: 12,
-                                        width: 180,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFE2E8F0),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        height: 12,
-                                        width: 140,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFE2E8F0),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 20),
-                                      Container(
-                                        height: 36,
-                                        width: 140,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF1D4ED8),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            'Submit',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VncSidebarItem extends StatelessWidget {
-  const _VncSidebarItem({
-    required this.icon,
-    required this.label,
-  });
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.white70, size: 16),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white70,
-                ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _VncPointer extends StatelessWidget {
-  const _VncPointer({required this.isClicking});
+  const _VncPointer({
+    required this.isClicking,
+    required this.isFocusing,
+  });
 
   final bool isClicking;
+  final bool isFocusing;
 
   @override
   Widget build(BuildContext context) {
@@ -5799,6 +11082,21 @@ class _VncPointer extends StatelessWidget {
               border: Border.all(
                 color: Colors.white.withAlpha(180),
                 width: 2,
+              ),
+            ),
+          ),
+        ),
+        AnimatedOpacity(
+          opacity: isFocusing ? 1 : 0,
+          duration: const Duration(milliseconds: 160),
+          child: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Colors.white.withAlpha(120),
+                width: 1.5,
               ),
             ),
           ),
@@ -5824,50 +11122,548 @@ class _VncPointer extends StatelessWidget {
   }
 }
 
-class _VncTrackpadSurface extends StatelessWidget {
-  const _VncTrackpadSurface({
-    required this.enabled,
-    required this.onPan,
-    required this.onTap,
+class _VncZoomBadge extends StatelessWidget {
+  const _VncZoomBadge({required this.value});
+
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(140),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '${(value * 100).round()}%',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
+  }
+}
+
+class _VncOverlayIconButton extends StatelessWidget {
+  const _VncOverlayIconButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
   });
 
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withAlpha(140),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: Colors.white),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalibrationTarget extends StatelessWidget {
+  const _CalibrationTarget();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+          ),
+          Container(
+            width: 36,
+            height: 2,
+            color: Colors.white.withAlpha(200),
+          ),
+          Container(
+            width: 2,
+            height: 36,
+            color: Colors.white.withAlpha(200),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CalibrationResult {
+  const _CalibrationResult({
+    required this.scaleX,
+    required this.scaleY,
+    required this.offsetX,
+    required this.offsetY,
+  });
+
+  final double scaleX;
+  final double scaleY;
+  final double offsetX;
+  final double offsetY;
+}
+
+class _CalibrationSlider extends StatelessWidget {
+  const _CalibrationSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.enabled,
+    required this.onChanged,
+    this.labelColor,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
   final bool enabled;
-  final ValueChanged<Offset> onPan;
-  final VoidCallback onTap;
+  final ValueChanged<double> onChanged;
+  final Color? labelColor;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final background = enabled ? const Color(0xFFF1F5F9) : const Color(0xFFE2E8F0);
-    final borderColor = enabled ? const Color(0xFFCBD5F5) : const Color(0xFFE2E8F0);
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      onPanUpdate: enabled ? (details) => onPan(details.delta) : null,
-      child: Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor),
-        ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.touch_app,
-                color: enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+                  color: labelColor ?? const Color(0xFF0F172A),
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: enabled ? onChanged : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VncZoomBar extends StatelessWidget {
+  const _VncZoomBar({
+    required this.stops,
+    required this.index,
+    required this.enabled,
+    this.glassStyle = false,
+    required this.onIndexChanged,
+    required this.onIndexCommitted,
+    required this.onReset,
+  });
+
+  final List<double> stops;
+  final int index;
+  final bool enabled;
+  final bool glassStyle;
+  final ValueChanged<int> onIndexChanged;
+  final ValueChanged<int> onIndexCommitted;
+  final VoidCallback onReset;
+
+  int _indexForPosition(double localY, double height) {
+    if (height <= 0) {
+      return index;
+    }
+    final trackTop = 20.0;
+    final trackBottom = height - 20.0;
+    final clamped = localY.clamp(trackTop, trackBottom);
+    final t = 1 - ((clamped - trackTop) / (trackBottom - trackTop));
+    final raw = (t * (stops.length - 1)).round();
+    return raw.clamp(0, stops.length - 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxHeight;
+        final trackTop = 20.0;
+        final trackBottom = height - 20.0;
+        final t = stops.length == 1 ? 0.5 : index / (stops.length - 1);
+        final knobY = trackBottom - (trackBottom - trackTop) * t;
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onDoubleTap: enabled ? onReset : null,
+          onTapDown: enabled
+              ? (details) {
+                  final nextIndex =
+                      _indexForPosition(details.localPosition.dy, height);
+                  onIndexChanged(nextIndex);
+                  onIndexCommitted(nextIndex);
+                }
+              : null,
+          onVerticalDragUpdate: enabled
+              ? (details) =>
+                  onIndexChanged(_indexForPosition(details.localPosition.dy, height))
+              : null,
+          onVerticalDragEnd: enabled ? (_) => onIndexCommitted(index) : null,
+          child: Container(
+            width: 44,
+            decoration: BoxDecoration(
+              color: glassStyle
+                  ? Colors.white.withAlpha(40)
+                  : Colors.black.withAlpha(120),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: glassStyle
+                    ? Colors.white.withAlpha(80)
+                    : Colors.white.withAlpha(40),
               ),
-              const SizedBox(height: 8),
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 6,
+                  child: Text(
+                    '${stops.last}x',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: glassStyle ? Colors.white : Colors.white70,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 6,
+                  child: Text(
+                    '${stops.first}x',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: glassStyle ? Colors.white : Colors.white70,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: trackTop,
+                  bottom: trackTop,
+                  child: Center(
+                    child: Container(
+                      width: 2,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha(glassStyle ? 160 : 90),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 4,
+                  right: 4,
+                  top: knobY - 16,
+                  child: Container(
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: enabled
+                          ? (glassStyle
+                              ? Colors.white.withAlpha(160)
+                              : const Color(0xFF38BDF8))
+                          : Colors.white24,
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withAlpha(80),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${(stops[index] * 100).round()}%',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: glassStyle
+                                  ? const Color(0xFF0F172A)
+                                  : Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VncShortcutOverlay extends StatelessWidget {
+  const _VncShortcutOverlay({
+    required this.enabled,
+    required this.onEsc,
+    required this.onCmd,
+    required this.onTab,
+    required this.onCtrl,
+    required this.onKeyboard,
+  });
+
+  final bool enabled;
+  final VoidCallback onEsc;
+  final VoidCallback onCmd;
+  final VoidCallback onTab;
+  final VoidCallback onCtrl;
+  final VoidCallback onKeyboard;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(140),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withAlpha(40)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Wrap(
+          spacing: 8,
+          children: [
+            _VncShortcutButton(
+              label: 'Esc',
+              onPressed: enabled ? onEsc : null,
+            ),
+            _VncShortcutButton(
+              label: 'Cmd',
+              onPressed: enabled ? onCmd : null,
+            ),
+            _VncShortcutButton(
+              label: 'Tab',
+              onPressed: enabled ? onTab : null,
+            ),
+            _VncShortcutButton(
+              label: 'Ctrl',
+              onPressed: enabled ? onCtrl : null,
+            ),
+            _VncShortcutButton(
+              label: 'Kbd',
+              onPressed: enabled ? onKeyboard : null,
+              icon: Icons.keyboard,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VncShortcutButton extends StatelessWidget {
+  const _VncShortcutButton({
+    required this.label,
+    this.icon,
+    this.onPressed,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withAlpha(20),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: Colors.white),
+                const SizedBox(width: 4),
+              ],
               Text(
-                enabled ? 'Trackpad active' : 'Enable trackpad mode to use',
-                style: theme.textTheme.bodySmall?.copyWith(
-                      color:
-                          enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8),
-                      fontWeight: FontWeight.w600,
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VncControlAction extends StatelessWidget {
+  const _VncControlAction({
+    required this.icon,
+    required this.label,
+    this.onPressed,
+    this.glassStyle = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool glassStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = onPressed != null;
+    final foreground = glassStyle
+        ? (isEnabled ? Colors.white : Colors.white54)
+        : (isEnabled ? const Color(0xFF0F172A) : const Color(0xFF94A3B8));
+    final background = glassStyle
+        ? Colors.white.withAlpha(isEnabled ? 30 : 12)
+        : (isEnabled ? const Color(0xFFE0F2FE) : const Color(0xFFF1F5F9));
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: foreground),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VncTrackpadSurface extends StatelessWidget {
+  const _VncTrackpadSurface({
+    required this.enabled,
+    this.glassStyle = false,
+    this.disabledMessage,
+    required this.onPointerDown,
+    required this.onPointerMove,
+    required this.onPointerUp,
+    required this.onPointerCancel,
+  });
+
+  final bool enabled;
+  final bool glassStyle;
+  final String? disabledMessage;
+  final ValueChanged<PointerDownEvent> onPointerDown;
+  final ValueChanged<PointerMoveEvent> onPointerMove;
+  final ValueChanged<PointerUpEvent> onPointerUp;
+  final ValueChanged<PointerCancelEvent> onPointerCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final background = glassStyle
+        ? Colors.white.withAlpha(enabled ? 30 : 12)
+        : (enabled ? const Color(0xFFF1F5F9) : const Color(0xFFE2E8F0));
+    final borderColor = glassStyle
+        ? Colors.white.withAlpha(enabled ? 120 : 60)
+        : (enabled ? const Color(0xFFCBD5F5) : const Color(0xFFE2E8F0));
+    final iconColor = glassStyle
+        ? (enabled ? Colors.white : Colors.white54)
+        : (enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8));
+    final textColor = glassStyle
+        ? (enabled ? Colors.white : Colors.white54)
+        : (enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8));
+    return GestureDetector(
+      onPanStart: enabled ? (_) {} : null,
+      onPanUpdate: enabled ? (_) {} : null,
+      behavior: HitTestBehavior.opaque,
+      child: Listener(
+        onPointerDown: enabled ? onPointerDown : null,
+        onPointerMove: enabled ? onPointerMove : null,
+        onPointerUp: enabled ? onPointerUp : null,
+        onPointerCancel: enabled ? onPointerCancel : null,
+        child: Container(
+          height: 120,
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.touch_app,
+                  color: iconColor,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  enabled
+                      ? 'Trackpad ready'
+                      : (disabledMessage ?? 'Connect to enable input'),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -5879,29 +11675,39 @@ class _VncGestureHint extends StatelessWidget {
   const _VncGestureHint({
     required this.icon,
     required this.label,
+    this.glassStyle = false,
   });
 
   final IconData icon;
   final String label;
+  final bool glassStyle;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
+        color: glassStyle ? Colors.white.withAlpha(24) : const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: glassStyle
+              ? Colors.white.withAlpha(80)
+              : const Color(0xFFE2E8F0),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF475569)),
+          Icon(
+            icon,
+            size: 14,
+            color: glassStyle ? Colors.white70 : const Color(0xFF475569),
+          ),
           const SizedBox(width: 6),
           Text(
             label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF475569),
+                  color: glassStyle ? Colors.white70 : const Color(0xFF475569),
                   fontWeight: FontWeight.w600,
                 ),
           ),
@@ -6197,9 +12003,10 @@ String _childJsonPath(String parent, String child) {
 }
 
 class AgentCommandFailure implements Exception {
-  const AgentCommandFailure(this.message);
+  const AgentCommandFailure(this.message, {this.code});
 
   final String message;
+  final String? code;
 
   @override
   String toString() => message;
@@ -6210,6 +12017,78 @@ class AgentApiResult {
 
   final ApiRequestDetails request;
   final ApiResponseDetails response;
+}
+
+class VncSessionInfo {
+  const VncSessionInfo({
+    required this.sessionId,
+    required this.token,
+    required this.wsPath,
+    required this.width,
+    required this.height,
+    this.displayIndex,
+  });
+
+  final String sessionId;
+  final String token;
+  final String wsPath;
+  final int width;
+  final int height;
+  final int? displayIndex;
+
+  factory VncSessionInfo.fromPayload(Map<String, dynamic> payload) {
+    final sessionId = payload['session_id']?.toString() ?? '';
+    final token = payload['token']?.toString() ?? '';
+    final wsPath = payload['ws_path']?.toString() ?? '/vnc/$sessionId';
+    final width = int.tryParse(payload['width']?.toString() ?? '') ?? 0;
+    final height = int.tryParse(payload['height']?.toString() ?? '') ?? 0;
+    final displayIndex =
+        int.tryParse(payload['display_index']?.toString() ?? '');
+    if (sessionId.isEmpty || token.isEmpty) {
+      throw const AgentCommandFailure('VNC session response missing fields.');
+    }
+    return VncSessionInfo(
+      sessionId: sessionId,
+      token: token,
+      wsPath: wsPath,
+      width: width,
+      height: height,
+      displayIndex: displayIndex,
+    );
+  }
+}
+
+class VncDisplayInfo {
+  const VncDisplayInfo({
+    required this.index,
+    required this.width,
+    required this.height,
+    required this.isPrimary,
+  });
+
+  final int index;
+  final int width;
+  final int height;
+  final bool isPrimary;
+
+  String get label {
+    final primaryTag = isPrimary ? ' · 主屏' : '';
+    return '显示器 ${index + 1} · ${width}x$height$primaryTag';
+  }
+
+  factory VncDisplayInfo.fromPayload(Map<String, dynamic> payload) {
+    final index = int.tryParse(payload['index']?.toString() ?? '') ?? 0;
+    final width = int.tryParse(payload['width']?.toString() ?? '') ?? 0;
+    final height = int.tryParse(payload['height']?.toString() ?? '') ?? 0;
+    final isPrimary =
+        payload['is_primary'] == true || payload['is_primary'] == 1;
+    return VncDisplayInfo(
+      index: index,
+      width: width,
+      height: height,
+      isPrimary: isPrimary,
+    );
+  }
 }
 
 class AgentCommandClient {
@@ -6255,17 +12134,37 @@ class AgentCommandClient {
     );
   }
 
-  Future<void> sendTerminalCommand({
-    required String command,
-    List<String>? args,
+  Future<Map<String, dynamic>> sendTerminalAction({
+    required String action,
+    String? sessionId,
+    String? input,
+    int? cols,
+    int? rows,
+    int? since,
+    int? limit,
     String? workingDir,
     Map<String, String>? env,
   }) async {
     final payload = <String, dynamic>{
-      'command': command,
+      'action': action,
     };
-    if (args != null && args.isNotEmpty) {
-      payload['args'] = args;
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      payload['session_id'] = sessionId;
+    }
+    if (input != null && input.isNotEmpty) {
+      payload['input'] = input;
+    }
+    if (cols != null) {
+      payload['cols'] = cols;
+    }
+    if (rows != null) {
+      payload['rows'] = rows;
+    }
+    if (since != null) {
+      payload['since'] = since;
+    }
+    if (limit != null) {
+      payload['limit'] = limit;
     }
     if (workingDir != null && workingDir.trim().isNotEmpty) {
       payload['working_dir'] = workingDir;
@@ -6273,17 +12172,23 @@ class AgentCommandClient {
     if (env != null && env.isNotEmpty) {
       payload['env'] = env;
     }
-    await _sendCommand(
+    final response = await _sendCommand(
       command: 'terminal',
       payload: payload,
     );
+    final responsePayload = response.payload;
+    if (responsePayload is! Map<String, dynamic>) {
+      throw const AgentCommandFailure('Agent response missing payload.');
+    }
+    return responsePayload;
   }
 
-  Future<void> sendVncCommand({
+  Future<VncSessionInfo> sendVncCommand({
     required String action,
     String? sessionId,
     int? width,
     int? height,
+    int? displayIndex,
   }) async {
     final payload = <String, dynamic>{
       'action': action,
@@ -6297,10 +12202,42 @@ class AgentCommandClient {
     if (height != null) {
       payload['height'] = height;
     }
-    await _sendCommand(
+    if (displayIndex != null) {
+      payload['display_index'] = displayIndex;
+    }
+    final response = await _sendCommand(
       command: 'vnc',
       payload: payload,
     );
+    final payloadData = response.payload;
+    if (payloadData == null) {
+      throw const AgentCommandFailure('VNC response missing payload.');
+    }
+    return VncSessionInfo.fromPayload(
+      Map<String, dynamic>.from(payloadData),
+    );
+  }
+
+  Future<List<VncDisplayInfo>> fetchVncDisplays() async {
+    final response = await _sendCommand(
+      command: 'vnc',
+      payload: const {
+        'action': 'displays',
+      },
+    );
+    final payloadData = response.payload;
+    if (payloadData == null) {
+      return const [];
+    }
+    final displays = payloadData['displays'];
+    if (displays is! List) {
+      return const [];
+    }
+    return displays
+        .map((item) => VncDisplayInfo.fromPayload(
+              Map<String, dynamic>.from(item as Map),
+            ))
+        .toList();
   }
 
   Future<_AgentCommandResponse> _sendCommand({
@@ -6319,7 +12256,7 @@ class AgentCommandClient {
         uri,
         headers: const {'Content-Type': 'application/json'},
         body: requestBody,
-      );
+      ).timeout(const Duration(seconds: 6));
     } catch (error) {
       throw AgentCommandFailure('Failed to reach desktop agent.');
     }
@@ -6341,6 +12278,7 @@ class AgentCommandClient {
     if (!parsed.isOk) {
       throw AgentCommandFailure(
         parsed.error?.message ?? 'Agent command failed.',
+        code: parsed.error?.code,
       );
     }
     return parsed;
@@ -6448,92 +12386,6 @@ class CommandIntent {
   final String preview;
 }
 
-List<CommandIntent> _parseCommandIntents(String command) {
-  final trimmed = command.trim();
-  if (trimmed.isEmpty) {
-    return [];
-  }
-
-  final explicit = _parseExplicitIntent(trimmed);
-  if (explicit != null) {
-    return [explicit];
-  }
-
-  if (_leadingHttpMethod(trimmed) != null) {
-    return [_buildApiIntent(trimmed)];
-  }
-
-  final intents = <CommandIntent>[];
-  if (_looksLikeApi(trimmed)) {
-    intents.add(_buildApiIntent(trimmed));
-  }
-  if (_looksLikeTerminal(trimmed)) {
-    intents.add(_buildTerminalIntent(trimmed));
-  }
-  if (_looksLikeAi(trimmed)) {
-    intents.add(_buildAiIntent(trimmed));
-  }
-  if (_looksLikeVnc(trimmed)) {
-    intents.add(_buildVncIntent(trimmed));
-  }
-  return intents;
-}
-
-CommandIntent? _parseExplicitIntent(String command) {
-  final match = RegExp(
-    r'^(api|terminal|term|shell|bash|cmd|ai|vnc)\b[:\s-]*',
-    caseSensitive: false,
-  ).firstMatch(command);
-  if (match == null) {
-    return null;
-  }
-
-  final prefix = match.group(1)?.toLowerCase() ?? '';
-  final remainder = command.substring(match.end).trim();
-  switch (prefix) {
-    case 'api':
-      return _buildApiIntent(command, parseSource: remainder);
-    case 'terminal':
-    case 'term':
-    case 'shell':
-    case 'bash':
-    case 'cmd':
-      return _buildTerminalIntent(command, parseSource: remainder);
-    case 'ai':
-      return _buildAiIntent(command, parseSource: remainder);
-    case 'vnc':
-      return _buildVncIntent(command, parseSource: remainder);
-  }
-  return null;
-}
-
-List<CommandIntent> _uniqueIntents(List<CommandIntent> intents) {
-  final byTool = <CommandTool, CommandIntent>{};
-  for (final intent in intents) {
-    byTool[intent.tool] = intent;
-  }
-  return byTool.values.toList();
-}
-
-List<CommandIntent> _buildFallbackIntents(String command) {
-  return CommandTool.values
-      .map((tool) => _buildIntentForTool(tool, command))
-      .toList();
-}
-
-CommandIntent _buildIntentForTool(CommandTool tool, String command) {
-  switch (tool) {
-    case CommandTool.api:
-      return _buildApiIntent(command);
-    case CommandTool.terminal:
-      return _buildTerminalIntent(command);
-    case CommandTool.ai:
-      return _buildAiIntent(command);
-    case CommandTool.vnc:
-      return _buildVncIntent(command);
-  }
-}
-
 CommandIntent _buildApiIntent(String command, {String? parseSource}) {
   final source =
       parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
@@ -6565,75 +12417,6 @@ CommandIntent _buildApiIntent(String command, {String? parseSource}) {
     payload: payload,
     preview: preview,
   );
-}
-
-CommandIntent _buildTerminalIntent(String command, {String? parseSource}) {
-  final source =
-      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
-  final extracted = _extractTerminalCommand(source);
-  final resolved = extracted.isEmpty ? command.trim() : extracted;
-  final normalized = resolved.isEmpty ? 'Pending command' : resolved;
-  final preview = _truncate(normalized, 48);
-  final label = _truncate(normalized, 28);
-  return CommandIntent(
-    tool: CommandTool.terminal,
-    title: 'Terminal: $label',
-    sessionLabel: 'Terminal: $label',
-    payload: {
-      'command': normalized,
-      'status': 'queued',
-      'stdout': <String>[],
-      'stderr': <String>[],
-    },
-    preview: preview,
-  );
-}
-
-CommandIntent _buildAiIntent(String command, {String? parseSource}) {
-  final source =
-      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
-  final extracted = _extractAiPrompt(source);
-  final resolved = extracted.isEmpty ? command.trim() : extracted;
-  final normalized = resolved.isEmpty ? 'Pending prompt' : resolved;
-  final preview = _truncate(normalized, 48);
-  final label = _truncate(normalized, 28);
-  return CommandIntent(
-    tool: CommandTool.ai,
-    title: 'AI: $label',
-    sessionLabel: 'AI: $label',
-    payload: {
-      'prompt': normalized,
-      'status': 'queued',
-    },
-    preview: preview,
-  );
-}
-
-CommandIntent _buildVncIntent(String command, {String? parseSource}) {
-  final source =
-      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
-  final extracted = _extractVncTarget(source);
-  final resolved = extracted.isEmpty ? 'Remote desktop' : extracted;
-  final preview = _truncate(resolved, 48);
-  final label = _truncate(resolved, 28);
-  return CommandIntent(
-    tool: CommandTool.vnc,
-    title: 'VNC: $label',
-    sessionLabel: 'VNC: $label',
-    payload: {
-      'target': resolved,
-      'status': 'queued',
-    },
-    preview: preview,
-  );
-}
-
-String? _leadingHttpMethod(String input) {
-  final match = RegExp(
-    r'^(get|post|put|patch|delete|head|options)\b',
-    caseSensitive: false,
-  ).firstMatch(input.trim());
-  return match?.group(1)?.toUpperCase();
 }
 
 String _extractHttpMethod(String input) {
@@ -6684,85 +12467,6 @@ String? _extractUrl(String input) {
   return pathMatch?.group(1);
 }
 
-String _extractTerminalCommand(String input) {
-  final trimmed = input.trim();
-  final match = RegExp(
-    r'^(terminal|term|shell|bash|cmd|run|execute)\b[:\s-]*',
-    caseSensitive: false,
-  ).firstMatch(trimmed);
-  var result = trimmed;
-  if (match != null) {
-    result = trimmed.substring(match.end).trim();
-  }
-  if (result.startsWith(r'$')) {
-    result = result.substring(1).trimLeft();
-  }
-  if (result.startsWith('>')) {
-    result = result.substring(1).trimLeft();
-  }
-  return result;
-}
-
-String _extractAiPrompt(String input) {
-  final trimmed = input.trim();
-  final match = RegExp(
-    r'^(ai|ask|explain|summarize|analyze|insight)\b[:\s-]*',
-    caseSensitive: false,
-  ).firstMatch(trimmed);
-  if (match == null) {
-    return trimmed;
-  }
-  final result = trimmed.substring(match.end).trim();
-  return result.isEmpty ? trimmed : result;
-}
-
-String _extractVncTarget(String input) {
-  final trimmed = input.trim();
-  final match = RegExp(
-    r'^(vnc|screen|desktop|viewer)\b[:\s-]*',
-    caseSensitive: false,
-  ).firstMatch(trimmed);
-  if (match == null) {
-    return trimmed;
-  }
-  final result = trimmed.substring(match.end).trim();
-  return result.isEmpty ? trimmed : result;
-}
-
-bool _looksLikeApi(String input) {
-  return _containsKeyword(input, ['api', 'endpoint', 'request', 'http']) ||
-      _containsKeyword(
-        input,
-        ['get', 'post', 'put', 'patch', 'delete'],
-      ) ||
-      _extractUrl(input) != null;
-}
-
-bool _looksLikeTerminal(String input) {
-  final trimmed = input.trimLeft();
-  if (trimmed.startsWith(r'$') || trimmed.startsWith('>')) {
-    return true;
-  }
-  return _containsKeyword(
-    input,
-    ['terminal', 'shell', 'bash', 'run', 'execute', 'cli'],
-  );
-}
-
-bool _looksLikeAi(String input) {
-  return _containsKeyword(
-    input,
-    ['ai', 'summarize', 'explain', 'analyze', 'insight', 'diagnose'],
-  );
-}
-
-bool _looksLikeVnc(String input) {
-  return _containsKeyword(
-    input,
-    ['vnc', 'screen', 'desktop', 'viewer', 'remote', 'ui'],
-  );
-}
-
 bool _containsKeyword(String input, List<String> keywords) {
   for (final keyword in keywords) {
     final expression = RegExp(
@@ -6787,6 +12491,45 @@ String _truncate(String input, int maxLength) {
   return '${trimmed.substring(0, maxLength - 3)}...';
 }
 
+bool _parseBool(dynamic raw) {
+  if (raw is bool) {
+    return raw;
+  }
+  if (raw is num) {
+    return raw != 0;
+  }
+  if (raw is String) {
+    final normalized = raw.trim().toLowerCase();
+    return normalized == 'true' || normalized == '1' || normalized == 'yes';
+  }
+  return false;
+}
+
+List<String> _parseLocalUrls(dynamic raw) {
+  if (raw == null) {
+    return [];
+  }
+  if (raw is List) {
+    return raw
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+  if (raw is String) {
+    if (raw.trim().isEmpty) {
+      return [];
+    }
+    return raw
+        .split(',')
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+  return [];
+}
+
 class PairingPayload {
   const PairingPayload({
     required this.token,
@@ -6794,6 +12537,8 @@ class PairingPayload {
     required this.expiresAt,
     this.tunnelUrl,
     this.tunnelError,
+    this.localUrls = const [],
+    this.requiresApproval = false,
   });
 
   final String token;
@@ -6801,6 +12546,8 @@ class PairingPayload {
   final DateTime expiresAt;
   final String? tunnelUrl;
   final String? tunnelError;
+  final List<String> localUrls;
+  final bool requiresApproval;
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 
@@ -6847,10 +12594,16 @@ class PairingPayload {
       return null;
     }
 
-    final tunnelUrl = data['tunnel_url']?.toString() ??
-        data['tunnelUrl']?.toString();
-    final tunnelError = data['tunnel_error']?.toString() ??
-        data['tunnelError']?.toString();
+    final tunnelUrl =
+        data['tunnel_url']?.toString() ?? data['tunnelUrl']?.toString();
+    final tunnelError =
+        data['tunnel_error']?.toString() ?? data['tunnelError']?.toString();
+    final localUrls = _parseLocalUrls(
+      data['local_urls'] ?? data['localUrls'] ?? data['local_url'],
+    );
+    final requiresApprovalRaw =
+        data['requires_approval'] ?? data['requiresApproval'];
+    final requiresApproval = _parseBool(requiresApprovalRaw);
     final expiresAt = int.tryParse(expiresValue.toString());
     if (expiresAt == null) {
       return null;
@@ -6862,22 +12615,59 @@ class PairingPayload {
       expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000),
       tunnelUrl: tunnelUrl,
       tunnelError: tunnelError,
+      localUrls: localUrls,
+      requiresApproval: requiresApproval,
     );
+  }
+
+  List<String> get preferredUrls {
+    final urls = <String>[];
+    urls.addAll(localUrls);
+    if (tunnelUrl != null && tunnelUrl!.trim().isNotEmpty) {
+      urls.add(tunnelUrl!.trim());
+    }
+    return urls.toSet().toList();
   }
 }
 
-class PairedConnection {
-  const PairedConnection({
-    required this.token,
-    required this.connectedAt,
-    this.tunnelUrl,
-    this.tunnelError,
+enum _PairingAttemptStatus { connected, pending, failed }
+
+class _PairingAttemptResult {
+  const _PairingAttemptResult({
+    required this.status,
+    this.message,
+    this.agentUrl,
   });
 
-  final String token;
-  final DateTime connectedAt;
-  final String? tunnelUrl;
-  final String? tunnelError;
+  final _PairingAttemptStatus status;
+  final String? message;
+  final String? agentUrl;
+}
+
+class _PairingCandidateSelection {
+  const _PairingCandidateSelection({
+    required this.candidates,
+    this.message,
+  });
+
+  final List<String> candidates;
+  final String? message;
+}
+
+String _agentLabel(ConnectionRecord agent) {
+  final url = agent.agentUrl?.trim();
+  if (url != null && url.isNotEmpty) {
+    final uri = Uri.tryParse(url);
+    if (uri != null && uri.host.isNotEmpty) {
+      return uri.host;
+    }
+    return url;
+  }
+  final token = agent.token.trim();
+  if (token.isEmpty) {
+    return 'Agent';
+  }
+  return 'Agent ${_truncate(token, 6)}';
 }
 
 String _formatTimestamp(DateTime value) {
