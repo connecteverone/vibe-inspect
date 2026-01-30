@@ -9028,6 +9028,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Size _lastLayoutSize = Size.zero;
   bool? _lastLayoutLandscape;
   bool _lastLayoutFullscreen = false;
+  bool _pendingPointerReset = false;
 
   @override
   void initState() {
@@ -9915,36 +9916,34 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     final scaleX = trackpadSize.width / _frameSize.width;
     final scaleY = trackpadSize.height / _frameSize.height;
-    if (_viewMode == VncViewMode.fill) {
-      return scaleX > scaleY ? scaleX : scaleY;
+    if (!scaleX.isFinite || !scaleY.isFinite) {
+      return 1;
     }
-    return scaleX < scaleY ? scaleX : scaleY;
+    return (scaleX + scaleY) / 2;
   }
 
   void _movePointerBy(Offset delta) {
     final trackpadSize = _lastTrackpadSize;
     final viewSize = _lastViewSize;
-    if (trackpadSize.width <= 0 || trackpadSize.height <= 0) {
-      if (viewSize.width <= 0 || viewSize.height <= 0) {
-        final accelerated = _applyTrackpadAcceleration(delta);
-        _setPointerPosition(_pointerPosition + accelerated / _zoom);
-        return;
-      }
-      final scale = _baseScale(viewSize) * _zoom;
-      if (scale == 0) {
-        return;
-      }
-      final accelerated = _applyTrackpadAcceleration(delta, scale: scale);
-      final scaled = accelerated / scale;
-      _setPointerPosition(_pointerPosition + scaled);
+    final surfaceSize = (trackpadSize.width > 0 && trackpadSize.height > 0)
+        ? trackpadSize
+        : viewSize;
+    if (surfaceSize.width <= 0 || surfaceSize.height <= 0) {
+      final accelerated = _applyTrackpadAcceleration(delta);
+      _setPointerPosition(_pointerPosition + accelerated / _zoom);
       return;
     }
-    final scale = _trackpadBaseScale(trackpadSize) * _zoom;
-    if (scale == 0) {
+    final scaleX = surfaceSize.width / _frameSize.width;
+    final scaleY = surfaceSize.height / _frameSize.height;
+    if (!scaleX.isFinite || !scaleY.isFinite || scaleX == 0 || scaleY == 0) {
       return;
     }
-    final accelerated = _applyTrackpadAcceleration(delta, scale: scale);
-    final scaled = accelerated / scale;
+    final baseScale = _trackpadBaseScale(surfaceSize) * _zoom;
+    final accelerated = _applyTrackpadAcceleration(delta, scale: baseScale);
+    final scaled = Offset(
+      accelerated.dx / (scaleX * _zoom),
+      accelerated.dy / (scaleY * _zoom),
+    );
     _setPointerPosition(_pointerPosition + scaled);
   }
 
@@ -10320,6 +10319,39 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _cancelDragHold();
   }
 
+  void _clearPointerState({bool sendPointer = true}) {
+    final shouldRelease = _isDragging || _buttonMask != 0;
+    setState(() {
+      _activePointers.clear();
+      _resetPointerTracking();
+      _lastTapTime = null;
+      _lastTapPosition = null;
+      _directDragActive = false;
+      _isDragging = false;
+      _buttonMask = 0;
+    });
+    if (sendPointer && shouldRelease) {
+      _sendPointerEvent();
+    }
+  }
+
+  void _schedulePointerReset() {
+    if (_pendingPointerReset) {
+      return;
+    }
+    _pendingPointerReset = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      if (!_pendingPointerReset) {
+        return;
+      }
+      _pendingPointerReset = false;
+      _clearPointerState();
+    });
+  }
+
   void _handleTrackpadPointerDown(PointerDownEvent event) {
     if (_connectionError != null || _isConnecting) {
       return;
@@ -10569,6 +10601,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final fullscreenChanged = _lastLayoutFullscreen != _isFullscreen;
     if (sizeDelta <= 6 && !landscapeChanged && !fullscreenChanged) {
       return;
+    }
+    if (landscapeChanged || fullscreenChanged) {
+      _schedulePointerReset();
     }
     _lastLayoutSize = viewSize;
     _lastLayoutLandscape = isLandscape;
@@ -11437,39 +11472,91 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required EdgeInsets safePadding,
     required Size screenSize,
   }) {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: _buildVncCanvas(
-            theme: theme,
-            isInteractive: isInteractive,
-            isLandscape: true,
-            safePadding: EdgeInsets.zero,
-            screenSize: screenSize,
-            isFullscreen: true,
-            expandToFit: true,
-            showControls: false,
-          ),
-        ),
-        Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: _buildFullscreenInputPanel(
-              isInteractive: isInteractive,
-              isLandscape: true,
+    final trackpadEnabled = isInteractive && !_directInputEnabled;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
+        _updateTrackpadSize(
+          areaSize,
+          source: 'fullscreen_landscape_overlay',
+        );
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: _buildVncCanvas(
+                theme: theme,
+                isInteractive: isInteractive,
+                isLandscape: true,
+                safePadding: EdgeInsets.zero,
+                screenSize: screenSize,
+                isFullscreen: true,
+                expandToFit: true,
+                showControls: false,
+              ),
             ),
-          ),
-        ),
-        Positioned(
-          left: 12,
-          top: 12,
-          child: _VncOverlayIconButton(
-            icon: Icons.fullscreen_exit,
-            label: 'Exit',
-            onPressed: () => _setFullscreen(false),
-          ),
-        ),
-      ],
+            if (trackpadEnabled)
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _handleTrackpadPointerDown,
+                  onPointerMove: _handleTrackpadPointerMove,
+                  onPointerUp: _handleTrackpadPointerUp,
+                  onPointerCancel: _handleTrackpadPointerCancel,
+                ),
+              ),
+            Positioned(
+              left: 12 + safePadding.left,
+              top: 12 + safePadding.top,
+              child: _VncOverlayIconButton(
+                icon: Icons.fullscreen_exit,
+                label: 'Exit',
+                onPressed: () => _setFullscreen(false),
+              ),
+            ),
+            Positioned(
+              left: 12 + safePadding.left,
+              top: 60 + safePadding.top,
+              child: Opacity(
+                opacity: 0.38,
+                child: SizedBox(
+                  width: 48,
+                  child: _VncZoomBar(
+                    stops: _zoomStops,
+                    index: _zoomIndex,
+                    enabled: isInteractive,
+                    glassStyle: true,
+                    onIndexChanged: _updateZoomIndex,
+                    onIndexCommitted: _commitZoomIndex,
+                    onReset: _resetZoom,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 16 + safePadding.left,
+                    right: 16 + safePadding.right,
+                    bottom: 12 + safePadding.bottom,
+                  ),
+                  child: Opacity(
+                    opacity: 0.35,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 240),
+                      child: _buildTrackpadClickBar(
+                        enabled: trackpadEnabled,
+                        glassStyle: true,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
