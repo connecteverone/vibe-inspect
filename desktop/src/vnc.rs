@@ -8,11 +8,14 @@ use rfb_encodings::{PixelFormat, zrle::encode_zrle};
 use scrap::{Capturer, Display};
 use std::collections::HashMap;
 use std::io::{ErrorKind, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::env;
+
+#[cfg(target_os = "macos")]
+use crate::cursor_macos::{capture_cursor, cursor_changed, SystemCursor};
 
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 const VNC_NAME: &str = "Vibe Inspect Agent";
@@ -26,7 +29,72 @@ const DIFF_FULL_THRESHOLD: f32 = 0.85;
 const COPYRECT_MATCH_THRESHOLD: f32 = 0.92;
 const ENCODING_COMPRESS_LEVEL_BASE: i32 = -256;
 const ENCODING_QUALITY_LEVEL_BASE: i32 = -32;
+const ENCODING_CURSOR: i32 = -239;
 const TIGHT_JPEG_MIN_AREA: usize = 20000;
+
+static CAPTURE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static LAST_CAPTURE_LOG: AtomicU64 = AtomicU64::new(0);
+
+fn capture_debug_enabled() -> bool {
+    matches!(
+        env::var("VNC_CAPTURE_DEBUG")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn vnc_debug_enabled() -> bool {
+    if capture_debug_enabled() {
+        return true;
+    }
+    matches!(
+        env::var("VNC_DEBUG")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn cursor_trace_enabled() -> bool {
+    if vnc_debug_enabled() {
+        return true;
+    }
+    matches!(
+        env::var("VNC_CURSOR_TRACE")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn cursor_trace_log(message: &str) {
+    if cursor_trace_enabled() {
+        eprintln!("{message}");
+    }
+}
+
+fn vnc_log(message: &str) {
+    if vnc_debug_enabled() {
+        eprintln!("{message}");
+    }
+}
+
+fn capture_log_throttled(message: &str) {
+    if !capture_debug_enabled() {
+        return;
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_millis() as u64;
+    let last = LAST_CAPTURE_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < 1000 {
+        return;
+    }
+    LAST_CAPTURE_LOG.store(now, Ordering::Relaxed);
+    eprintln!("{message}");
+}
 
 #[derive(Clone)]
 pub struct VncSessionInfo {
@@ -36,6 +104,14 @@ pub struct VncSessionInfo {
     pub width: u32,
     pub height: u32,
     pub display_index: usize,
+    pub input_width: u32,
+    pub input_height: u32,
+    pub input_origin_x: f64,
+    pub input_origin_y: f64,
+    pub input_scale_x: f64,
+    pub input_scale_y: f64,
+    pub screen_width: u32,
+    pub screen_height: u32,
 }
 
 #[derive(Clone)]
@@ -57,13 +133,28 @@ struct VncSession {
     input_height: u32,
     input_origin_x: f64,
     input_origin_y: f64,
+    input_scale_x: f64,
+    input_scale_y: f64,
     display_index: usize,
+    generation: u64,
+    guard: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Debug)]
+struct CursorData {
+    width: u16,
+    height: u16,
+    hotspot_x: u16,
+    hotspot_y: u16,
+    pixels: Vec<u8>,
+    mask: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
 enum RectUpdate {
     Pixels { rect: Rect, data: Vec<u8> },
     CopyRect { rect: Rect, src_x: u16, src_y: u16 },
+    Cursor(CursorData),
 }
 
 type FrameUpdate = Vec<RectUpdate>;
@@ -75,6 +166,7 @@ struct EncodingPreferences {
     tight_quality: Option<u8>,
     allow_jpeg: bool,
     copyrect_supported: bool,
+    cursor_supported: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,14 +177,17 @@ struct Rect {
     height: u16,
 }
 
+
 pub struct VncManager {
     sessions: HashMap<String, VncSession>,
+    guards: HashMap<String, Arc<AtomicU64>>,
 }
 
 impl VncManager {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            guards: HashMap::new(),
         }
     }
 
@@ -106,8 +201,15 @@ impl VncManager {
         let (display, display_index) = resolve_display(display_index)?;
         let screen_width = display.width() as u32;
         let screen_height = display.height() as u32;
-        let (input_width, input_height, input_origin_x, input_origin_y) =
-            resolve_input_dimensions(screen_width, screen_height, Some(display_index));
+        preflight_capture_access()?;
+        let (
+            input_width,
+            input_height,
+            input_origin_x,
+            input_origin_y,
+            input_scale_x,
+            input_scale_y,
+        ) = resolve_input_dimensions(screen_width, screen_height, Some(display_index));
         let (target_width, target_height) = resolve_target_dimensions(
             screen_width,
             screen_height,
@@ -119,6 +221,12 @@ impl VncManager {
             .take(24)
             .map(char::from)
             .collect::<String>();
+        let guard = self
+            .guards
+            .entry(session_id.clone())
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .clone();
+        let generation = guard.fetch_add(1, Ordering::SeqCst) + 1;
         let session = VncSession {
             token: token.clone(),
             width: target_width,
@@ -129,7 +237,11 @@ impl VncManager {
             input_height,
             input_origin_x,
             input_origin_y,
+            input_scale_x,
+            input_scale_y,
             display_index,
+            generation,
+            guard: guard.clone(),
         };
         self.sessions.insert(session_id.clone(), session);
         Ok(VncSessionInfo {
@@ -139,10 +251,21 @@ impl VncManager {
             width: target_width,
             height: target_height,
             display_index,
+            input_width,
+            input_height,
+            input_origin_x,
+            input_origin_y,
+            input_scale_x,
+            input_scale_y,
+            screen_width,
+            screen_height,
         })
     }
 
     pub fn stop_session(&mut self, session_id: &str) {
+        if let Some(guard) = self.guards.get(session_id) {
+            guard.fetch_add(1, Ordering::SeqCst);
+        }
         self.sessions.remove(session_id);
     }
 
@@ -151,6 +274,20 @@ impl VncManager {
             .get(session_id)
             .and_then(|session| if session.token == token { Some(session.clone()) } else { None })
     }
+}
+
+fn preflight_capture_access() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::access::ScreenCaptureAccess;
+        if !ScreenCaptureAccess::default().preflight() {
+            return Err(
+                "Screen recording permission is required to stream the desktop. Enable it in System Settings > Privacy & Security > Screen Recording, then restart the desktop agent."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn list_displays() -> Result<Vec<VncDisplayInfo>, String> {
@@ -183,12 +320,43 @@ fn resolve_display(display_index: Option<usize>) -> Result<(Display, usize), Str
     Ok((display, 0))
 }
 
+#[cfg(target_os = "macos")]
+fn resolve_capture_dimensions(
+    display_index: usize,
+    fallback_width: u32,
+    fallback_height: u32,
+) -> (u32, u32) {
+    use core_graphics::display::CGDisplay;
+    let mut display = CGDisplay::main();
+    if let Ok(displays) = CGDisplay::active_displays() {
+        if display_index < displays.len() {
+            display = CGDisplay::new(displays[display_index]);
+        }
+    }
+    let width = display.pixels_wide() as u32;
+    let height = display.pixels_high() as u32;
+    if width > 0 && height > 0 {
+        return (width, height);
+    }
+    (fallback_width, fallback_height)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resolve_capture_dimensions(
+    _display_index: usize,
+    fallback_width: u32,
+    fallback_height: u32,
+) -> (u32, u32) {
+    (fallback_width, fallback_height)
+}
+
 pub async fn serve_vnc_socket(
     socket: WebSocket,
     manager: Arc<Mutex<VncManager>>,
     session_id: String,
     token: String,
 ) {
+    vnc_log(&format!("vnc ws connect: session={session_id}"));
     let session = {
         let manager = manager.lock().unwrap();
         manager.get_session(&session_id, &token)
@@ -210,6 +378,19 @@ pub async fn serve_vnc_socket(
 async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), String> {
     let (mut sender, mut receiver) = socket.split();
     let mut buffer = Vec::new();
+    vnc_log(&format!(
+        "vnc session init: display={} size={}x{}",
+        session.display_index, session.width, session.height
+    ));
+    vnc_log(&format!(
+        "vnc input map: input={}x{} scale=({:.3},{:.3}) origin=({:.1},{:.1})",
+        session.input_width,
+        session.input_height,
+        session.input_scale_x,
+        session.input_scale_y,
+        session.input_origin_x,
+        session.input_origin_y
+    ));
 
     sender
         .send(Message::Binary(RFB_VERSION.to_vec().into()))
@@ -248,6 +429,7 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     let force_full = Arc::new(AtomicBool::new(true));
     let running = Arc::new(AtomicBool::new(true));
     let copyrect_supported = Arc::new(AtomicBool::new(false));
+    let cursor_supported = Arc::new(AtomicBool::new(false));
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(2);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
     let _capture_handle = spawn_capture_thread(
@@ -255,17 +437,23 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
         ready_for_updates.clone(),
         force_full.clone(),
         running.clone(),
+        session.guard.clone(),
+        session.generation,
         copyrect_supported.clone(),
+        cursor_supported.clone(),
         frame_tx,
     );
-    let _input_handle = spawn_input_thread(session.clone(), running.clone(), input_rx);
+    let _input_handle =
+        spawn_input_thread(session.clone(), running.clone(), session.guard.clone(), input_rx);
     let mut encoding_prefs = EncodingPreferences {
         encoding: ENCODING_ZLIB,
         tight_compression: 6,
         tight_quality: None,
         allow_jpeg: false,
         copyrect_supported: false,
+        cursor_supported: false,
     };
+    let mut update_request_seen = false;
 
     loop {
         tokio::select! {
@@ -285,6 +473,13 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
                         while let Some(event) = parse_client_message(&mut buffer) {
                             match event {
                                 ClientMessage::FramebufferUpdateRequest { incremental, .. } => {
+                                    if !update_request_seen {
+                                        update_request_seen = true;
+                                        vnc_log(&format!(
+                                            "vnc update request: incremental={}",
+                                            incremental
+                                        ));
+                                    }
                                     ready_for_updates.store(true, Ordering::SeqCst);
                                     if !incremental {
                                         force_full.store(true, Ordering::SeqCst);
@@ -300,6 +495,10 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
                                     encoding_prefs = parse_encoding_preferences(&encodings);
                                     copyrect_supported.store(
                                         encoding_prefs.copyrect_supported,
+                                        Ordering::Relaxed,
+                                    );
+                                    cursor_supported.store(
+                                        encoding_prefs.cursor_supported,
                                         Ordering::Relaxed,
                                     );
                                 }
@@ -346,26 +545,93 @@ fn default_pixel_format() -> [u8; 16] {
     format
 }
 
-fn capture_frame(capturer: &mut Capturer, session: &VncSession) -> Option<Vec<u8>> {
+fn capture_frame(
+    capturer: &mut Capturer,
+    session: &VncSession,
+    capture_width: usize,
+    capture_height: usize,
+) -> Option<Vec<u8>> {
     match capturer.frame() {
         Ok(frame) => {
-            let stride = session.screen_width as usize * 4;
+            if capture_width == 0 || capture_height == 0 {
+                return None;
+            }
+            let mut width = capture_width;
+            let mut height = capture_height;
+            let mut stride = if frame.len() % height == 0 {
+                frame.len() / height
+            } else {
+                0
+            };
+            let expected_min = width.saturating_mul(height).saturating_mul(4);
+            if frame.len() >= expected_min && stride == 0 {
+                // macOS IOSurface alloc size can be page-rounded; allow trailing padding.
+                let extra = frame.len().saturating_sub(expected_min);
+                if extra % height != 0 {
+                    stride = width.saturating_mul(4);
+                }
+            }
+            if frame.len() < expected_min || stride == 0 || stride < width * 4 {
+                if let Some((guess_w, guess_h, guess_stride)) = guess_capture_dimensions(
+                    frame.len(),
+                    session.screen_width as usize,
+                    session.screen_height as usize,
+                ) {
+                    width = guess_w;
+                    height = guess_h;
+                    stride = guess_stride;
+                    if width != capture_width || height != capture_height {
+                        capture_log_throttled(&format!(
+                            "vnc capture adjusted: frame_len={} capture={}x{} guess={}x{} stride={}",
+                            frame.len(),
+                            capture_width,
+                            capture_height,
+                            width,
+                            height,
+                            stride
+                        ));
+                    }
+                } else {
+                    capture_log_throttled(&format!(
+                        "vnc capture drop: frame_len={} capture={}x{} stride={}",
+                        frame.len(),
+                        capture_width,
+                        capture_height,
+                        stride
+                    ));
+                    return None;
+                }
+            }
+            let expected_min = width.saturating_mul(height).saturating_mul(4);
+            if frame.len() < expected_min || stride < width * 4 {
+                capture_log_throttled(&format!(
+                    "vnc capture mismatch: frame_len={} expected>={} width={} height={} stride={}",
+                    frame.len(),
+                    expected_min,
+                    width,
+                    height,
+                    stride
+                ));
+                return None;
+            }
             let source = extract_frame(
                 &frame,
                 stride,
-                session.screen_width as usize,
-                session.screen_height as usize,
-            );
-            if session.width == session.screen_width && session.height == session.screen_height {
+                width,
+                height,
+            )?;
+            if session.width as usize == width
+                && session.height as usize == height
+            {
                 Some(source)
             } else {
-                Some(scale_bgra(
+                scale_bgra(
                     &source,
-                    session.screen_width as usize,
-                    session.screen_height as usize,
+                    width,
+                    height,
                     session.width as usize,
                     session.height as usize,
-                ))
+                )
             }
         }
         Err(error) if error.kind() == ErrorKind::WouldBlock => None,
@@ -373,16 +639,54 @@ fn capture_frame(capturer: &mut Capturer, session: &VncSession) -> Option<Vec<u8
     }
 }
 
-fn extract_frame(frame: &[u8], stride: usize, width: usize, height: usize) -> Vec<u8> {
-    let mut data = vec![0u8; width * height * 4];
+fn guess_capture_dimensions(
+    frame_len: usize,
+    logical_width: usize,
+    logical_height: usize,
+) -> Option<(usize, usize, usize)> {
+    if logical_width == 0 || logical_height == 0 || frame_len == 0 {
+        return None;
+    }
+    let mut best: Option<(usize, usize, usize, usize)> = None;
+    for scale in 1..=4 {
+        let height = logical_height.saturating_mul(scale);
+        if height == 0 || frame_len % height != 0 {
+            continue;
+        }
+        let stride = frame_len / height;
+        if stride < 4 {
+            continue;
+        }
+        let width = logical_width.saturating_mul(scale);
+        if width == 0 || stride < width * 4 {
+            continue;
+        }
+        let padding = stride - width * 4;
+        match best {
+            Some((_, _, _, best_padding)) if padding >= best_padding => {}
+            _ => best = Some((width, height, stride, padding)),
+        }
+    }
+    best.map(|(width, height, stride, _)| (width, height, stride))
+}
+
+fn extract_frame(frame: &[u8], stride: usize, width: usize, height: usize) -> Option<Vec<u8>> {
+    let expected = width.saturating_mul(height).saturating_mul(4);
+    if expected == 0 || frame.len() < stride.saturating_mul(height) {
+        return None;
+    }
+    let mut data = vec![0u8; expected];
     for y in 0..height {
         let src_start = y * stride;
-        let dst_start = y * width * 4;
         let src_end = src_start + width * 4;
+        if src_end > frame.len() {
+            return None;
+        }
+        let dst_start = y * width * 4;
         data[dst_start..dst_start + width * 4]
             .copy_from_slice(&frame[src_start..src_end]);
     }
-    data
+    Some(data)
 }
 
 fn scale_bgra(
@@ -391,7 +695,11 @@ fn scale_bgra(
     src_height: usize,
     dst_width: usize,
     dst_height: usize,
-) -> Vec<u8> {
+) -> Option<Vec<u8>> {
+    let expected = src_width.saturating_mul(src_height).saturating_mul(4);
+    if expected == 0 || source.len() < expected || dst_width == 0 || dst_height == 0 {
+        return None;
+    }
     let mut output = vec![0u8; dst_width * dst_height * 4];
     for y in 0..dst_height {
         let src_y = y * src_height / dst_height;
@@ -403,10 +711,14 @@ fn scale_bgra(
                 .copy_from_slice(&source[src_index..src_index + 4]);
         }
     }
-    output
+    Some(output)
 }
 
 fn build_full_update(frame: &[u8], width: usize, height: usize) -> FrameUpdate {
+    let expected = width.saturating_mul(height).saturating_mul(4);
+    if expected == 0 || frame.len() < expected {
+        return Vec::new();
+    }
     vec![RectUpdate::Pixels {
         rect: Rect {
             x: 0,
@@ -414,7 +726,7 @@ fn build_full_update(frame: &[u8], width: usize, height: usize) -> FrameUpdate {
             width: width as u16,
             height: height as u16,
         },
-        data: frame.to_vec(),
+        data: frame[..expected].to_vec(),
     }]
 }
 
@@ -425,6 +737,10 @@ fn build_diff_update(
     height: usize,
     allow_copyrect: bool,
 ) -> Option<FrameUpdate> {
+    let expected = width.saturating_mul(height).saturating_mul(4);
+    if expected == 0 || current.len() < expected || previous.len() < expected {
+        return None;
+    }
     let rect = diff_rect(current, previous, width, height)?;
     let full_area = width * height;
     let rect_area = rect.width as usize * rect.height as usize;
@@ -726,10 +1042,15 @@ fn parse_encoding_preferences(encodings: &[i32]) -> EncodingPreferences {
     let mut tight_compression = 6u8;
     let mut tight_quality = None;
     let mut copyrect_supported = false;
+    let mut cursor_supported = false;
 
     for encoding in encodings {
         if *encoding == ENCODING_COPYRECT {
             copyrect_supported = true;
+            continue;
+        }
+        if *encoding == ENCODING_CURSOR {
+            cursor_supported = true;
             continue;
         }
         if *encoding >= ENCODING_COMPRESS_LEVEL_BASE
@@ -754,6 +1075,7 @@ fn parse_encoding_preferences(encodings: &[i32]) -> EncodingPreferences {
         tight_quality,
         allow_jpeg,
         copyrect_supported,
+        cursor_supported,
     }
 }
 
@@ -778,6 +1100,11 @@ fn build_framebuffer_update(
                 buffer.extend_from_slice(&src_y.to_be_bytes());
             }
             RectUpdate::Pixels { rect, data } => {
+                let expected_len = rect.width as usize * rect.height as usize * 4;
+                if expected_len == 0 || data.len() < expected_len {
+                    continue;
+                }
+                let data = &data[..expected_len];
                 let encoding = prefs.encoding;
                 buffer.extend_from_slice(&rect.x.to_be_bytes());
                 buffer.extend_from_slice(&rect.y.to_be_bytes());
@@ -786,14 +1113,14 @@ fn build_framebuffer_update(
                 buffer.extend_from_slice(&(encoding as i32).to_be_bytes());
                 match encoding {
                     ENCODING_ZLIB => {
-                        let compressed = compress_zlib(&data)?;
+                        let compressed = compress_zlib(data)?;
                         buffer.extend_from_slice(&(compressed.len() as u32).to_be_bytes());
                         buffer.extend_from_slice(&compressed);
                     }
                     ENCODING_ZRLE => {
                         let pf = zrle_pixel_format();
                         let encoded = encode_zrle(
-                            &data,
+                            data,
                             rect.width,
                             rect.height,
                             &pf,
@@ -804,7 +1131,7 @@ fn build_framebuffer_update(
                     }
                     ENCODING_TIGHT => {
                         let encoded = encode_tight_rect(
-                            &data,
+                            data,
                             rect.width,
                             rect.height,
                             prefs.tight_compression,
@@ -814,9 +1141,18 @@ fn build_framebuffer_update(
                         buffer.extend_from_slice(&encoded);
                     }
                     _ => {
-                        buffer.extend_from_slice(&data);
+                        buffer.extend_from_slice(data);
                     }
                 }
+            }
+            RectUpdate::Cursor(cursor) => {
+                buffer.extend_from_slice(&cursor.hotspot_x.to_be_bytes());
+                buffer.extend_from_slice(&cursor.hotspot_y.to_be_bytes());
+                buffer.extend_from_slice(&cursor.width.to_be_bytes());
+                buffer.extend_from_slice(&cursor.height.to_be_bytes());
+                buffer.extend_from_slice(&ENCODING_CURSOR.to_be_bytes());
+                buffer.extend_from_slice(&cursor.pixels);
+                buffer.extend_from_slice(&cursor.mask);
             }
         }
     }
@@ -827,13 +1163,34 @@ fn resolve_input_dimensions(
     screen_width: u32,
     screen_height: u32,
     display_index: Option<usize>,
-) -> (u32, u32, f64, f64) {
-    let (offset_x, offset_y) = parse_input_offset_env().unwrap_or((0.0, 0.0));
-    if let Some((scale_x, scale_y)) = parse_input_scale_env() {
-        let width = ((screen_width as f64) / scale_x).round().max(1.0) as u32;
-        let height = ((screen_height as f64) / scale_y).round().max(1.0) as u32;
-        return (width, height, offset_x, offset_y);
+) -> (u32, u32, f64, f64, f64, f64) {
+    let (env_offset_x, env_offset_y) = parse_input_offset_env().unwrap_or((0.0, 0.0));
+    let mut input_width = screen_width;
+    let mut input_height = screen_height;
+    let mut origin_x = env_offset_x;
+    let mut origin_y = env_offset_y;
+    let mut scale_x = 1.0;
+    let mut scale_y = 1.0;
+    #[cfg(target_os = "windows")]
+    {
+        if let Some((left, top, width, height)) = resolve_windows_monitor(display_index) {
+            input_width = width;
+            input_height = height;
+            origin_x += left;
+            origin_y += top;
+        }
     }
+
+    #[cfg(all(target_os = "linux", x11))]
+    {
+        if let Some((left, top, width, height)) = resolve_x11_monitor(display_index) {
+            input_width = width;
+            input_height = height;
+            origin_x += left;
+            origin_y += top;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
         use core_graphics::display::CGDisplay;
@@ -846,17 +1203,96 @@ fn resolve_input_dimensions(
             }
         }
         let bounds = display.bounds();
-        let logical_width = bounds.size.width;
-        let logical_height = bounds.size.height;
-        if logical_width > 0.0 && logical_height > 0.0 {
-            let width = logical_width.round().max(1.0) as u32;
-            let height = logical_height.round().max(1.0) as u32;
-            let origin_x = bounds.origin.x + offset_x;
-            let origin_y = bounds.origin.y + offset_y;
-            return (width, height, origin_x, origin_y);
-        }
+        let pixel_width = display.pixels_wide().max(1) as u32;
+        let pixel_height = display.pixels_high().max(1) as u32;
+        let logical_width = bounds.size.width.max(1.0);
+        let logical_height = bounds.size.height.max(1.0);
+        scale_x = pixel_width as f64 / logical_width;
+        scale_y = pixel_height as f64 / logical_height;
+        input_width = pixel_width;
+        input_height = pixel_height;
+        origin_x += bounds.origin.x;
+        origin_y += bounds.origin.y;
     }
-    (screen_width, screen_height, offset_x, offset_y)
+
+    if let Some((scale_env_x, scale_env_y)) = parse_input_scale_env() {
+        let width = ((input_width as f64) / scale_env_x).round().max(1.0) as u32;
+        let height = ((input_height as f64) / scale_env_y).round().max(1.0) as u32;
+        return (width, height, origin_x, origin_y, scale_x, scale_y);
+    }
+    (input_width, input_height, origin_x, origin_y, scale_x, scale_y)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_monitor(display_index: Option<usize>) -> Option<(f64, f64, u32, u32)> {
+    use std::mem::{size_of, MaybeUninit};
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{BOOL, LPARAM, RECT, TRUE};
+    use windows_sys::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW, MONITORINFOF_PRIMARY,
+    };
+
+    #[derive(Clone, Copy)]
+    struct MonitorRect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+        primary: bool,
+    }
+
+    unsafe extern "system" fn enum_proc(
+        monitor: HMONITOR,
+        _hdc: HDC,
+        _rect: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let monitors = &mut *(data as *mut Vec<MonitorRect>);
+        let mut info: MONITORINFOEXW = unsafe { MaybeUninit::zeroed().assume_init() };
+        info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+        let ok = unsafe { GetMonitorInfoW(monitor, &mut info.monitorInfo) };
+        if ok != 0 {
+            let rect = info.monitorInfo.rcMonitor;
+            monitors.push(MonitorRect {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                primary: (info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0,
+            });
+        }
+        TRUE
+    }
+
+    let index = display_index?;
+    let mut monitors: Vec<MonitorRect> = Vec::new();
+    unsafe {
+        let data = &mut monitors as *mut _ as LPARAM;
+        EnumDisplayMonitors(0, null_mut(), Some(enum_proc), data);
+    }
+    if monitors.is_empty() {
+        return None;
+    }
+    if index >= monitors.len() {
+        return None;
+    }
+    let chosen = monitors[index];
+    let width = (chosen.right - chosen.left).max(1) as u32;
+    let height = (chosen.bottom - chosen.top).max(1) as u32;
+    Some((chosen.left as f64, chosen.top as f64, width, height))
+}
+
+#[cfg(all(target_os = "linux", x11))]
+fn resolve_x11_monitor(display_index: Option<usize>) -> Option<(f64, f64, u32, u32)> {
+    use std::rc::Rc;
+    let index = display_index?;
+    let server = Rc::new(scrap::x11::Server::default().ok()?);
+    let mut displays = scrap::x11::Server::displays(server);
+    let display = displays.nth(index)?;
+    let rect = display.rect();
+    let width = rect.w.max(1) as u32;
+    let height = rect.h.max(1) as u32;
+    Some((rect.x as f64, rect.y as f64, width, height))
 }
 
 fn parse_input_scale_env() -> Option<(f64, f64)> {
@@ -951,28 +1387,115 @@ fn spawn_capture_thread(
     ready: Arc<AtomicBool>,
     force_full: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
+    guard: Arc<AtomicU64>,
+    generation: u64,
     copyrect_supported: Arc<AtomicBool>,
+    cursor_supported: Arc<AtomicBool>,
     sender: tokio::sync::mpsc::Sender<FrameUpdate>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
+        if guard.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        vnc_log(&format!(
+            "vnc capture start: display={} size={}x{}",
+            session.display_index, session.width, session.height
+        ));
+        if cursor_trace_enabled() {
+            cursor_trace_log(&format!(
+                "cursor_trace session display={} frame={}x{} input={}x{} origin=({:.2},{:.2}) scale=({:.3},{:.3}) screen={}x{}",
+                session.display_index,
+                session.width,
+                session.height,
+                session.input_width,
+                session.input_height,
+                session.input_origin_x,
+                session.input_origin_y,
+                session.input_scale_x,
+                session.input_scale_y,
+                session.screen_width,
+                session.screen_height
+            ));
+        }
         let display = match resolve_display(Some(session.display_index)) {
             Ok((display, _)) => display,
             Err(_) => return,
         };
-        let mut capturer = match Capturer::new(display) {
-            Ok(capturer) => capturer,
-            Err(_) => return,
+        let mut capturer = {
+            let init_lock = CAPTURE_INIT_LOCK.get_or_init(|| Mutex::new(()));
+            let _init_guard = match init_lock.lock() {
+                Ok(lock) => lock,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            match Capturer::new(display) {
+                Ok(capturer) => capturer,
+                Err(_) => return,
+            }
         };
+        let (capture_width, capture_height) = resolve_capture_dimensions(
+            session.display_index,
+            session.screen_width,
+            session.screen_height,
+        );
         let mut last_frame: Option<Vec<u8>> = None;
+        #[cfg(target_os = "macos")]
+        let mut last_cursor: Option<SystemCursor> = None;
+        let mut logged_first_frame = false;
+        let mut last_success = Instant::now();
         loop {
-            if !running.load(Ordering::SeqCst) {
+            if !running.load(Ordering::SeqCst)
+                || guard.load(Ordering::SeqCst) != generation
+            {
                 break;
             }
             thread::sleep(Duration::from_millis(MAX_FRAME_RATE_MS));
             if !ready.load(Ordering::SeqCst) {
                 continue;
             }
-            if let Some(frame) = capture_frame(&mut capturer, &session) {
+
+            #[cfg(target_os = "macos")]
+            if cursor_supported.load(Ordering::Relaxed) {
+                if let Some(cursor) = capture_cursor() {
+                    if cursor_changed(&last_cursor, &cursor) {
+                        let cursor_data = CursorData {
+                            width: cursor.width,
+                            height: cursor.height,
+                            hotspot_x: cursor.hotspot_x,
+                            hotspot_y: cursor.hotspot_y,
+                            pixels: cursor.pixels.clone(),
+                            mask: cursor.mask.clone(),
+                        };
+                        if cursor_trace_enabled() {
+                            cursor_trace_log(&format!(
+                                "cursor_trace update w={} h={} hot=({},{}) pixels={} mask={}",
+                                cursor_data.width,
+                                cursor_data.height,
+                                cursor_data.hotspot_x,
+                                cursor_data.hotspot_y,
+                                cursor_data.pixels.len(),
+                                cursor_data.mask.len()
+                            ));
+                        }
+                        let _ = sender.try_send(vec![RectUpdate::Cursor(cursor_data)]);
+                        last_cursor = Some(cursor);
+                    }
+                }
+            }
+
+            if let Some(frame) = capture_frame(
+                &mut capturer,
+                &session,
+                capture_width as usize,
+                capture_height as usize,
+            ) {
+                if !logged_first_frame {
+                    logged_first_frame = true;
+                    vnc_log(&format!(
+                        "vnc capture first frame: {}x{}",
+                        session.width, session.height
+                    ));
+                }
+                last_success = Instant::now();
                 let send_full = force_full.swap(false, Ordering::SeqCst) || last_frame.is_none();
                 let update = if send_full {
                     Some(build_full_update(
@@ -995,6 +1518,9 @@ fn spawn_capture_thread(
                 if let Some(update) = update {
                     let _ = sender.try_send(update);
                 }
+            } else if vnc_debug_enabled() && last_success.elapsed() > Duration::from_secs(5) {
+                last_success = Instant::now();
+                vnc_log("vnc capture stalled: no frames ready");
             }
         }
     })
@@ -1003,12 +1529,15 @@ fn spawn_capture_thread(
 fn spawn_input_thread(
     session: VncSession,
     running: Arc<AtomicBool>,
+    guard: Arc<AtomicU64>,
     receiver: std::sync::mpsc::Receiver<InputEvent>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut enigo = Enigo::new();
         let mut last_buttons = 0u8;
-        while running.load(Ordering::SeqCst) {
+        while running.load(Ordering::SeqCst)
+            && guard.load(Ordering::SeqCst) == session.generation
+        {
             match receiver.recv_timeout(Duration::from_millis(120)) {
                 Ok(InputEvent::Pointer { mask, x, y }) => {
                     handle_pointer_event(&mut enigo, &session, &mut last_buttons, mask, x, y);
@@ -1135,13 +1664,34 @@ fn handle_pointer_event(
 ) {
     let input_width = session.input_width.max(1) as f64;
     let input_height = session.input_height.max(1) as f64;
-    let scaled_x = (x as f64 / session.width as f64) * input_width;
-    let scaled_y = (y as f64 / session.height as f64) * input_height;
+    let scaled_x = (x as f64 / session.width.max(1) as f64) * input_width;
+    let scaled_y = (y as f64 / session.height.max(1) as f64) * input_height;
     let clamped_x = scaled_x.clamp(0.0, input_width - 1.0);
     let clamped_y = scaled_y.clamp(0.0, input_height - 1.0);
-    let dest_x = clamped_x + session.input_origin_x;
-    let dest_y = clamped_y + session.input_origin_y;
-    enigo.mouse_move_to(dest_x.round() as i32, dest_y.round() as i32);
+    let point_x = clamped_x / session.input_scale_x + session.input_origin_x;
+    let point_y = clamped_y / session.input_scale_y + session.input_origin_y;
+    if cursor_trace_enabled() {
+        cursor_trace_log(&format!(
+            "cursor_trace pointer raw=({},{}) scaled=({:.2},{:.2}) clamped=({:.2},{:.2}) point=({:.2},{:.2}) input={}x{} scale=({:.3},{:.3}) origin=({:.2},{:.2}) frame={}x{}",
+            x,
+            y,
+            scaled_x,
+            scaled_y,
+            clamped_x,
+            clamped_y,
+            point_x,
+            point_y,
+            session.input_width,
+            session.input_height,
+            session.input_scale_x,
+            session.input_scale_y,
+            session.input_origin_x,
+            session.input_origin_y,
+            session.width,
+            session.height
+        ));
+    }
+    enigo.mouse_move_to(point_x.round() as i32, point_y.round() as i32);
 
     handle_button(enigo, last_buttons, mask, 1, MouseButton::Left);
     handle_button(enigo, last_buttons, mask, 2, MouseButton::Right);
@@ -1156,6 +1706,7 @@ fn handle_pointer_event(
 
     *last_buttons = mask;
 }
+
 
 fn handle_button(
     enigo: &mut Enigo,

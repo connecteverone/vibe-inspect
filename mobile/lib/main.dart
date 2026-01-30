@@ -327,6 +327,9 @@ class _PairingScreenState extends State<PairingScreen> {
   String? _scanError;
   String? _pairingStatus;
   bool _pairingStatusIsError = false;
+  String? _pairingDetailStatus;
+  bool _pairingDetailStatusIsError = false;
+  String? _manualAgentUrl;
   bool _isPairing = false;
   Timer? _pairingPoller;
   String? _pairingAgentUrl;
@@ -383,6 +386,19 @@ class _PairingScreenState extends State<PairingScreen> {
     await _applyQrPayload(scanned);
   }
 
+  void _selectManualAgentUrl(String url) {
+    setState(() {
+      _manualAgentUrl = _normalizeManualUrl(url);
+    });
+    unawaited(_retryPairing());
+  }
+
+  void _clearManualAgentUrl() {
+    setState(() {
+      _manualAgentUrl = null;
+    });
+  }
+
   Future<String?> _promptQrPayloadInput() async {
     final controller = TextEditingController();
     final payload = await showDialog<String>(
@@ -423,6 +439,9 @@ class _PairingScreenState extends State<PairingScreen> {
       _scanError = parsed == null ? 'Invalid QR payload.' : null;
       _pairingStatus = null;
       _pairingStatusIsError = false;
+      _pairingDetailStatus = null;
+      _pairingDetailStatusIsError = false;
+      _manualAgentUrl = null;
       _isPairing = false;
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
@@ -443,6 +462,8 @@ class _PairingScreenState extends State<PairingScreen> {
       _isPairing = true;
       _pairingStatus = 'Contacting the desktop agent...';
       _pairingStatusIsError = false;
+      _pairingDetailStatus = null;
+      _pairingDetailStatusIsError = false;
     });
     final result = await _confirmPairingWithUrls(payload);
     if (!mounted) {
@@ -461,6 +482,8 @@ class _PairingScreenState extends State<PairingScreen> {
               result.agentUrl == null ? null : _isTunnelUrl(payload, result.agentUrl!);
           _pairingStatus = 'Waiting for desktop approval.';
           _pairingStatusIsError = false;
+          _pairingDetailStatus = null;
+          _pairingDetailStatusIsError = false;
         });
         _startPendingPolling(payload, result.agentUrl!);
         break;
@@ -471,6 +494,9 @@ class _PairingScreenState extends State<PairingScreen> {
               result.message ?? 'Unable to reach the desktop agent.';
           _pairingStatusIsError = true;
           _pairingUsesTunnel = null;
+          _pairingDetailStatus = result.detail;
+          _pairingDetailStatusIsError =
+              result.detail != null && result.detail!.trim().isNotEmpty;
         });
         break;
     }
@@ -534,6 +560,9 @@ class _PairingScreenState extends State<PairingScreen> {
           _pairingStatus =
               result.message ?? 'Desktop approval check failed.';
           _pairingStatusIsError = true;
+          _pairingDetailStatus = result.detail;
+          _pairingDetailStatusIsError =
+              result.detail != null && result.detail!.trim().isNotEmpty;
         });
       }
     } finally {
@@ -552,6 +581,8 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingStatus = 'Connected.';
       _pairingStatusIsError = false;
       _isPairing = false;
+      _pairingDetailStatus = null;
+      _pairingDetailStatusIsError = false;
     });
     await _recordPairingEvent(payload, agentUrl);
   }
@@ -567,9 +598,11 @@ class _PairingScreenState extends State<PairingScreen> {
         message: selection.message ??
             payload.tunnelError ??
             'No desktop URL found in the pairing payload.',
+        detail: selection.detail,
       );
     }
     final errors = <String>[];
+    final attemptDetails = <String>[];
     for (final url in candidates) {
       final result = await _confirmPairingAtUrl(payload, url);
       if (result.status != _PairingAttemptStatus.failed) {
@@ -578,12 +611,15 @@ class _PairingScreenState extends State<PairingScreen> {
       if (result.message != null) {
         errors.add(result.message!);
       }
+      attemptDetails.add(_formatAttemptDetail(url, result.message));
     }
+    final detail = _mergePairingDetails(selection.detail, attemptDetails);
     return _PairingAttemptResult(
       status: _PairingAttemptStatus.failed,
       message: errors.isNotEmpty
           ? errors.first
           : 'Unable to reach the desktop agent.',
+      detail: detail,
     );
   }
 
@@ -592,6 +628,22 @@ class _PairingScreenState extends State<PairingScreen> {
   ) async {
     final tunnelUrl = payload.tunnelUrl?.trim() ?? '';
     final localUrls = payload.localUrls;
+    final manualUrl = _manualAgentUrl?.trim();
+    if (manualUrl != null && manualUrl.isNotEmpty && !_forceTunnel) {
+      final normalizedManual = _normalizeManualUrl(manualUrl);
+      final rest = localUrls
+          .where((url) => _normalizeManualUrl(url) != normalizedManual)
+          .toList();
+      final candidates = <String>[
+        normalizedManual,
+        ...rest,
+        if (tunnelUrl.isNotEmpty) tunnelUrl,
+      ];
+      return _PairingCandidateSelection(
+        candidates: candidates,
+        message: 'Using manually selected endpoint.',
+      );
+    }
     if (_forceTunnel) {
       if (tunnelUrl.isNotEmpty) {
         return _PairingCandidateSelection(candidates: [tunnelUrl]);
@@ -604,10 +656,29 @@ class _PairingScreenState extends State<PairingScreen> {
     }
 
     if (localUrls.isNotEmpty) {
-      final reachable = await _reachableLocalUrls(localUrls);
+      final diagnostics = await _probeLocalUrls(localUrls);
+      final reachable = diagnostics
+          .where((result) => result.reachable)
+          .map((result) => result.url)
+          .toList();
+      final localDetail = _formatLocalDiagnostics(diagnostics);
+      final candidates = <String>[
+        if (reachable.isNotEmpty) ...reachable else ...localUrls,
+        if (tunnelUrl.isNotEmpty) tunnelUrl,
+      ];
       if (reachable.isNotEmpty) {
-        return _PairingCandidateSelection(candidates: reachable);
+        return _PairingCandidateSelection(
+          candidates: candidates,
+          detail: localDetail,
+        );
       }
+      return _PairingCandidateSelection(
+        candidates: candidates,
+        message: tunnelUrl.isNotEmpty
+            ? 'Local health check failed. Trying LAN first, then tunnel.'
+            : 'Local health check failed. Trying LAN endpoints directly.',
+        detail: localDetail,
+      );
     }
 
     if (tunnelUrl.isNotEmpty) {
@@ -617,46 +688,170 @@ class _PairingScreenState extends State<PairingScreen> {
     final fallbackMessage = payload.tunnelError != null &&
             payload.tunnelError!.trim().isNotEmpty
         ? payload.tunnelError!
-        : localUrls.isNotEmpty
-            ? 'Local endpoints unreachable and no tunnel URL available.'
-            : 'No desktop URL found in the pairing payload.';
+        : 'No desktop URL found in the pairing payload.';
     return _PairingCandidateSelection(
       candidates: const [],
       message: fallbackMessage,
     );
   }
 
-  Future<List<String>> _reachableLocalUrls(List<String> localUrls) async {
+  Future<List<_ReachabilityResult>> _probeLocalUrls(
+    List<String> localUrls,
+  ) async {
     final results = await Future.wait(
-      localUrls.map(_isLocalReachable),
+      localUrls.map(_probeLocalUrl),
     );
-    final reachable = <String>[];
-    for (var index = 0; index < localUrls.length; index += 1) {
-      if (results[index]) {
-        reachable.add(localUrls[index]);
-      }
-    }
-    return reachable;
+    return results;
   }
 
-  Future<bool> _isLocalReachable(String baseUrl) async {
+  Future<_ReachabilityResult> _probeLocalUrl(String baseUrl) async {
     final client = _pairingClient;
     if (client == null) {
-      return false;
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'HTTP client unavailable.',
+      );
     }
     Uri uri;
     try {
       uri = _healthUri(baseUrl);
     } catch (_) {
-      return false;
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'Invalid URL.',
+      );
     }
     try {
       final response =
           await client.get(uri).timeout(const Duration(seconds: 1));
-      return response.statusCode >= 200 && response.statusCode < 300;
-    } catch (_) {
-      return false;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return _ReachabilityResult(
+          url: baseUrl,
+          reachable: true,
+          reason: 'OK',
+        );
+      }
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'HTTP ${response.statusCode}.',
+      );
+    } on TimeoutException {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'Timeout after 1s.',
+      );
+    } catch (error) {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: _describeNetworkError(error),
+      );
     }
+  }
+
+  String _formatAttemptDetail(String url, String? message) {
+    final label = _shortUrlLabel(url);
+    final requestLabel = _appendPath(url, '/pairing/confirm');
+    final reason = message == null || message.trim().isEmpty ? 'Failed.' : message;
+    return '- $label ($requestLabel): $reason';
+  }
+
+  String? _mergePairingDetails(String? base, List<String> attempts) {
+    final parts = <String>[];
+    if (base != null && base.trim().isNotEmpty) {
+      parts.add(base.trim());
+    }
+    if (attempts.isNotEmpty) {
+      parts.add('Tried endpoints:\n${attempts.join('\n')}');
+    }
+    if (parts.isEmpty) {
+      return null;
+    }
+    return parts.join('\n\n');
+  }
+
+  String _formatLocalDiagnostics(List<_ReachabilityResult> diagnostics) {
+    final lines = diagnostics.map((result) {
+      final label = _shortUrlLabel(result.url);
+      final requestLabel = _appendPath(result.url, '/health');
+      final reason = result.reason ?? 'Unreachable.';
+      return '- $label ($requestLabel): $reason';
+    }).join('\n');
+    return [
+      'Local checks:',
+      lines,
+      'Tips: ensure same Wi-Fi, allow local network permission, disable AP isolation, and allow the desktop firewall port.',
+    ].join('\n');
+  }
+
+  String _shortUrlLabel(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) {
+      return url;
+    }
+    if (uri.hasPort) {
+      return '${uri.host}:${uri.port}';
+    }
+    return uri.host;
+  }
+
+  String _normalizeManualUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      return trimmed;
+    }
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme) {
+      return trimmed;
+    }
+    return 'http://$trimmed';
+  }
+
+  String _appendPath(String baseUrl, String path) {
+    final normalized = _normalizeManualUrl(baseUrl);
+    final base = Uri.tryParse(normalized);
+    if (base == null) {
+      return normalized + path;
+    }
+    final basePath =
+        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final nextPath = basePath.isEmpty ? path : '$basePath$path';
+    return base.replace(path: nextPath).toString();
+  }
+
+  String _describeReachFailure(String url, Object error) {
+    final detail = _describeNetworkError(error);
+    if (detail.isEmpty) {
+      return 'Failed to reach $url.';
+    }
+    return 'Failed to reach $url: $detail';
+  }
+
+  String _describeNetworkError(Object error) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    if (lower.contains('no route to host') || lower.contains('errno = 65')) {
+      return 'No route to host (errno 65). iOS may be blocking local network access for this app. Check Settings > Local Network and disable VPN/Private Relay.';
+    }
+    if (lower.contains('connection refused') || lower.contains('errno = 61')) {
+      return 'Connection refused (errno 61). The host is reachable but the port was rejected by the OS/firewall.';
+    }
+    if (lower.contains('network is unreachable') || lower.contains('errno = 51')) {
+      return 'Network is unreachable (errno 51). The app has no route to the LAN. Check Wi-Fi and local network permission.';
+    }
+    final socketPrefix = 'SocketException: ';
+    final clientPrefix = 'ClientException: ';
+    if (raw.startsWith(socketPrefix)) {
+      return raw.substring(socketPrefix.length).trim();
+    }
+    if (raw.startsWith(clientPrefix)) {
+      return raw.substring(clientPrefix.length).trim();
+    }
+    return raw.trim();
   }
 
   Future<_PairingAttemptResult> _confirmPairingAtUrl(
@@ -692,10 +887,10 @@ class _PairingScreenState extends State<PairingScreen> {
             }),
           )
           .timeout(const Duration(seconds: 4));
-    } catch (_) {
+    } catch (error) {
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: 'Failed to reach $baseUrl.',
+        message: _describeReachFailure(baseUrl, error),
         agentUrl: baseUrl,
       );
     }
@@ -809,6 +1004,8 @@ class _PairingScreenState extends State<PairingScreen> {
       _scanError = null;
       _pairingStatus = null;
       _pairingStatusIsError = false;
+      _pairingDetailStatus = null;
+      _pairingDetailStatusIsError = false;
       _isPairing = false;
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
@@ -1192,6 +1389,47 @@ class _PairingScreenState extends State<PairingScreen> {
                           )
                         else
                           _PairingTokenDetails(payload: _payload!),
+                        if (_payload != null &&
+                            _payload!.localUrls.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            'LAN endpoints',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFF64748B),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          Column(
+                            children: [
+                              for (final url in _payload!.localUrls)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          url,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                color: const Color(0xFF0F172A),
+                                              ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      OutlinedButton(
+                                        onPressed: () =>
+                                            _selectManualAgentUrl(url),
+                                        child: const Text('Use'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                         if (_scanError != null) ...[
                           const SizedBox(height: 12),
                           _InlineStatus(
@@ -1267,6 +1505,29 @@ class _PairingScreenState extends State<PairingScreen> {
                           const Text(
                             'Scan a token to begin pairing. Approve on desktop if required.',
                           ),
+                        if (_manualAgentUrl != null) ...[
+                          const SizedBox(height: 8),
+                          _InlineStatus(
+                            message:
+                                'Manual endpoint: ${_shortUrlLabel(_manualAgentUrl!)}',
+                            isError: false,
+                          ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              onPressed: _clearManualAgentUrl,
+                              child: const Text('Clear manual endpoint'),
+                            ),
+                          ),
+                        ],
+                        if (_pairingDetailStatus != null &&
+                            _pairingDetailStatus!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _InlineStatus(
+                            message: _pairingDetailStatus!,
+                            isError: _pairingDetailStatusIsError,
+                          ),
+                        ],
                         if (_pairingAgentUrl != null) ...[
                           const SizedBox(height: 10),
                           Text(
@@ -8677,8 +8938,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const int _encodingZlib = 6;
   static const int _encodingTight = 7;
   static const int _encodingZrle = 16;
+  static const int _encodingCursor = -239;
   static const int _encodingCompressLevelBase = -256;
   static const int _encodingQualityLevelBase = -32;
+  static const Duration _noFrameTimeout = Duration(seconds: 8);
+  static const double _trackpadMoreButtonSize = 40;
+  static const double _trackpadMoreButtonMargin = 10;
+  static const Offset _trackpadMoreAnchorDefault = Offset(0.88, 0.1);
+  static const int _calibrationVersion = 2;
+  static const double _calibrationAspectTolerance = 0.02;
 
   late Offset _pointerPosition;
   late Offset _cameraCenter;
@@ -8702,9 +8970,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   AgentCommandClient? _agentClient;
   VncRfbClient? _vncClient;
   ui.Image? _frameImage;
+  ui.Image? _cursorImage;
+  Size _cursorSize = Size.zero;
+  Offset _cursorHotspot = Offset.zero;
   Size _frameSize = const Size(720, 1280);
   bool _isDecoding = false;
   VncFrame? _pendingFrame;
+  DateTime? _streamStartedAt;
+  DateTime? _lastFrameAt;
+  Timer? _noFrameTimer;
   bool _controlsSheetOpen = false;
   int _buttonMask = 0;
   bool _isDragging = false;
@@ -8725,6 +8999,11 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   double _inputOffsetX = 0;
   double _inputOffsetY = 0;
   bool _directInputEnabled = false;
+  bool _showLocalCursor = false;
+  bool _cursorDebugEnabled = false;
+  final List<String> _cursorDebugLog = [];
+  DateTime? _lastCursorDebugLoggedAt;
+  Offset? _lastCursorDebugPointer;
   bool? _directInputBackup;
   int? _selectedDisplayIndex;
   List<VncDisplayInfo> _availableDisplays = const [];
@@ -8740,7 +9019,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   double? _calibrationBackupScaleY;
   double? _calibrationBackupOffsetX;
   double? _calibrationBackupOffsetY;
+  double? _calibrationAspectRatio;
+  bool _calibrationNormalized = true;
+  bool _hasStreamInfo = false;
   bool _isDisposed = false;
+  Offset _trackpadMoreAnchor = _trackpadMoreAnchorDefault;
+  bool _trackpadMoreRepositioning = false;
+  Timer? _layoutRecalibrationTimer;
+  bool _pendingLayoutRecalibration = false;
+  DateTime? _lastRecalibrationAt;
+  Size _lastLayoutSize = Size.zero;
+  bool? _lastLayoutLandscape;
+  bool _lastLayoutFullscreen = false;
 
   @override
   void initState() {
@@ -8755,6 +9045,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _configureAgentClient();
     _hydrateFromPayload();
     unawaited(_loadDisplaySelection());
+    unawaited(_loadLocalCursorPreference());
     unawaited(_loadCalibration());
     unawaited(_fetchDisplays());
     unawaited(_startStream());
@@ -8768,8 +9059,11 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _focusTimer?.cancel();
     _calibrationSaveTimer?.cancel();
     _autoResizeTimer?.cancel();
+    _noFrameTimer?.cancel();
+    _layoutRecalibrationTimer?.cancel();
     _vncClient?.close();
     _frameImage?.dispose();
+    _cursorImage?.dispose();
     _httpClient?.close();
     if (_isFullscreen) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -8785,6 +9079,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     _httpClient = http.Client();
     _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
+  }
+
+  void _resetCursorState() {
+    _cursorImage?.dispose();
+    _cursorImage = null;
+    _cursorSize = Size.zero;
+    _cursorHotspot = Offset.zero;
   }
 
   void _hydrateFromPayload() {
@@ -8807,6 +9108,58 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
   }
 
+  double? _currentAspectRatio() {
+    if (_frameSize.width <= 0 || _frameSize.height <= 0) {
+      return null;
+    }
+    return _frameSize.width / _frameSize.height;
+  }
+
+  bool _isAspectRatioCompatible(double? stored, Size size) {
+    if (stored == null || size.width <= 0 || size.height <= 0) {
+      return true;
+    }
+    final ratio = size.width / size.height;
+    return (ratio - stored).abs() <= _calibrationAspectTolerance;
+  }
+
+  bool _isDefaultCalibration() {
+    return (_inputScaleX - 1).abs() < 0.0001 &&
+        (_inputScaleY - 1).abs() < 0.0001 &&
+        _inputOffsetX.abs() < 0.0001 &&
+        _inputOffsetY.abs() < 0.0001;
+  }
+
+  void _applyCalibrationDefaults({bool sendPointer = true}) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _inputScaleX = 1;
+      _inputScaleY = 1;
+      _inputOffsetX = 0;
+      _inputOffsetY = 0;
+      _calibrationAspectRatio = null;
+      _calibrationNormalized = true;
+      _cameraCenter = _applyInputCalibration(_pointerPosition);
+    });
+    if (sendPointer) {
+      _sendPointerEvent();
+    }
+  }
+
+  void _maybeInvalidateCalibrationForFrameSize() {
+    if (!_hasStreamInfo || !_calibrationNormalized) {
+      return;
+    }
+    if (_isDefaultCalibration()) {
+      return;
+    }
+    if (!_isAspectRatioCompatible(_calibrationAspectRatio, _frameSize)) {
+      unawaited(_resetCalibration());
+    }
+  }
+
   String _calibrationStorageKey() {
     final agentId = widget.session.agentId ?? widget.session.id;
     final displayIndex = _selectedDisplayIndex ?? 0;
@@ -8819,29 +9172,31 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     if (raw == null || raw.trim().isEmpty) {
-      setState(() {
-        _inputScaleX = 1;
-        _inputScaleY = 1;
-        _inputOffsetX = 0;
-        _inputOffsetY = 0;
-        _cameraCenter = _applyInputCalibration(_pointerPosition);
-      });
-      _sendPointerEvent();
+      _applyCalibrationDefaults();
       return;
     }
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
+        await widget.storage.deleteKeyValue(_calibrationStorageKey());
+        _applyCalibrationDefaults();
         return;
       }
+      final version = (decoded['version'] as num?)?.toInt() ?? 1;
+      final normalized = decoded['normalized'] == true;
       final scaleX = (decoded['scaleX'] as num?)?.toDouble();
       final scaleY = (decoded['scaleY'] as num?)?.toDouble();
       final offsetX = (decoded['offsetX'] as num?)?.toDouble();
       final offsetY = (decoded['offsetY'] as num?)?.toDouble();
-      if (scaleX == null ||
+      final aspectRatio = (decoded['aspectRatio'] as num?)?.toDouble();
+      if (!normalized ||
+          version != _calibrationVersion ||
+          scaleX == null ||
           scaleY == null ||
           offsetX == null ||
           offsetY == null) {
+        await widget.storage.deleteKeyValue(_calibrationStorageKey());
+        _applyCalibrationDefaults();
         return;
       }
       setState(() {
@@ -8849,10 +9204,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _inputScaleY = scaleY;
         _inputOffsetX = offsetX;
         _inputOffsetY = offsetY;
+        _calibrationAspectRatio = aspectRatio;
+        _calibrationNormalized = true;
         _cameraCenter = _applyInputCalibration(_pointerPosition);
       });
       _sendPointerEvent();
+      _maybeInvalidateCalibrationForFrameSize();
     } catch (_) {
+      await widget.storage.deleteKeyValue(_calibrationStorageKey());
+      _applyCalibrationDefaults();
       return;
     }
   }
@@ -8865,30 +9225,32 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }
 
   Future<void> _persistCalibration() async {
+    final aspectRatio = _currentAspectRatio();
     final payload = jsonEncode({
+      'version': _calibrationVersion,
+      'normalized': true,
       'scaleX': _inputScaleX,
       'scaleY': _inputScaleY,
       'offsetX': _inputOffsetX,
       'offsetY': _inputOffsetY,
+      'aspectRatio': aspectRatio,
     });
     await widget.storage.writeKeyValue(_calibrationStorageKey(), payload);
   }
 
   Future<void> _resetCalibration() async {
-    setState(() {
-      _inputScaleX = 1;
-      _inputScaleY = 1;
-      _inputOffsetX = 0;
-      _inputOffsetY = 0;
-      _cameraCenter = _applyInputCalibration(_pointerPosition);
-    });
-    _sendPointerEvent();
+    _applyCalibrationDefaults();
     await widget.storage.deleteKeyValue(_calibrationStorageKey());
   }
 
   String _displayStorageKey() {
     final agentId = widget.session.agentId ?? widget.session.id;
     return 'vnc_display:$agentId';
+  }
+
+  String _localCursorStorageKey() {
+    final agentId = widget.session.agentId ?? widget.session.id;
+    return 'vnc_local_cursor:$agentId';
   }
 
   Future<void> _loadDisplaySelection() async {
@@ -8911,6 +9273,105 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     await widget.storage.writeKeyValue(_displayStorageKey(), index.toString());
+  }
+
+  Future<void> _loadLocalCursorPreference() async {
+    final raw = await widget.storage.readKeyValue(_localCursorStorageKey());
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    final normalized = raw.trim().toLowerCase();
+    final nextValue = normalized == '1' || normalized == 'true';
+    setState(() {
+      _showLocalCursor = nextValue;
+    });
+  }
+
+  Future<void> _persistLocalCursorPreference(bool value) async {
+    await widget.storage.writeKeyValue(
+      _localCursorStorageKey(),
+      value ? '1' : '0',
+    );
+  }
+
+  void _logCursorDebug(String type, Map<String, Object?> payload,
+      {bool force = false}) {
+    if (!_cursorDebugEnabled) {
+      return;
+    }
+    final now = DateTime.now();
+    if (!force && _lastCursorDebugLoggedAt != null) {
+      final delta = now.difference(_lastCursorDebugLoggedAt!);
+      if (delta < const Duration(milliseconds: 40)) {
+        return;
+      }
+    }
+    _lastCursorDebugLoggedAt = now;
+    final entry = <String, Object?>{
+      't': now.toIso8601String(),
+      'type': type,
+      ...payload,
+    };
+    _cursorDebugLog.add(jsonEncode(entry));
+    if (_cursorDebugLog.length > 1200) {
+      _cursorDebugLog.removeRange(0, _cursorDebugLog.length - 1000);
+    }
+  }
+
+  void _copyCursorDebugLog() {
+    if (_cursorDebugLog.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有可复制的光标调试日志')),
+      );
+      return;
+    }
+    final header = jsonEncode({
+      't': DateTime.now().toIso8601String(),
+      'type': 'header',
+      'sessionId': widget.session.id,
+      'frameSize': {'w': _frameSize.width, 'h': _frameSize.height},
+      'viewMode': _viewMode.name,
+      'zoom': _zoom,
+      'localCursor': _showLocalCursor,
+    });
+    final text = ([header, ..._cursorDebugLog]).join('\n');
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制 ${_cursorDebugLog.length} 条光标日志')),
+    );
+  }
+
+  void _clearCursorDebugLog() {
+    _cursorDebugLog.clear();
+    _lastCursorDebugPointer = null;
+    _lastCursorDebugLoggedAt = null;
+  }
+
+  void _logPointerSample(String source, Offset pointer) {
+    if (_lastViewSize.width <= 0 || _lastViewSize.height <= 0) {
+      return;
+    }
+    final effective = _applyInputCalibration(pointer);
+    final scale = _baseScale(_lastViewSize) * _zoom;
+    final translation = _calculateTranslation(_lastViewSize);
+    final screen = translation + effective * scale;
+    _logCursorDebug('pointer', {
+      'source': source,
+      'frame': {'x': pointer.dx, 'y': pointer.dy},
+      'effective': {'x': effective.dx, 'y': effective.dy},
+      'screen': {'x': screen.dx, 'y': screen.dy},
+      'view': {'w': _lastViewSize.width, 'h': _lastViewSize.height},
+      'frameSize': {'w': _frameSize.width, 'h': _frameSize.height},
+      'viewMode': _viewMode.name,
+      'zoom': _zoom,
+      'calibration': {
+        'scaleX': _inputScaleX,
+        'scaleY': _inputScaleY,
+        'offsetX': _inputOffsetX,
+        'offsetY': _inputOffsetY,
+        'normalized': _calibrationNormalized,
+      },
+    });
   }
 
   Future<void> _fetchDisplays() async {
@@ -8985,6 +9446,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (!mounted || _isDisposed) {
       return;
     }
+    _lastFrameAt = DateTime.now();
+    _noFrameTimer?.cancel();
     if (_isDecoding) {
       _pendingFrame = frame;
       return;
@@ -9010,22 +9473,35 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _isDecoding = false;
           return;
         }
+        final newSize = Size(
+          frame.width.toDouble(),
+          frame.height.toDouble(),
+        );
+        final sizeChanged = newSize != _frameSize;
         setState(() {
           _frameImage?.dispose();
           _frameImage = image;
-          final newSize = Size(
-            frame.width.toDouble(),
-            frame.height.toDouble(),
-          );
-          if (newSize != _frameSize) {
+          if (sizeChanged) {
+            // Scale pointer position proportionally when frame size changes.
+            // This ensures the cursor stays at the same relative position.
+            final oldWidth = _frameSize.width > 0 ? _frameSize.width : newSize.width;
+            final oldHeight = _frameSize.height > 0 ? _frameSize.height : newSize.height;
+            final scaleX = newSize.width / oldWidth;
+            final scaleY = newSize.height / oldHeight;
             _frameSize = newSize;
             _pointerPosition = Offset(
-              _pointerPosition.dx.clamp(0, _frameSize.width),
-              _pointerPosition.dy.clamp(0, _frameSize.height),
+              (_pointerPosition.dx * scaleX).clamp(0, _frameSize.width),
+              (_pointerPosition.dy * scaleY).clamp(0, _frameSize.height),
             );
             _cameraCenter = _applyInputCalibration(_pointerPosition);
           }
         });
+        if (sizeChanged) {
+          _maybeInvalidateCalibrationForFrameSize();
+          // Sync cursor position to desktop when frame size changes.
+          // This ensures coordinates stay aligned after dynamic resizing.
+          _sendPointerEvent();
+        }
         _isDecoding = false;
         final pending = _pendingFrame;
         _pendingFrame = null;
@@ -9034,6 +9510,57 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         }
       },
       rowBytes: frame.width * 4,
+    );
+  }
+
+  void _handleCursor(VncCursor? cursor) {
+    if (!mounted || _isDisposed) {
+      return;
+    }
+    if (cursor == null || cursor.width <= 0 || cursor.height <= 0) {
+      _logCursorDebug('cursor_clear', {
+        'reason': 'null_or_empty',
+      });
+      setState(() {
+        _resetCursorState();
+      });
+      return;
+    }
+    _logCursorDebug('cursor_update', {
+      'w': cursor.width,
+      'h': cursor.height,
+      'hotX': cursor.hotX,
+      'hotY': cursor.hotY,
+      'len': cursor.pixels.length,
+    });
+    final expectedLength = cursor.width * cursor.height * 4;
+    final safePixels = cursor.pixels.length >= expectedLength
+        ? cursor.pixels.sublist(0, expectedLength)
+        : Uint8List.fromList(cursor.pixels);
+    ui.decodeImageFromPixels(
+      safePixels,
+      cursor.width,
+      cursor.height,
+      cursor.format,
+      (image) {
+        if (!mounted || _isDisposed) {
+          image.dispose();
+          return;
+        }
+        setState(() {
+          _cursorImage?.dispose();
+          _cursorImage = image;
+          _cursorSize = Size(
+            cursor.width.toDouble(),
+            cursor.height.toDouble(),
+          );
+          _cursorHotspot = Offset(
+            cursor.hotX.toDouble(),
+            cursor.hotY.toDouble(),
+          );
+        });
+      },
+      rowBytes: cursor.width * 4,
     );
   }
 
@@ -9051,6 +9578,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       setState(() {
         _isConnecting = true;
         _connectionError = null;
+        _resetCursorState();
       });
       await _updateSession(status: 'connecting');
     }
@@ -9069,6 +9597,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     VncRfbClient? candidate;
     final previousClient = _vncClient;
     try {
+      if (!preserveExisting) {
+        _streamStartedAt = DateTime.now();
+        _lastFrameAt = null;
+      }
       final desired = requestedSize ?? _preferredStreamSize();
       final sessionInfo = await agentClient.sendVncCommand(
         action: 'start',
@@ -9077,10 +9609,30 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         height: (desired?.height ?? _frameSize.height).round(),
         displayIndex: _selectedDisplayIndex,
       );
+      if (_cursorDebugEnabled) {
+        _logCursorDebug('session_info', {
+          'width': sessionInfo.width,
+          'height': sessionInfo.height,
+          'display': sessionInfo.displayIndex,
+          'input': {
+            'width': sessionInfo.inputWidth,
+            'height': sessionInfo.inputHeight,
+            'originX': sessionInfo.inputOriginX,
+            'originY': sessionInfo.inputOriginY,
+            'scaleX': sessionInfo.inputScaleX,
+            'scaleY': sessionInfo.inputScaleY,
+          },
+          'screen': {
+            'width': sessionInfo.screenWidth,
+            'height': sessionInfo.screenHeight,
+          },
+        }, force: true);
+      }
       final wsUri = _buildVncWebsocketUri(sessionInfo);
       candidate = VncRfbClient(
         uri: wsUri,
         onFrame: _handleFrame,
+        onCursor: _handleCursor,
         onError: (message) {
           if (!mounted || _isDisposed) {
             return;
@@ -9096,11 +9648,16 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (!mounted || _isDisposed) {
         return;
       }
+      final shouldResetCalibration =
+          sessionInfo.inputWidth != null && sessionInfo.inputHeight != null;
       setState(() {
         if (!preserveExisting) {
           _isConnecting = false;
         }
         _connectionError = null;
+        if (!preserveExisting) {
+          _resetCursorState();
+        }
         _frameSize = Size(
           sessionInfo.width.toDouble(),
           sessionInfo.height.toDouble(),
@@ -9110,11 +9667,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _frameSize.height / 2,
         );
         _cameraCenter = _applyInputCalibration(_pointerPosition);
+        _hasStreamInfo = true;
         if (sessionInfo.displayIndex != null) {
           _selectedDisplayIndex = sessionInfo.displayIndex;
         }
       });
+      if (shouldResetCalibration) {
+        _applyCalibrationDefaults(sendPointer: false);
+        unawaited(widget.storage.deleteKeyValue(_calibrationStorageKey()));
+      }
+      _maybeInvalidateCalibrationForFrameSize();
       _vncClient = candidate;
+      // Sync the cursor position to the desktop after session creation.
+      // This ensures mobile and desktop cursors are aligned after zoom changes.
+      _sendPointerEvent();
       previousClient?.close();
       if (sessionInfo.displayIndex != null) {
         unawaited(_persistDisplaySelection(sessionInfo.displayIndex));
@@ -9122,6 +9688,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       await _updateSession(status: 'connected');
       _vncClient?.requestFullFrame();
       _maybeAutoResizeStream();
+      if (!preserveExisting) {
+        _armNoFrameTimeout();
+      }
     } on AgentCommandFailure catch (error) {
       if (!preserveExisting) {
         await _setStreamFailure(error.message);
@@ -9154,9 +9723,35 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     setState(() {
       _isConnecting = false;
       _connectionError = message;
+      _hasStreamInfo = false;
+      _resetCursorState();
     });
+    _noFrameTimer?.cancel();
     _vncClient?.close();
     await _updateSession(status: 'failed', errorMessage: message);
+  }
+
+  void _armNoFrameTimeout() {
+    _noFrameTimer?.cancel();
+    _noFrameTimer = Timer(_noFrameTimeout, () {
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      if (_connectionError != null || _isConnecting) {
+        return;
+      }
+      final startedAt = _streamStartedAt;
+      final lastFrameAt = _lastFrameAt;
+      if (startedAt == null) {
+        return;
+      }
+      if (lastFrameAt != null && lastFrameAt.isAfter(startedAt)) {
+        return;
+      }
+      unawaited(_setStreamFailure(
+        'No frames received from the desktop agent. Check Screen Recording permission and ensure the agent is running.',
+      ));
+    });
   }
 
   Future<void> _updateSession({
@@ -9222,6 +9817,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _zoomIndex = clamped;
       _cameraCenter = focus;
     });
+    if (_cursorDebugEnabled) {
+      _logCursorDebug('zoom_change', {'zoom': _zoom}, force: true);
+    }
     _triggerFocusPulse();
     if (commit) {
       unawaited(_updateSession(status: _currentStatusLabel));
@@ -9319,17 +9917,41 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _pointerPosition = clamped;
       _cameraCenter = adjusted;
     });
+    if (_cursorDebugEnabled) {
+      final last = _lastCursorDebugPointer;
+      if (last == null || (clamped - last).distance >= 1) {
+        _lastCursorDebugPointer = clamped;
+        _logPointerSample('set_pointer', clamped);
+      }
+    }
     _sendPointerEvent();
   }
 
   Offset _applyInputCalibration(Offset position) {
-    final scaled = Offset(
-      position.dx * _inputScaleX + _inputOffsetX,
-      position.dy * _inputScaleY + _inputOffsetY,
+    if (!_calibrationNormalized) {
+      final scaled = Offset(
+        position.dx * _inputScaleX + _inputOffsetX,
+        position.dy * _inputScaleY + _inputOffsetY,
+      );
+      return Offset(
+        scaled.dx.clamp(0, _frameSize.width),
+        scaled.dy.clamp(0, _frameSize.height),
+      );
+    }
+    final width = _frameSize.width;
+    final height = _frameSize.height;
+    if (width <= 0 || height <= 0) {
+      return position;
+    }
+    final normalized = Offset(position.dx / width, position.dy / height);
+    final adjusted = Offset(
+      normalized.dx * _inputScaleX + _inputOffsetX,
+      normalized.dy * _inputScaleY + _inputOffsetY,
     );
+    final scaled = Offset(adjusted.dx * width, adjusted.dy * height);
     return Offset(
-      scaled.dx.clamp(0, _frameSize.width),
-      scaled.dy.clamp(0, _frameSize.height),
+      scaled.dx.clamp(0, width),
+      scaled.dy.clamp(0, height),
     );
   }
 
@@ -9421,8 +10043,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final adjusted = _applyInputCalibration(_pointerPosition);
     final maxX = _maxPointerX();
     final maxY = _maxPointerY();
-    final x = adjusted.dx.round().clamp(0, maxX).toInt();
-    final y = adjusted.dy.round().clamp(0, maxY).toInt();
+    final x = adjusted.dx.round().clamp(0, maxX);
+    final y = adjusted.dy.round().clamp(0, maxY);
+    if (_cursorDebugEnabled) {
+      _logCursorDebug('send_pointer', {
+        'x': x,
+        'y': y,
+        'maxX': maxX,
+        'maxY': maxY,
+        'server': {
+          'w': client.serverWidth,
+          'h': client.serverHeight,
+        },
+      });
+    }
     client.sendPointer(x: x, y: y, mask: _buttonMask);
   }
 
@@ -9455,6 +10089,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     if (!ordered.contains(_encodingCopyRect)) {
       ordered.add(_encodingCopyRect);
+    }
+    if (!ordered.contains(_encodingCursor)) {
+      ordered.add(_encodingCursor);
     }
     if (ordered.contains(_encodingTight)) {
       ordered.add(_encodingCompressLevelBase + _tightCompressionLevel);
@@ -9874,6 +10511,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     } else {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
+    _scheduleLayoutRecalibration();
     _requestStreamRefresh(resetAutoResize: true);
   }
 
@@ -9895,6 +10533,82 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     });
   }
 
+  void _scheduleLayoutRecalibration() {
+    _pendingLayoutRecalibration = true;
+    _layoutRecalibrationTimer?.cancel();
+    _layoutRecalibrationTimer = Timer(const Duration(milliseconds: 420), () {
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      if (!_pendingLayoutRecalibration) {
+        return;
+      }
+      _pendingLayoutRecalibration = false;
+      _performLayoutRecalibration();
+    });
+  }
+
+  void _maybeHandleLayoutChange(Size viewSize, bool isLandscape) {
+    if (_lastLayoutSize == Size.zero) {
+      _lastLayoutSize = viewSize;
+      _lastLayoutLandscape = isLandscape;
+      _lastLayoutFullscreen = _isFullscreen;
+      return;
+    }
+    final sizeDelta = (viewSize.width - _lastLayoutSize.width).abs() +
+        (viewSize.height - _lastLayoutSize.height).abs();
+    final landscapeChanged =
+        _lastLayoutLandscape != null && _lastLayoutLandscape != isLandscape;
+    final fullscreenChanged = _lastLayoutFullscreen != _isFullscreen;
+    if (sizeDelta <= 6 && !landscapeChanged && !fullscreenChanged) {
+      return;
+    }
+    _lastLayoutSize = viewSize;
+    _lastLayoutLandscape = isLandscape;
+    _lastLayoutFullscreen = _isFullscreen;
+    _scheduleLayoutRecalibration();
+  }
+
+  void _performLayoutRecalibration() {
+    if (_connectionError != null || _isConnecting || _vncClient == null) {
+      return;
+    }
+    if (_directInputEnabled) {
+      return;
+    }
+    if (_isAutoCalibrating) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_lastRecalibrationAt != null) {
+      final elapsed = now.difference(_lastRecalibrationAt!);
+      if (elapsed.inMilliseconds < 1500) {
+        _pendingLayoutRecalibration = true;
+        _layoutRecalibrationTimer?.cancel();
+        _layoutRecalibrationTimer = Timer(
+          Duration(milliseconds: 1500 - elapsed.inMilliseconds),
+          () {
+            if (!mounted || _isDisposed) {
+              return;
+            }
+            if (_pendingLayoutRecalibration) {
+              _pendingLayoutRecalibration = false;
+              _performLayoutRecalibration();
+            }
+          },
+        );
+        return;
+      }
+    }
+    _lastRecalibrationAt = now;
+    setState(() {
+      _trackpadMoreAnchor = _trackpadMoreAnchorDefault;
+      _trackpadMoreRepositioning = false;
+      _cameraCenter = _applyInputCalibration(_pointerPosition);
+    });
+    _sendPointerEvent();
+  }
+
   void _startAutoCalibration() {
     final margin = (_frameSize.shortestSide * 0.12).clamp(24.0, 96.0);
     final targets = [
@@ -9912,6 +10626,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _inputScaleY = 1;
       _inputOffsetX = 0;
       _inputOffsetY = 0;
+      _calibrationNormalized = true;
+      _calibrationAspectRatio = _currentAspectRatio();
       _cameraCenter = _applyInputCalibration(_pointerPosition);
       _isAutoCalibrating = true;
       _calibrationStep = 0;
@@ -9974,6 +10690,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _inputScaleY = scaleY;
         _inputOffsetX = offsetX;
         _inputOffsetY = offsetY;
+        _calibrationNormalized = true;
+        _calibrationAspectRatio = _currentAspectRatio();
         _cameraCenter = _applyInputCalibration(_pointerPosition);
         _calibrationBackupScaleX = null;
         _calibrationBackupScaleY = null;
@@ -9985,20 +10703,215 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _cancelAutoCalibration();
   }
 
+  void _updateTrackpadMoreAnchorByDelta(Offset delta, Size areaSize) {
+    final width =
+        areaSize.width - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    final height =
+        areaSize.height - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    final nextDx =
+        (_trackpadMoreAnchor.dx * width + delta.dx).clamp(0.0, width);
+    final nextDy =
+        (_trackpadMoreAnchor.dy * height + delta.dy).clamp(0.0, height);
+    setState(() {
+      _trackpadMoreAnchor = Offset(nextDx / width, nextDy / height);
+    });
+  }
+
+  Future<void> _openTrackpadMoreSheet({required bool isInteractive}) async {
+    if (!mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: false,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE2E8F0),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '更多操作',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0F172A),
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '快速校准与定位触控板操作。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.center_focus_strong),
+                  title: const Text('输入校准'),
+                  subtitle: const Text('打开校准面板'),
+                  enabled: isInteractive,
+                  onTap: isInteractive
+                      ? () {
+                          Navigator.of(context).maybePop();
+                          _openCalibrationSheet(isInteractive: true);
+                        }
+                      : null,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.auto_fix_high),
+                  title: const Text('自动校准（四点）'),
+                  enabled: isInteractive,
+                  onTap: isInteractive
+                      ? () {
+                          Navigator.of(context).maybePop();
+                          _startAutoCalibration();
+                        }
+                      : null,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.tune),
+                  title: Text(
+                    _trackpadMoreRepositioning ? '完成定位按钮' : '拖动定位按钮',
+                  ),
+                  onTap: () {
+                    Navigator.of(context).maybePop();
+                    setState(() {
+                      _trackpadMoreRepositioning = !_trackpadMoreRepositioning;
+                    });
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.refresh),
+                  title: const Text('重置按钮位置'),
+                  onTap: () {
+                    Navigator.of(context).maybePop();
+                    setState(() {
+                      _trackpadMoreAnchor = _trackpadMoreAnchorDefault;
+                      _trackpadMoreRepositioning = false;
+                    });
+                  },
+                ),
+                const SizedBox(height: 4),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTrackpadMoreButton({
+    required Size areaSize,
+    required bool isInteractive,
+  }) {
+    final width =
+        areaSize.width - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    final height =
+        areaSize.height - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    final safeWidth = width <= 0 ? 0.0 : width;
+    final safeHeight = height <= 0 ? 0.0 : height;
+    final anchor = _trackpadMoreAnchor;
+    final left =
+        _trackpadMoreButtonMargin + safeWidth * anchor.dx.clamp(0.0, 1.0);
+    final top =
+        _trackpadMoreButtonMargin + safeHeight * anchor.dy.clamp(0.0, 1.0);
+    final isDragging = _trackpadMoreRepositioning;
+    return Positioned(
+      left: left,
+      top: top,
+      child: GestureDetector(
+        onPanUpdate: isDragging
+            ? (details) => _updateTrackpadMoreAnchorByDelta(
+                  details.delta,
+                  areaSize,
+                )
+            : null,
+        onTap: isInteractive
+            ? () => _openTrackpadMoreSheet(isInteractive: isInteractive)
+            : null,
+        onLongPress: isInteractive
+            ? () {
+                setState(() {
+                  _trackpadMoreRepositioning = !_trackpadMoreRepositioning;
+                });
+              }
+            : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isDragging
+                ? const Color(0xFFF59E0B)
+                : Colors.black.withAlpha(140),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isDragging
+                  ? const Color(0xFFFBBF24)
+                  : Colors.white.withAlpha(40),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(60),
+                blurRadius: 10,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: SizedBox(
+            width: _trackpadMoreButtonSize - 16,
+            height: _trackpadMoreButtonSize - 16,
+            child: Icon(
+              isDragging ? Icons.open_with_rounded : Icons.more_horiz,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   _CalibrationResult _solveLinearCalibration(
     List<Offset> samples,
     List<Offset> targets,
   ) {
     final count = samples.length.clamp(2, targets.length);
+    final width = _frameSize.width <= 0 ? 1.0 : _frameSize.width;
+    final height = _frameSize.height <= 0 ? 1.0 : _frameSize.height;
     double sumSX = 0;
     double sumSY = 0;
     double sumTX = 0;
     double sumTY = 0;
     for (var i = 0; i < count; i += 1) {
-      sumSX += samples[i].dx;
-      sumSY += samples[i].dy;
-      sumTX += targets[i].dx;
-      sumTY += targets[i].dy;
+      sumSX += samples[i].dx / width;
+      sumSY += samples[i].dy / height;
+      sumTX += targets[i].dx / width;
+      sumTY += targets[i].dy / height;
     }
     final meanSX = sumSX / count;
     final meanSY = sumSY / count;
@@ -10010,12 +10923,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     double covX = 0;
     double covY = 0;
     for (var i = 0; i < count; i += 1) {
-      final dx = samples[i].dx - meanSX;
-      final dy = samples[i].dy - meanSY;
+      final dx = samples[i].dx / width - meanSX;
+      final dy = samples[i].dy / height - meanSY;
       varSX += dx * dx;
       varSY += dy * dy;
-      covX += dx * (targets[i].dx - meanTX);
-      covY += dy * (targets[i].dy - meanTY);
+      covX += dx * (targets[i].dx / width - meanTX);
+      covY += dy * (targets[i].dy / height - meanTY);
     }
 
     var scaleX = varSX.abs() < 0.0001 ? 1.0 : covX / varSX;
@@ -10031,10 +10944,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
     var offsetX = meanTX - scaleX * meanSX;
     var offsetY = meanTY - scaleY * meanSY;
-    final maxOffsetX = _frameSize.width * 0.5;
-    final maxOffsetY = _frameSize.height * 0.5;
-    offsetX = offsetX.clamp(-maxOffsetX, maxOffsetX);
-    offsetY = offsetY.clamp(-maxOffsetY, maxOffsetY);
+    offsetX = offsetX.clamp(-0.5, 0.5);
+    offsetY = offsetY.clamp(-0.5, 0.5);
 
     return _CalibrationResult(
       scaleX: scaleX,
@@ -10060,6 +10971,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           constraints.maxWidth,
           constraints.maxHeight,
         );
+        _maybeHandleLayoutChange(viewSize, isLandscape);
         final previousViewSize = _lastViewSize;
         _lastViewSize = viewSize;
         final viewDelta = (viewSize.width - previousViewSize.width).abs() +
@@ -10082,6 +10994,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 : null;
         final translation = _calculateTranslation(viewSize);
         final scale = _baseScale(viewSize) * _zoom;
+        final cursorImage = _cursorImage;
+        final cursorSize = _cursorSize;
+        final cursorHotspot = _cursorHotspot;
         final hasFrame = _frameImage != null;
         return ClipRRect(
           borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
@@ -10315,7 +11230,26 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     ),
                   ),
                 ),
-              if (isInteractive)
+              if (cursorImage != null &&
+                  scale > 0 &&
+                  cursorSize.width > 0 &&
+                  cursorSize.height > 0)
+                Positioned(
+                  left: pointerScreen.dx - cursorHotspot.dx * scale,
+                  top: pointerScreen.dy - cursorHotspot.dy * scale,
+                  child: IgnorePointer(
+                    child: SizedBox(
+                      width: cursorSize.width * scale,
+                      height: cursorSize.height * scale,
+                      child: RawImage(
+                        image: cursorImage,
+                        fit: BoxFit.fill,
+                        filterQuality: FilterQuality.none,
+                      ),
+                    ),
+                  ),
+                ),
+              if (isInteractive && (_showLocalCursor || _isAutoCalibrating))
                 Positioned(
                   left: pointerScreen.dx - 10,
                   top: pointerScreen.dy - 10,
@@ -10371,17 +11305,37 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             Expanded(
               child: Opacity(
                 opacity: trackpadOpacity,
-                child: _VncTrackpadSurface(
-                  enabled: trackpadEnabled,
-                  glassStyle: isLandscape,
-                  height: height,
-                  showLabel: !isLandscape,
-                  disabledMessage:
-                      _directInputEnabled ? 'Direct touch enabled' : null,
-                  onPointerDown: _handleTrackpadPointerDown,
-                  onPointerMove: _handleTrackpadPointerMove,
-                  onPointerUp: _handleTrackpadPointerUp,
-                  onPointerCancel: _handleTrackpadPointerCancel,
+                child: LayoutBuilder(
+                  builder: (context, trackpadConstraints) {
+                    final trackpadSize = Size(
+                      trackpadConstraints.maxWidth,
+                      trackpadConstraints.maxHeight,
+                    );
+                    final surface = _VncTrackpadSurface(
+                      enabled: trackpadEnabled,
+                      glassStyle: isLandscape,
+                      height: height,
+                      showLabel: !isLandscape,
+                      disabledMessage:
+                          _directInputEnabled ? 'Direct touch enabled' : null,
+                      onPointerDown: _handleTrackpadPointerDown,
+                      onPointerMove: _handleTrackpadPointerMove,
+                      onPointerUp: _handleTrackpadPointerUp,
+                      onPointerCancel: _handleTrackpadPointerCancel,
+                    );
+                    if (isLandscape) {
+                      return surface;
+                    }
+                    return Stack(
+                      children: [
+                        Positioned.fill(child: surface),
+                        _buildTrackpadMoreButton(
+                          areaSize: trackpadSize,
+                          isInteractive: isInteractive,
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -10581,6 +11535,61 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         const SizedBox(height: 12),
         _buildGestureHints(glassStyle: glassStyle),
         const SizedBox(height: 12),
+        SwitchListTile.adaptive(
+          title: const Text('显示本地光标'),
+          subtitle: const Text('关闭后仅移动远端光标'),
+          value: _showLocalCursor,
+          onChanged: isInteractive
+              ? (value) {
+                  setState(() {
+                    _showLocalCursor = value;
+                  });
+                  unawaited(_persistLocalCursorPreference(value));
+                }
+              : null,
+        ),
+        if (kDebugMode) ...[
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            title: const Text('光标调试日志'),
+            subtitle: const Text('记录光标轨迹/坐标，便于排查偏移'),
+            value: _cursorDebugEnabled,
+            onChanged: isInteractive
+                ? (value) {
+                    setState(() {
+                      _cursorDebugEnabled = value;
+                    });
+                    if (!value) {
+                      _clearCursorDebugLog();
+                    } else {
+                      _logCursorDebug('debug_enabled', {
+                        'enabled': true,
+                      }, force: true);
+                    }
+                  }
+                : null,
+          ),
+          if (_cursorDebugEnabled)
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _copyCursorDebugLog,
+                  icon: const Icon(Icons.copy),
+                  label: Text('复制日志 (${_cursorDebugLog.length})'),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _clearCursorDebugLog();
+                    });
+                  },
+                  child: const Text('清空'),
+                ),
+              ],
+            ),
+        ],
+        const SizedBox(height: 12),
         Text(
           '视图模式',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -10601,6 +11610,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     _viewMode = VncViewMode.values[index];
                     _autoSizedOnce = false;
                   });
+                  if (_cursorDebugEnabled) {
+                    _logCursorDebug(
+                      'view_mode',
+                      {'mode': _viewMode.name},
+                      force: true,
+                    );
+                  }
                   _requestStreamRefresh(resetAutoResize: true);
                 }
               : null,
@@ -10959,8 +11975,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (!mounted) {
       return;
     }
-    final maxOffsetX = _frameSize.width * 0.2;
-    final maxOffsetY = _frameSize.height * 0.2;
+    const maxOffsetNorm = 0.2;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -10977,6 +11992,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 if (mounted) {
                   setState(() {
                     fn();
+                    _calibrationNormalized = true;
+                    _calibrationAspectRatio = _currentAspectRatio();
                     _cameraCenter = _applyInputCalibration(_pointerPosition);
                   });
                   setSheetState(() {});
@@ -11053,19 +12070,21 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                             updateState(() => _inputScaleY = value),
                       ),
                       _CalibrationSlider(
-                        label: 'X 偏移 (${_inputOffsetX.round()}px)',
+                        label:
+                            'X 偏移 (${(_inputOffsetX * _frameSize.width).round()}px)',
                         value: _inputOffsetX,
-                        min: -maxOffsetX,
-                        max: maxOffsetX,
+                        min: -maxOffsetNorm,
+                        max: maxOffsetNorm,
                         enabled: isInteractive,
                         onChanged: (value) =>
                             updateState(() => _inputOffsetX = value),
                       ),
                       _CalibrationSlider(
-                        label: 'Y 偏移 (${_inputOffsetY.round()}px)',
+                        label:
+                            'Y 偏移 (${(_inputOffsetY * _frameSize.height).round()}px)',
                         value: _inputOffsetY,
-                        min: -maxOffsetY,
-                        max: maxOffsetY,
+                        min: -maxOffsetNorm,
+                        max: maxOffsetNorm,
                         enabled: isInteractive,
                         onChanged: (value) =>
                             updateState(() => _inputOffsetY = value),
@@ -12402,6 +13421,14 @@ class VncSessionInfo {
     required this.width,
     required this.height,
     this.displayIndex,
+    this.inputWidth,
+    this.inputHeight,
+    this.inputOriginX,
+    this.inputOriginY,
+    this.inputScaleX,
+    this.inputScaleY,
+    this.screenWidth,
+    this.screenHeight,
   });
 
   final String sessionId;
@@ -12410,6 +13437,14 @@ class VncSessionInfo {
   final int width;
   final int height;
   final int? displayIndex;
+  final int? inputWidth;
+  final int? inputHeight;
+  final double? inputOriginX;
+  final double? inputOriginY;
+  final double? inputScaleX;
+  final double? inputScaleY;
+  final int? screenWidth;
+  final int? screenHeight;
 
   factory VncSessionInfo.fromPayload(Map<String, dynamic> payload) {
     final sessionId = payload['session_id']?.toString() ?? '';
@@ -12419,6 +13454,22 @@ class VncSessionInfo {
     final height = int.tryParse(payload['height']?.toString() ?? '') ?? 0;
     final displayIndex =
         int.tryParse(payload['display_index']?.toString() ?? '');
+    final inputWidth =
+        int.tryParse(payload['input_width']?.toString() ?? '');
+    final inputHeight =
+        int.tryParse(payload['input_height']?.toString() ?? '');
+    final inputOriginX =
+        double.tryParse(payload['input_origin_x']?.toString() ?? '');
+    final inputOriginY =
+        double.tryParse(payload['input_origin_y']?.toString() ?? '');
+    final inputScaleX =
+        double.tryParse(payload['input_scale_x']?.toString() ?? '');
+    final inputScaleY =
+        double.tryParse(payload['input_scale_y']?.toString() ?? '');
+    final screenWidth =
+        int.tryParse(payload['screen_width']?.toString() ?? '');
+    final screenHeight =
+        int.tryParse(payload['screen_height']?.toString() ?? '');
     if (sessionId.isEmpty || token.isEmpty) {
       throw const AgentCommandFailure('VNC session response missing fields.');
     }
@@ -12429,6 +13480,14 @@ class VncSessionInfo {
       width: width,
       height: height,
       displayIndex: displayIndex,
+      inputWidth: inputWidth,
+      inputHeight: inputHeight,
+      inputOriginX: inputOriginX,
+      inputOriginY: inputOriginY,
+      inputScaleX: inputScaleX,
+      inputScaleY: inputScaleY,
+      screenWidth: screenWidth,
+      screenHeight: screenHeight,
     );
   }
 }
@@ -12884,25 +13943,58 @@ List<String> _parseLocalUrls(dynamic raw) {
   if (raw == null) {
     return [];
   }
-  if (raw is List) {
-    return raw
-        .map((entry) => entry.toString().trim())
+  List<String> normalize(List<String> values) {
+    final unique = values
+        .map((entry) => entry.trim())
         .where((entry) => entry.isNotEmpty)
         .toSet()
         .toList();
+    return unique.where((entry) => !_isIgnoredLocalUrl(entry)).toList();
+  }
+  if (raw is List) {
+    return normalize(raw.map((entry) => entry.toString()).toList());
   }
   if (raw is String) {
     if (raw.trim().isEmpty) {
       return [];
     }
-    return raw
-        .split(',')
-        .map((entry) => entry.trim())
-        .where((entry) => entry.isNotEmpty)
-        .toSet()
-        .toList();
+    return normalize(raw.split(','));
   }
   return [];
+}
+
+bool _isIgnoredLocalUrl(String url) {
+  Uri? uri = Uri.tryParse(url);
+  if (uri == null || uri.host.isEmpty) {
+    uri = Uri.tryParse('http://$url');
+  }
+  final host = uri?.host ?? '';
+  if (host.isEmpty) {
+    return false;
+  }
+  final octets = host.split('.');
+  if (octets.length != 4) {
+    return false;
+  }
+  final values = octets.map(int.tryParse).toList();
+  if (values.any((value) => value == null)) {
+    return false;
+  }
+  final a = values[0]!;
+  final b = values[1]!;
+  if (a == 127) {
+    return true;
+  }
+  if (a == 0) {
+    return true;
+  }
+  if (a == 169 && b == 254) {
+    return true;
+  }
+  if (a == 198 && (b == 18 || b == 19)) {
+    return true;
+  }
+  return false;
 }
 
 class PairingPayload {
@@ -13011,11 +14103,13 @@ class _PairingAttemptResult {
   const _PairingAttemptResult({
     required this.status,
     this.message,
+    this.detail,
     this.agentUrl,
   });
 
   final _PairingAttemptStatus status;
   final String? message;
+  final String? detail;
   final String? agentUrl;
 }
 
@@ -13023,10 +14117,24 @@ class _PairingCandidateSelection {
   const _PairingCandidateSelection({
     required this.candidates,
     this.message,
+    this.detail,
   });
 
   final List<String> candidates;
   final String? message;
+  final String? detail;
+}
+
+class _ReachabilityResult {
+  const _ReachabilityResult({
+    required this.url,
+    required this.reachable,
+    this.reason,
+  });
+
+  final String url;
+  final bool reachable;
+  final String? reason;
 }
 
 String _agentLabel(ConnectionRecord agent) {
