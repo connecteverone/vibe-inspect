@@ -11071,15 +11071,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       final framePos =
                           _screenToFrame(details.localPosition, viewSize);
                       _setPointerPosition(framePos);
-                      _sendClick(1);
                     },
                     onPanStart: (details) {
                       _directDragActive = true;
-                      _buttonMask |= 1;
                       final framePos =
                           _screenToFrame(details.localPosition, viewSize);
                       _setPointerPosition(framePos);
-                      _sendPointerEvent();
                     },
                     onPanUpdate: (details) {
                       if (!_directDragActive) {
@@ -11094,16 +11091,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                         return;
                       }
                       _directDragActive = false;
-                      _buttonMask &= ~1;
-                      _sendPointerEvent();
                     },
                     onPanCancel: () {
                       if (!_directDragActive) {
                         return;
                       }
                       _directDragActive = false;
-                      _buttonMask &= ~1;
-                      _sendPointerEvent();
                     },
                   ),
                 ),
@@ -11522,7 +11515,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         const SizedBox(height: 12),
         if (_directInputEnabled)
           Text(
-            '提示：直接在 VNC 画面上点击/拖动控制远端。',
+            '提示：直接在 VNC 画面上滑动移动光标（不触发点击）。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: const Color(0xFF94A3B8),
                 ),
