@@ -28,6 +28,8 @@
 	<string>Scan pairing QR codes to connect to the desktop agent.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to the desktop agent on your local network.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Read the current Wi-Fi SSID to determine local network availability.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

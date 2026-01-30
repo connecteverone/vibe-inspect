@@ -28,7 +28,7 @@ class LocalStorageInitializer extends StorageInitializer {
   const LocalStorageInitializer();
 
   static const _databaseName = 'vibe_inspect.db';
-  static const _schemaVersion = 3;
+  static const _schemaVersion = 5;
   static const _storageKeyId = 'vibe_storage_key';
 
   @override
@@ -56,6 +56,25 @@ class LocalStorageInitializer extends StorageInitializer {
               'ALTER TABLE connections ADD COLUMN agent_url TEXT',
             );
           }
+        }
+        if (oldVersion < 4) {
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN device_id TEXT',
+          );
+        }
+        if (oldVersion < 5) {
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN wifi_ssid TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN local_ips TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN local_urls TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN frp_url TEXT',
+          );
         }
       },
     );
@@ -109,12 +128,17 @@ class LocalStorageInitializer extends StorageInitializer {
     await db.execute('''
       CREATE TABLE connections (
         id TEXT PRIMARY KEY,
+        device_id TEXT,
         token TEXT NOT NULL,
         status TEXT NOT NULL,
         connected_at INTEGER NOT NULL,
         agent_url TEXT,
         tunnel_url TEXT,
         tunnel_error TEXT,
+        frp_url TEXT,
+        wifi_ssid TEXT,
+        local_ips TEXT,
+        local_urls TEXT,
         last_seen_at INTEGER
       )
     ''');
@@ -496,9 +520,14 @@ class ConnectionRecord {
     required this.token,
     required this.status,
     required this.connectedAt,
+    this.deviceId,
     this.agentUrl,
     this.tunnelUrl,
     this.tunnelError,
+    this.frpUrl,
+    this.wifiSsid,
+    this.localIps = const [],
+    this.localUrls = const [],
     this.lastSeenAt,
   });
 
@@ -506,20 +535,62 @@ class ConnectionRecord {
   final String token;
   final String status;
   final DateTime connectedAt;
+  final String? deviceId;
   final String? agentUrl;
   final String? tunnelUrl;
   final String? tunnelError;
+  final String? frpUrl;
+  final String? wifiSsid;
+  final List<String> localIps;
+  final List<String> localUrls;
   final DateTime? lastSeenAt;
+
+  ConnectionRecord copyWith({
+    String? id,
+    String? token,
+    String? status,
+    DateTime? connectedAt,
+    String? deviceId,
+    String? agentUrl,
+    String? tunnelUrl,
+    String? tunnelError,
+    String? frpUrl,
+    String? wifiSsid,
+    List<String>? localIps,
+    List<String>? localUrls,
+    DateTime? lastSeenAt,
+  }) {
+    return ConnectionRecord(
+      id: id ?? this.id,
+      token: token ?? this.token,
+      status: status ?? this.status,
+      connectedAt: connectedAt ?? this.connectedAt,
+      deviceId: deviceId ?? this.deviceId,
+      agentUrl: agentUrl ?? this.agentUrl,
+      tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+      tunnelError: tunnelError ?? this.tunnelError,
+      frpUrl: frpUrl ?? this.frpUrl,
+      wifiSsid: wifiSsid ?? this.wifiSsid,
+      localIps: localIps ?? this.localIps,
+      localUrls: localUrls ?? this.localUrls,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+    );
+  }
 
   Map<String, dynamic> toDatabase() {
     return {
       'id': id,
+      'device_id': deviceId,
       'token': token,
       'status': status,
       'connected_at': connectedAt.millisecondsSinceEpoch,
       'agent_url': agentUrl,
       'tunnel_url': tunnelUrl,
       'tunnel_error': tunnelError,
+      'frp_url': frpUrl,
+      'wifi_ssid': wifiSsid,
+      'local_ips': _encodeStringList(localIps),
+      'local_urls': _encodeStringList(localUrls),
       'last_seen_at': lastSeenAt?.millisecondsSinceEpoch,
     };
   }
@@ -532,9 +603,14 @@ class ConnectionRecord {
       connectedAt: DateTime.fromMillisecondsSinceEpoch(
         (row['connected_at'] as int?) ?? 0,
       ),
+      deviceId: row['device_id']?.toString(),
       agentUrl: row['agent_url']?.toString(),
       tunnelUrl: row['tunnel_url']?.toString(),
       tunnelError: row['tunnel_error']?.toString(),
+      frpUrl: row['frp_url']?.toString(),
+      wifiSsid: row['wifi_ssid']?.toString(),
+      localIps: _decodeStringList(row['local_ips']),
+      localUrls: _decodeStringList(row['local_urls']),
       lastSeenAt: row['last_seen_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(
               (row['last_seen_at'] as int?) ?? 0,
@@ -549,9 +625,14 @@ class ConnectionRecord {
       'token': token,
       'status': status,
       'connectedAt': connectedAt.toIso8601String(),
+      'deviceId': deviceId,
       'agentUrl': agentUrl,
       'tunnelUrl': tunnelUrl,
       'tunnelError': tunnelError,
+      'frpUrl': frpUrl,
+      'wifiSsid': wifiSsid,
+      'localIps': localIps,
+      'localUrls': localUrls,
       'lastSeenAt': lastSeenAt?.toIso8601String(),
     };
   }
@@ -578,6 +659,10 @@ class ConnectionRecord {
       connectedAtRaw,
       'Connection connectedAt must be an ISO-8601 timestamp.',
     );
+    final deviceIdRaw = json['deviceId'];
+    if (deviceIdRaw != null && deviceIdRaw is! String) {
+      throw const FormatException('Connection deviceId must be a string.');
+    }
     final tunnelUrl = json['tunnelUrl'];
     if (tunnelUrl != null && tunnelUrl is! String) {
       throw const FormatException('Connection tunnelUrl must be a string.');
@@ -586,6 +671,22 @@ class ConnectionRecord {
     if (tunnelError != null && tunnelError is! String) {
       throw const FormatException('Connection tunnelError must be a string.');
     }
+    final frpUrl = json['frpUrl'];
+    if (frpUrl != null && frpUrl is! String) {
+      throw const FormatException('Connection frpUrl must be a string.');
+    }
+    final wifiSsid = json['wifiSsid'];
+    if (wifiSsid != null && wifiSsid is! String) {
+      throw const FormatException('Connection wifiSsid must be a string.');
+    }
+    final localIps = _parseStringList(
+      json['localIps'],
+      'Connection localIps must be a list.',
+    );
+    final localUrls = _parseStringList(
+      json['localUrls'],
+      'Connection localUrls must be a list.',
+    );
     final lastSeenRaw = json['lastSeenAt'];
     DateTime? lastSeenAt;
     if (lastSeenRaw != null) {
@@ -602,11 +703,16 @@ class ConnectionRecord {
       token: token,
       status: status,
       connectedAt: connectedAt,
+      deviceId: deviceIdRaw as String?,
       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
           ? agentUrlRaw
           : null,
       tunnelUrl: tunnelUrl as String?,
       tunnelError: tunnelError as String?,
+      frpUrl: frpUrl as String?,
+      wifiSsid: wifiSsid as String?,
+      localIps: localIps,
+      localUrls: localUrls,
       lastSeenAt: lastSeenAt,
     );
   }
@@ -622,7 +728,7 @@ class ExportBundle {
     required this.timelineEvents,
   });
 
-  static const int currentVersion = 2;
+  static const int currentVersion = 4;
 
   final int version;
   final String deviceName;
@@ -706,6 +812,59 @@ class ExportBundle {
       timelineEvents: timelineEvents,
     );
   }
+}
+
+List<String> _parseStringList(dynamic raw, String errorMessage) {
+  if (raw == null) {
+    return const [];
+  }
+  if (raw is List) {
+    return raw.map((entry) => entry.toString()).toList();
+  }
+  if (raw is String) {
+    if (raw.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.map((entry) => entry.toString()).toList();
+      }
+    } catch (_) {
+      return raw.split(',').map((entry) => entry.trim()).toList();
+    }
+  }
+  throw FormatException(errorMessage);
+}
+
+String? _encodeStringList(List<String> values) {
+  if (values.isEmpty) {
+    return null;
+  }
+  return jsonEncode(values);
+}
+
+List<String> _decodeStringList(Object? raw) {
+  if (raw == null) {
+    return const [];
+  }
+  if (raw is String) {
+    if (raw.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.map((entry) => entry.toString()).toList();
+      }
+    } catch (_) {
+      return raw.split(',').map((entry) => entry.trim()).toList();
+    }
+  }
+  if (raw is List) {
+    return raw.map((entry) => entry.toString()).toList();
+  }
+  return const [];
 }
 
 DateTime _parseTimestamp(String value, String message) {

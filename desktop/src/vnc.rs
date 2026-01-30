@@ -1165,12 +1165,41 @@ fn resolve_input_dimensions(
     display_index: Option<usize>,
 ) -> (u32, u32, f64, f64, f64, f64) {
     let (env_offset_x, env_offset_y) = parse_input_offset_env().unwrap_or((0.0, 0.0));
-    let mut input_width = screen_width;
-    let mut input_height = screen_height;
     let mut origin_x = env_offset_x;
     let mut origin_y = env_offset_y;
-    let mut scale_x = 1.0;
-    let mut scale_y = 1.0;
+
+    #[cfg(target_os = "macos")]
+    let _ = (screen_width, screen_height);
+
+    #[cfg(not(target_os = "macos"))]
+    let (mut input_width, mut input_height, mut scale_x, mut scale_y) =
+        (screen_width, screen_height, 1.0, 1.0);
+
+    #[cfg(target_os = "macos")]
+    let (input_width, input_height, scale_x, scale_y) = {
+        use core_graphics::display::CGDisplay;
+        let mut display = CGDisplay::main();
+        if let Some(index) = display_index {
+            if let Ok(displays) = CGDisplay::active_displays() {
+                if index < displays.len() {
+                    display = CGDisplay::new(displays[index]);
+                }
+            }
+        }
+        let bounds = display.bounds();
+        let pixel_width = display.pixels_wide().max(1) as u32;
+        let pixel_height = display.pixels_high().max(1) as u32;
+        let logical_width = bounds.size.width.max(1.0);
+        let logical_height = bounds.size.height.max(1.0);
+        origin_x += bounds.origin.x;
+        origin_y += bounds.origin.y;
+        (
+            pixel_width,
+            pixel_height,
+            pixel_width as f64 / logical_width,
+            pixel_height as f64 / logical_height,
+        )
+    };
     #[cfg(target_os = "windows")]
     {
         if let Some((left, top, width, height)) = resolve_windows_monitor(display_index) {
@@ -1189,30 +1218,6 @@ fn resolve_input_dimensions(
             origin_x += left;
             origin_y += top;
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use core_graphics::display::CGDisplay;
-        let mut display = CGDisplay::main();
-        if let Some(index) = display_index {
-            if let Ok(displays) = CGDisplay::active_displays() {
-                if index < displays.len() {
-                    display = CGDisplay::new(displays[index]);
-                }
-            }
-        }
-        let bounds = display.bounds();
-        let pixel_width = display.pixels_wide().max(1) as u32;
-        let pixel_height = display.pixels_high().max(1) as u32;
-        let logical_width = bounds.size.width.max(1.0);
-        let logical_height = bounds.size.height.max(1.0);
-        scale_x = pixel_width as f64 / logical_width;
-        scale_y = pixel_height as f64 / logical_height;
-        input_width = pixel_width;
-        input_height = pixel_height;
-        origin_x += bounds.origin.x;
-        origin_y += bounds.origin.y;
     }
 
     if let Some((scale_env_x, scale_env_y)) = parse_input_scale_env() {

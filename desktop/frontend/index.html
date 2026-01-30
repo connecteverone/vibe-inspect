@@ -7,28 +7,30 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <style>
       :root {
         color-scheme: dark;
+        --bg: #0b1020;
+        --bg-2: #0f172a;
+        --card: rgba(15, 23, 42, 0.85);
+        --card-strong: rgba(15, 23, 42, 0.95);
+        --border: rgba(148, 163, 184, 0.2);
         --ink: #f8fafc;
         --ink-soft: #e2e8f0;
         --ink-muted: #94a3b8;
         --accent: #22c55e;
         --accent-strong: #16a34a;
         --accent-wash: rgba(34, 197, 94, 0.16);
+        --sky: #38bdf8;
         --sky-wash: rgba(56, 189, 248, 0.18);
-        --mint: rgba(34, 197, 94, 0.2);
-        --mint-ink: #bbf7d0;
         --rose: rgba(248, 113, 113, 0.18);
         --rose-ink: #fecaca;
-        --border: rgba(148, 163, 184, 0.2);
-        --glass: rgba(15, 23, 42, 0.85);
         --shadow: 0 30px 80px rgba(2, 6, 23, 0.5);
-        --radius-lg: 28px;
-        --radius-md: 18px;
+        --radius-lg: 26px;
+        --radius-md: 16px;
       }
 
       * {
@@ -38,13 +40,13 @@
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "IBM Plex Sans", "Avenir Next", "Avenir", "Futura",
-          "Gill Sans", "Trebuchet MS", sans-serif;
+        font-family: "Space Grotesk", "IBM Plex Sans", "Avenir Next", "Avenir",
+          "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
         color: var(--ink);
         background:
           radial-gradient(900px 520px at 12% 10%, rgba(34, 197, 94, 0.14) 0%, rgba(15, 23, 42, 0) 60%),
           radial-gradient(760px 520px at 88% 0%, rgba(56, 189, 248, 0.18) 0%, rgba(15, 23, 42, 0) 55%),
-          linear-gradient(160deg, #0f172a 0%, #111827 45%, #0b1220 100%),
+          linear-gradient(160deg, #0b1020 0%, #0f172a 55%, #0b1220 100%),
           repeating-linear-gradient(
             135deg,
             rgba(148, 163, 184, 0.06) 0,
@@ -54,52 +56,27 @@
           );
       }
 
-      body::before,
-      body::after {
-        content: "";
-        position: fixed;
-        width: 340px;
-        height: 340px;
-        border-radius: 50%;
-        filter: blur(45px);
-        opacity: 0.55;
-        z-index: 0;
-        animation: drift 18s ease-in-out infinite;
-      }
-
-      body::before {
-        background: rgba(34, 197, 94, 0.6);
-        top: -170px;
-        right: -120px;
-      }
-
-      body::after {
-        background: rgba(56, 189, 248, 0.5);
-        bottom: -200px;
-        left: -160px;
-        animation-delay: 4s;
-      }
-
-      main {
+      main.shell {
         position: relative;
         z-index: 1;
-        max-width: 1040px;
+        max-width: 1200px;
         margin: 0 auto;
-        padding: 56px 32px 64px;
+        padding: 48px 28px 64px;
       }
 
-      .hero {
+      .topbar {
         display: flex;
-        flex-direction: column;
-        gap: 14px;
-        margin-bottom: 32px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 26px;
         animation: rise 0.6s ease-out;
       }
 
-      .hero-top {
+      .brand {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+        gap: 18px;
         align-items: center;
       }
 
@@ -110,71 +87,198 @@
         padding: 6px 14px;
         border-radius: 999px;
         background: var(--accent-wash);
-        color: var(--mint-ink);
-        font-size: 0.78rem;
+        color: #bbf7d0;
+        font-size: 0.72rem;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        box-shadow: 0 10px 18px rgba(34, 197, 94, 0.16);
       }
 
-      .pill {
-        padding: 6px 12px;
-        border-radius: 999px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        color: var(--ink-soft);
-        background: rgba(15, 23, 42, 0.5);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-      }
-
-      .hero h1 {
+      .brand h1 {
         margin: 0;
-        font-size: clamp(2.1rem, 4vw, 2.8rem);
+        font-size: clamp(1.8rem, 3.4vw, 2.6rem);
         letter-spacing: -0.02em;
       }
 
-      .hero p {
-        margin: 0;
+      .brand p {
+        margin: 4px 0 0;
         max-width: 560px;
         color: var(--ink-muted);
-        line-height: 1.55;
+        line-height: 1.6;
       }
 
-      .board {
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .bridge-alert {
+        margin: 18px 0 0;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+        background: rgba(127, 29, 29, 0.25);
+        color: #fecaca;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 600;
+      }
+
+      .bridge-alert .meta {
+        font-weight: 500;
+        color: rgba(254, 202, 202, 0.8);
+        font-size: 13px;
+      }
+
+      .bridge-alert.hidden {
+        display: none;
+      }
+
+      .app-disabled .grid,
+      .app-disabled .settings-view {
+        opacity: 0.55;
+        pointer-events: none;
+        filter: grayscale(0.2);
+      }
+
+      .app-disabled .view-tabs {
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      .button-disabled {
+        opacity: 0.6;
+        pointer-events: none;
+      }
+
+      .status {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid var(--border);
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--ink-soft);
+      }
+
+      .status.notice {
+        border-color: rgba(56, 189, 248, 0.4);
+        color: #bae6fd;
+      }
+
+      .status.error {
+        border-color: rgba(248, 113, 113, 0.4);
+        color: var(--rose-ink);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .view-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .tab {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.7);
+        color: var(--ink-muted);
+        padding: 10px 16px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .tab.active {
+        background: var(--accent-wash);
+        color: #bbf7d0;
+        border-color: rgba(34, 197, 94, 0.45);
+      }
+
+      .grid {
         display: grid;
-        grid-template-columns: minmax(260px, 340px) 1fr;
-        gap: 28px;
-        padding: 28px;
+        grid-template-columns: minmax(260px, 360px) 1fr;
+        gap: 24px;
+        padding: 24px;
         border-radius: var(--radius-lg);
-        background: var(--glass);
+        background: var(--card);
         border: 1px solid rgba(148, 163, 184, 0.18);
         box-shadow: var(--shadow);
         backdrop-filter: blur(10px);
         animation: floatIn 0.7s ease-out 0.05s both;
       }
 
-      .qr-panel {
+      .settings-view {
+        margin-top: 12px;
+        padding: 24px;
+        border-radius: var(--radius-lg);
+        background: var(--card);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+        animation: floatIn 0.7s ease-out 0.05s both;
+      }
+
+      .sidebar {
         display: flex;
         flex-direction: column;
-        gap: 16px;
-        padding: 18px;
-        border-radius: var(--radius-md);
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(15, 23, 42, 0.92) 100%);
-        border: 1px solid var(--border);
+        gap: 18px;
       }
 
-      .panel-title {
+      .content {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .card {
+        background: var(--card-strong);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: var(--radius-md);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .card-header {
         display: flex;
         justify-content: space-between;
-        align-items: baseline;
         gap: 12px;
+        align-items: center;
       }
 
-      .panel-title h2 {
+      .token-controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 10px;
+      }
+
+      .token-controls input {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: var(--ink);
+        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
+        font-size: 0.86rem;
+      }
+
+      .token-controls input::placeholder {
+        color: var(--ink-muted);
+      }
+
+      .card-title {
         margin: 0;
-        font-size: 1.05rem;
+        font-size: 1.02rem;
       }
 
       .hint {
@@ -186,7 +290,7 @@
       .qr-frame {
         display: grid;
         place-items: center;
-        min-height: 236px;
+        min-height: 240px;
         border-radius: 16px;
         border: 1px dashed rgba(148, 163, 184, 0.28);
         background:
@@ -198,158 +302,56 @@
             transparent 24px
           );
         color: var(--ink-muted);
-        font-weight: 600;
       }
 
       .qr-frame svg {
-        width: 220px;
-        height: 220px;
-        opacity: 0;
-        transform: scale(0.96);
-        transition: opacity 0.25s ease, transform 0.25s ease;
+        width: 180px;
+        height: 180px;
       }
 
-      .qr-frame.loaded svg {
-        opacity: 1;
-        transform: scale(1);
+      .qr-frame.loaded {
+        background: #ffffff;
+        border: 1px solid rgba(148, 163, 184, 0.2);
       }
 
-      .qr-actions {
-        display: flex;
-        flex-wrap: wrap;
+      .meta-grid {
+        display: grid;
         gap: 10px;
       }
 
-      .details {
+      .meta-item {
         display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-
-      .details-header {
-        display: flex;
-        align-items: center;
         justify-content: space-between;
-        gap: 16px;
-      }
-
-      .details-header h2 {
-        margin: 0;
-        font-size: 1.2rem;
-      }
-
-      .details-subtitle {
-        margin: 4px 0 0;
+        gap: 12px;
         font-size: 0.85rem;
-        color: var(--ink-muted);
+        color: var(--ink-soft);
       }
 
-      .status {
-        padding: 10px 16px;
-        border-radius: 999px;
-        background: var(--mint);
-        color: var(--mint-ink);
-        font-weight: 700;
-        font-size: 0.9rem;
-      }
-
-      .status.error {
-        background: var(--rose);
-        color: var(--rose-ink);
-      }
-
-      .status.notice {
-        background: var(--sky-wash);
-        color: #bae6fd;
+      .meta-item span:last-child {
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-size: 0.82rem;
       }
 
       .toggle {
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding: 10px 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(148, 163, 184, 0.24);
-        background: rgba(15, 23, 42, 0.6);
-        width: fit-content;
-        font-weight: 600;
+        gap: 10px;
+        font-size: 0.88rem;
         color: var(--ink-soft);
       }
 
       .toggle input {
-        width: 38px;
-        height: 20px;
         accent-color: var(--accent);
       }
 
-      .info-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
-      }
-
-      .stat {
-        padding: 14px 16px;
-        border-radius: 16px;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .label {
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--ink-muted);
-      }
-
-      .value {
-        font-size: 1.05rem;
-        font-weight: 700;
-      }
-
-      .payload {
-        padding: 16px;
-        border-radius: 16px;
-        background: rgba(15, 23, 42, 0.6);
-        border: 1px dashed rgba(148, 163, 184, 0.28);
-        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
-        font-size: 0.85rem;
-        color: var(--ink-soft);
-        word-break: break-all;
-      }
-
-      .url-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .url-pill {
-        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
-        font-size: 0.82rem;
-        padding: 6px 10px;
-        border-radius: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        background: rgba(15, 23, 42, 0.7);
-      }
-
-      .connectivity-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 16px;
-      }
-
       .approval-card {
-        border-radius: 18px;
+        border-radius: 14px;
         border: 1px solid rgba(34, 197, 94, 0.2);
         background: rgba(34, 197, 94, 0.08);
-        padding: 16px;
+        padding: 12px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 10px;
         transition: transform 0.2s ease, opacity 0.2s ease;
       }
 
@@ -359,61 +361,202 @@
         pointer-events: none;
         height: 0;
         overflow: hidden;
-        padding: 0 16px;
+        padding: 0 12px;
         border-width: 0;
       }
 
-      .approval-actions {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .steps {
+      .stat-grid {
         display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
         gap: 12px;
       }
 
-      .step {
+      .stat {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        background: rgba(15, 23, 42, 0.7);
+      }
+
+      .stat .label {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--ink-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .stat .value {
+        margin-top: 6px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--ink-soft);
+      }
+
+      .mono {
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        word-break: break-all;
+      }
+
+      .url-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .url-pill,
+      .payload {
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-size: 0.8rem;
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.7);
+        color: var(--ink-soft);
+        word-break: break-all;
+      }
+
+      .payload {
+        min-height: 72px;
+      }
+
+      .device-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 80px;
+      }
+
+      .device-item {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(15, 23, 42, 0.5);
+        transition: transform 0.18s ease, border-color 0.18s ease,
+          box-shadow 0.18s ease;
+      }
+
+      .device-item.disabled {
+        opacity: 0.6;
+        border-color: rgba(248, 113, 113, 0.4);
+      }
+
+      .device-item.connected {
+        border-color: rgba(34, 197, 94, 0.45);
+        box-shadow: 0 10px 20px rgba(34, 197, 94, 0.12);
+      }
+
+      .device-item:hover {
+        transform: translateY(-1px);
+        border-color: rgba(148, 163, 184, 0.35);
+      }
+
+      .device-header {
         display: flex;
         align-items: center;
+        justify-content: space-between;
         gap: 12px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(15, 23, 42, 0.7);
-        border: 1px solid rgba(148, 163, 184, 0.18);
       }
 
-      .step span {
-        display: inline-flex;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
+      .device-title {
+        font-weight: 600;
+      }
+
+      .device-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
         align-items: center;
-        justify-content: center;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        letter-spacing: 0.02em;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: var(--ink-soft);
+        background: rgba(15, 23, 42, 0.6);
+      }
+
+      .tag.connected {
         background: var(--accent-wash);
-        color: var(--mint-ink);
-        font-weight: 700;
-        font-size: 0.9rem;
+        color: #bbf7d0;
+        border-color: rgba(34, 197, 94, 0.4);
+      }
+
+      .tag.paired {
+        background: rgba(56, 189, 248, 0.16);
+        color: #bae6fd;
+        border-color: rgba(56, 189, 248, 0.35);
+      }
+
+      .tag.disabled {
+        background: var(--rose);
+        color: var(--rose-ink);
+        border-color: rgba(248, 113, 113, 0.4);
+      }
+
+      .tag.blocked {
+        background: rgba(251, 191, 36, 0.16);
+        color: #fde68a;
+        border-color: rgba(251, 191, 36, 0.4);
+      }
+
+      .device-meta {
+        margin-top: 4px;
+        font-size: 0.78rem;
+        color: var(--ink-muted);
+      }
+
+      .device-preview {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        background: rgba(2, 6, 23, 0.6);
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-size: 0.74rem;
+        color: var(--ink-soft);
+        white-space: pre-wrap;
+        max-height: 120px;
+        overflow: hidden;
+      }
+
+      .device-actions {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
       }
 
       .actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
+        gap: 10px;
         align-items: center;
       }
 
       button {
         border: none;
         border-radius: 999px;
-        padding: 11px 20px;
-        font-size: 0.95rem;
+        padding: 10px 18px;
+        font-size: 0.9rem;
         font-weight: 700;
         cursor: pointer;
-        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-        font-family: "IBM Plex Sans", "Avenir Next", "Avenir", "Futura",
-          "Gill Sans", "Trebuchet MS", sans-serif;
+        transition: transform 0.2s ease, box-shadow 0.2s ease,
+          background 0.2s ease;
+        font-family: "Space Grotesk", "IBM Plex Sans", "Avenir Next", "Avenir",
+          "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
 
       .primary {
@@ -438,6 +581,64 @@
         box-shadow: 0 10px 18px rgba(2, 6, 23, 0.4);
       }
 
+      .ghost {
+        background: transparent;
+        color: var(--ink-soft);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        padding: 8px 14px;
+        font-size: 0.82rem;
+      }
+
+      .mini {
+        padding: 6px 12px;
+        font-size: 0.78rem;
+      }
+
+      .danger {
+        background: #ef4444;
+        color: #fff;
+      }
+
+      .danger:hover {
+        background: #dc2626;
+      }
+
+      .alert {
+        border-radius: 12px;
+        border: 1px solid rgba(248, 113, 113, 0.4);
+        background: rgba(248, 113, 113, 0.12);
+        color: var(--rose-ink);
+        padding: 10px 12px;
+        font-size: 0.85rem;
+      }
+
+      .split-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        main.shell {
+          padding: 36px 16px 48px;
+        }
+        .topbar {
+          align-items: flex-start;
+        }
+        .split-grid {
+          grid-template-columns: 1fr;
+        }
+        .token-controls {
+          grid-template-columns: 1fr;
+        }
+      }
+
       @keyframes rise {
         from {
           opacity: 0;
@@ -459,141 +660,258 @@
           transform: translateY(0) scale(1);
         }
       }
-
-      @keyframes drift {
-        0% {
-          transform: translate(0, 0);
-        }
-        50% {
-          transform: translate(20px, -10px);
-        }
-        100% {
-          transform: translate(0, 0);
-        }
-      }
-
-      @media (max-width: 900px) {
-        .board {
-          grid-template-columns: 1fr;
-        }
-
-        .info-grid {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      @media (max-width: 720px) {
-        .connectivity-grid {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      @media (max-width: 600px) {
-        main {
-          padding: 40px 20px 48px;
-        }
-
-        .details-header {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-      }
     </style>
   </head>
   <body>
-    <main>
-      <header class="hero">
-        <div class="hero-top">
-          <span class="badge">Desktop pairing</span>
-          <span class="pill">LAN-first</span>
-          <span class="pill">Auto pairing</span>
-          <span class="pill">Approval optional</span>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="badge">Agent</span>
+          <div>
+            <h1>Vibe Inspect Desktop Agent</h1>
+            <p>
+              QR is a one-time handshake. It expires after 2 minutes and hides
+              automatically. Use long-lived tokens for ongoing access.
+            </p>
+          </div>
         </div>
-        <h1>Vibe Inspect Agent is ready to pair.</h1>
-        <p>
-          Scan the QR code with the mobile app to link this desktop agent. Tokens
-          expire quickly for safety, so refresh anytime.
-        </p>
+        <div class="top-actions">
+          <div class="status" id="status">Waiting for mobile confirmation.</div>
+          <button class="primary" id="generate">New handshake</button>
+        </div>
       </header>
 
-      <section class="board">
-        <div class="qr-panel">
-          <div class="panel-title">
-            <h2>QR session</h2>
-            <span class="hint">Scan in mobile app</span>
-          </div>
-          <div class="qr-frame" id="qr">Loading QR...</div>
-          <div class="qr-actions">
-            <button class="secondary" id="copyPayload">Copy QR payload</button>
+      <div class="view-tabs">
+        <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="settings">Settings</button>
+      </div>
+      <div class="bridge-alert hidden" id="bridgeAlert">
+        <div>
+          桌面桥接不可用，当前页面无法连接 Agent。
+          <div class="meta">
+            请使用桌面应用打开此界面（不要用浏览器窗口），然后重新打开。
           </div>
         </div>
+      </div>
 
-        <div class="details">
-          <div class="details-header">
+      <section class="grid" id="overviewView">
+        <aside class="sidebar">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Pairing QR</h2>
+                <div class="hint">Generate, then scan within 2 minutes</div>
+              </div>
+              <button class="ghost" id="copyPayload">Copy payload</button>
+            </div>
+            <div class="qr-frame" id="qr">Loading QR...</div>
+            <div class="meta-grid">
+              <div class="meta-item">
+                <span>Pairing token</span>
+                <span id="token">--</span>
+              </div>
+              <div class="meta-item">
+                <span>Shared secret</span>
+                <span id="secret">--</span>
+              </div>
+              <div class="meta-item">
+                <span>Expires in</span>
+                <span id="expires">--</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Approval</h2>
+              <label class="toggle">
+                <input type="checkbox" id="requireApproval" />
+                Require approval
+              </label>
+            </div>
+            <div class="approval-card hidden" id="approvalCard">
+              <strong>Pending pairing approval</strong>
+              <div id="pendingMeta">No pending requests.</div>
+              <div class="actions">
+                <button class="primary" id="approvePairing">Approve pairing</button>
+                <button class="secondary" id="denyPairing">Deny</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Login token</h2>
+                <div class="hint">Primary 64-char token</div>
+              </div>
+            </div>
+            <div class="payload mono" id="authToken">--</div>
+            <div class="actions">
+              <button class="secondary mini" id="copyAuthToken">Copy login token</button>
+              <button class="secondary mini" id="toggleAuthToken">Show token</button>
+              <button class="danger mini" id="resetAuthToken">Rotate login token</button>
+            </div>
             <div>
-              <h2>Session details</h2>
-              <p class="details-subtitle">LAN preferred. Tunnel fallback.</p>
-            </div>
-            <div class="status" id="status">Waiting for mobile confirmation.</div>
-          </div>
-
-          <label class="toggle">
-            <input type="checkbox" id="requireApproval" />
-            Require desktop approval
-          </label>
-
-          <div class="approval-card hidden" id="approvalCard">
-            <strong>Pending pairing approval</strong>
-            <div id="pendingMeta">No pending requests.</div>
-            <div class="approval-actions">
-              <button class="primary" id="approvePairing">Approve pairing</button>
-              <button class="secondary" id="denyPairing">Deny</button>
+              <div class="hint">Device ID</div>
+              <div class="payload mono" id="deviceId">--</div>
+              <div class="actions">
+                <button class="secondary mini" id="copyDeviceId">Copy device ID</button>
+              </div>
             </div>
           </div>
+        </aside>
 
-          <div class="info-grid">
-            <div class="stat">
-              <span class="label">Pairing token</span>
-              <span class="value" id="token">--</span>
+        <div class="content">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Connection overview</h2>
+                <div class="hint">LAN preferred, tunnel fallback</div>
+              </div>
             </div>
-            <div class="stat">
-              <span class="label">Shared secret</span>
-              <span class="value" id="secret">--</span>
-            </div>
-            <div class="stat">
-              <span class="label">Expires in</span>
-              <span class="value" id="expires">--</span>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="label">Paired devices</span>
+                <span class="value" id="pairedCount">0</span>
+              </div>
+              <div class="stat">
+                <span class="label">Connected devices</span>
+                <span class="value" id="activeCount">0</span>
+              </div>
+              <div class="stat">
+                <span class="label">Last active</span>
+                <span class="value" id="lastActive">--</span>
+              </div>
+              <div class="stat">
+                <span class="label">Connection mode</span>
+                <span class="value" id="connectionMode">--</span>
+              </div>
+              <div class="stat">
+                <span class="label">FRP status</span>
+                <span class="value" id="frpStatus">Not configured</span>
+              </div>
             </div>
           </div>
 
-          <div class="connectivity-grid">
-            <div>
-              <div class="label">Local endpoints (LAN first)</div>
-              <div class="url-list" id="localUrls">
-                <span class="url-pill">--</span>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Endpoints & payload</h2>
+                <div class="hint">Copy these if you need manual pairing</div>
+              </div>
+            </div>
+            <div class="split-grid">
+              <div>
+                <div class="hint">Wi-Fi SSID</div>
+                <div class="payload" id="wifiSsid">--</div>
+              </div>
+              <div>
+                <div class="hint">Local IPs</div>
+                <div class="url-list" id="localIps">
+                  <span class="url-pill">--</span>
+                </div>
+              </div>
+            </div>
+            <div class="split-grid">
+              <div>
+                <div class="hint">Local endpoints (LAN first)</div>
+                <div class="url-list" id="localUrls">
+                  <span class="url-pill">--</span>
+                </div>
+              </div>
+              <div>
+                <div class="hint">Tunnel URL</div>
+                <div class="payload" id="tunnelUrl">--</div>
               </div>
             </div>
             <div>
-              <div class="label">Tunnel URL</div>
-              <div class="payload" id="tunnelUrl">--</div>
+              <div class="hint">FRP public URL</div>
+              <div class="payload" id="frpUrl">--</div>
+            </div>
+            <div class="alert" id="tunnelError" style="display: none"></div>
+            <div>
+              <div class="hint">QR payload</div>
+              <div class="payload" id="payload">--</div>
             </div>
           </div>
 
-          <div class="status error" id="tunnelError" style="display: none"></div>
-
-          <div>
-            <div class="label">QR payload</div>
-            <div class="payload" id="payload">--</div>
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Devices</h2>
+              <div class="hint">Paired vs connected</div>
+            </div>
+            <div class="split-grid">
+              <div>
+                <div class="hint">Paired devices</div>
+                <div class="device-list" id="pairedDevices">
+                  <div class="device-item">--</div>
+                </div>
+              </div>
+              <div>
+                <div class="hint">Connected devices</div>
+                <div class="device-list" id="activeDevices">
+                  <div class="device-item">--</div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="actions">
-            <button class="primary" id="generate">Generate new token</button>
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Terminal sessions</h2>
+              <div class="hint">Live activity</div>
+            </div>
+            <div class="device-list" id="terminalSessions">
+              <div class="device-item">--</div>
+            </div>
           </div>
+        </div>
+      </section>
 
-          <div class="steps">
-            <div class="step"><span>1</span>Open the mobile app and tap Pair.</div>
-            <div class="step"><span>2</span>Scan this QR code to connect securely.</div>
-            <div class="step"><span>3</span>Approve here if required.</div>
+      <section class="settings-view hidden" id="settingsView">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Access tokens</h2>
+              <div class="hint">Long-lived 64-character tokens</div>
+            </div>
+            <button class="secondary" id="generateLongToken">Generate token</button>
+          </div>
+          <div class="token-controls">
+            <input
+              type="text"
+              id="customTokenInput"
+              placeholder="Paste 64-char token"
+              autocomplete="off"
+            />
+            <input
+              type="text"
+              id="customTokenLabel"
+              placeholder="Label (optional)"
+              autocomplete="off"
+            />
+            <button class="primary" id="addTokenBtn">Add token</button>
+          </div>
+          <div class="device-list" id="tokenList">
+            <div class="device-item">--</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">FRP public URL</h2>
+              <div class="hint">Optional public address for non-LAN access</div>
+            </div>
+          </div>
+          <div class="token-controls">
+            <input
+              type="text"
+              id="frpUrlInput"
+              placeholder="https://your-frp.example.com"
+              autocomplete="off"
+            />
+            <button class="primary" id="saveFrpUrl">Save URL</button>
           </div>
         </div>
       </section>
@@ -601,10 +919,9 @@
 
     <script>
       const invoke =
-        window.__TAURI__?.core?.invoke ||
-        window.__TAURI__?.invoke ||
-        window.__TAURI_INTERNALS__?.invoke ||
-        null;
+        window.__TAURI__?.core?.invoke ?? window.__TAURI__?.invoke ?? null;
+      const shellEl = document.querySelector(".shell");
+      const bridgeAlertEl = document.getElementById("bridgeAlert");
       const statusEl = document.getElementById("status");
       const qrEl = document.getElementById("qr");
       const tokenEl = document.getElementById("token");
@@ -612,27 +929,145 @@
       const expiresEl = document.getElementById("expires");
       const payloadEl = document.getElementById("payload");
       const localUrlsEl = document.getElementById("localUrls");
+      const localIpsEl = document.getElementById("localIps");
+      const wifiSsidEl = document.getElementById("wifiSsid");
       const tunnelUrlEl = document.getElementById("tunnelUrl");
+      const frpUrlEl = document.getElementById("frpUrl");
       const tunnelErrorEl = document.getElementById("tunnelError");
-      const copyBtn = document.getElementById("copyPayload");
-      const generateBtn = document.getElementById("generate");
       const approvalToggle = document.getElementById("requireApproval");
       const approvalCard = document.getElementById("approvalCard");
       const pendingMetaEl = document.getElementById("pendingMeta");
       const approveBtn = document.getElementById("approvePairing");
       const denyBtn = document.getElementById("denyPairing");
+      const pairedDevicesEl = document.getElementById("pairedDevices");
+      const activeDevicesEl = document.getElementById("activeDevices");
+      const terminalSessionsEl = document.getElementById("terminalSessions");
+      const generateBtn = document.getElementById("generate");
+      const copyBtn = document.getElementById("copyPayload");
+      const authTokenEl = document.getElementById("authToken");
+      const deviceIdEl = document.getElementById("deviceId");
+      const connectionModeEl = document.getElementById("connectionMode");
+      const frpStatusEl = document.getElementById("frpStatus");
+      const pairedCountEl = document.getElementById("pairedCount");
+      const activeCountEl = document.getElementById("activeCount");
+      const lastActiveEl = document.getElementById("lastActive");
+      const copyAuthTokenBtn = document.getElementById("copyAuthToken");
+      const toggleAuthTokenBtn = document.getElementById("toggleAuthToken");
+      const copyDeviceIdBtn = document.getElementById("copyDeviceId");
+      const resetAuthTokenBtn = document.getElementById("resetAuthToken");
+      const tokenListEl = document.getElementById("tokenList");
+      const generateTokenBtn = document.getElementById("generateLongToken");
+      const addTokenBtn = document.getElementById("addTokenBtn");
+      const customTokenInput = document.getElementById("customTokenInput");
+      const customTokenLabelInput = document.getElementById("customTokenLabel");
+      const frpUrlInput = document.getElementById("frpUrlInput");
+      const saveFrpUrlBtn = document.getElementById("saveFrpUrl");
+
+      const viewTabs = document.querySelectorAll(".view-tabs .tab");
+      const overviewView = document.getElementById("overviewView");
+      const settingsView = document.getElementById("settingsView");
 
       let session = null;
       let syncingToggle = false;
+      let authTokenRaw = null;
+      let authTokenVisible = false;
 
       function setStatus(message, tone = "ok") {
+        if (!statusEl) return;
         statusEl.textContent = message;
         statusEl.classList.toggle("error", tone === "error");
         statusEl.classList.toggle("notice", tone === "notice");
       }
 
+      function setControlsEnabled(enabled) {
+        const controls = [
+          generateBtn,
+          copyBtn,
+          approveBtn,
+          denyBtn,
+          copyAuthTokenBtn,
+          toggleAuthTokenBtn,
+          resetAuthTokenBtn,
+          generateTokenBtn,
+          addTokenBtn,
+          saveFrpUrlBtn,
+        ];
+        controls.forEach((btn) => {
+          if (!btn) return;
+          btn.disabled = !enabled;
+          btn.classList.toggle("button-disabled", !enabled);
+        });
+        const inputs = [customTokenInput, customTokenLabelInput, frpUrlInput];
+        inputs.forEach((input) => {
+          if (!input) return;
+          input.disabled = !enabled;
+        });
+      }
+
+      function setBridgeState(available) {
+        if (!shellEl) return;
+        shellEl.classList.toggle("app-disabled", !available);
+        bridgeAlertEl?.classList.toggle("hidden", available);
+        statusEl?.classList.toggle("hidden", !available);
+        if (available) {
+          setStatus("Waiting for mobile confirmation.");
+        } else {
+          setStatus(
+            "Desktop bridge not available. Agent controls are disabled.",
+            "error",
+          );
+        }
+        setControlsEnabled(available);
+      }
+
+      function maskToken(token) {
+        if (!token) return "--";
+        if (token.length <= 8) return "****";
+        return `${token.slice(0, 4)}....${token.slice(-4)}`;
+      }
+
+      function setAuthToken(token) {
+        authTokenRaw = token || null;
+        updateAuthTokenDisplay();
+      }
+
+      function updateAuthTokenDisplay() {
+        if (!authTokenEl) return;
+        if (!authTokenRaw) {
+          authTokenEl.textContent = "--";
+          if (copyAuthTokenBtn) copyAuthTokenBtn.disabled = true;
+          if (toggleAuthTokenBtn) toggleAuthTokenBtn.disabled = true;
+          return;
+        }
+        if (copyAuthTokenBtn) copyAuthTokenBtn.disabled = false;
+        if (toggleAuthTokenBtn) toggleAuthTokenBtn.disabled = false;
+        if (authTokenVisible) {
+          authTokenEl.textContent = authTokenRaw;
+          if (toggleAuthTokenBtn) toggleAuthTokenBtn.textContent = "Hide token";
+        } else {
+          authTokenEl.textContent = maskToken(authTokenRaw);
+          if (toggleAuthTokenBtn) toggleAuthTokenBtn.textContent = "Show token";
+        }
+      }
+
+      async function copyText(text, message) {
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus(message);
+        } catch (error) {
+          setStatus("Clipboard unavailable.", "error");
+          console.error(error);
+        }
+      }
+
+      function formatDateTime(ts) {
+        if (!ts) return "--";
+        return new Date(ts * 1000).toLocaleString();
+      }
+
       function formatExpiry(expiresAt) {
-        if (!expiresAt) return "--";
+        if (!expiresAt || expiresAt === 0) return "Active";
         const remaining = expiresAt * 1000 - Date.now();
         if (remaining <= 0) return "Expired";
         const minutes = Math.floor(remaining / 60000);
@@ -645,15 +1080,36 @@
 
       function renderSession(data) {
         session = data;
-        tokenEl.textContent = data.token;
-        secretEl.textContent = data.secret;
-        payloadEl.textContent = data.qr_payload;
-        qrEl.innerHTML = data.qr_svg;
-        qrEl.classList.add("loaded");
-        expiresEl.textContent = formatExpiry(data.expires_at);
+        if (tokenEl) tokenEl.textContent = data.token;
+        if (secretEl) secretEl.textContent = data.secret;
+        if (payloadEl) payloadEl.textContent = data.qr_payload;
+        if (qrEl) {
+          qrEl.innerHTML = data.qr_svg;
+          qrEl.classList.add("loaded");
+        }
+        if (expiresEl) expiresEl.textContent = formatExpiry(data.expires_at);
+        if (deviceIdEl) deviceIdEl.textContent = data.device_id || "--";
+        setAuthToken(data.auth_token);
+        renderWifiSsid(data.wifi_ssid);
+        renderLocalIps(data.local_ips);
+        updateConnectionMode(data);
+      }
+
+      function clearQrDisplay(message) {
+        session = null;
+        if (qrEl) {
+          qrEl.classList.remove("loaded");
+          qrEl.textContent =
+            message || 'QR expired. Click "New handshake" to generate a new one.';
+        }
+        if (tokenEl) tokenEl.textContent = "--";
+        if (secretEl) secretEl.textContent = "--";
+        if (expiresEl) expiresEl.textContent = "--";
+        if (payloadEl) payloadEl.textContent = "--";
       }
 
       function renderLocalUrls(urls) {
+        if (!localUrlsEl) return;
         localUrlsEl.innerHTML = "";
         if (!urls || urls.length === 0) {
           const fallback = document.createElement("span");
@@ -670,8 +1126,32 @@
         });
       }
 
+      function renderLocalIps(ips) {
+        if (!localIpsEl) return;
+        localIpsEl.innerHTML = "";
+        if (!ips || ips.length === 0) {
+          const fallback = document.createElement("span");
+          fallback.className = "url-pill";
+          fallback.textContent = "--";
+          localIpsEl.appendChild(fallback);
+          return;
+        }
+        ips.forEach((ip) => {
+          const pill = document.createElement("span");
+          pill.className = "url-pill";
+          pill.textContent = ip;
+          localIpsEl.appendChild(pill);
+        });
+      }
+
+      function renderWifiSsid(ssid) {
+        if (!wifiSsidEl) return;
+        wifiSsidEl.textContent = ssid && ssid.trim().length ? ssid : "--";
+      }
+
       function renderTunnel(tunnelUrl, tunnelError) {
-        tunnelUrlEl.textContent = tunnelUrl || "--";
+        if (tunnelUrlEl) tunnelUrlEl.textContent = tunnelUrl || "--";
+        if (!tunnelErrorEl) return;
         if (tunnelError) {
           tunnelErrorEl.style.display = "block";
           tunnelErrorEl.textContent = tunnelError;
@@ -681,12 +1161,388 @@
         }
       }
 
+      function renderFrpUrl(url) {
+        if (!frpUrlEl) return;
+        frpUrlEl.textContent = url && url.trim().length ? url : "--";
+        if (frpUrlInput && document.activeElement !== frpUrlInput) {
+          frpUrlInput.value = url || "";
+        }
+      }
+
+      function formatTime(ts) {
+        if (!ts) return "--";
+        return new Date(ts * 1000).toLocaleTimeString();
+      }
+
+      function updateConnectionMode(data) {
+        let mode = "Offline";
+        if (data?.local_urls?.length) {
+          mode = "LAN";
+        } else if (data?.tunnel_url) {
+          mode = "Tunnel";
+        }
+        if (connectionModeEl) connectionModeEl.textContent = mode;
+        if (frpStatusEl) {
+          frpStatusEl.textContent = data?.frp_url || "Not configured";
+        }
+      }
+
+      function updateCounts(data) {
+        const paired = data?.paired_devices || [];
+        const connected = data?.connected_devices || data?.active_devices || [];
+        if (pairedCountEl) pairedCountEl.textContent = paired.length;
+        if (activeCountEl) activeCountEl.textContent = connected.length;
+        const lastActiveTs =
+          connected[0]?.last_seen_at || paired[0]?.last_seen_at || null;
+        if (lastActiveEl) lastActiveEl.textContent = formatDateTime(lastActiveTs);
+      }
+
+      function buildRequestId() {
+        if (crypto?.randomUUID) return crypto.randomUUID();
+        return `req-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+      }
+
+      async function applyPairingAction(commandName, payload, message) {
+        if (!invoke) return;
+        try {
+          const response = await invoke(commandName, payload);
+          if (response) {
+            renderStatus(response);
+          }
+          if (message) setStatus(message);
+        } catch (error) {
+          setStatus("Action failed.", "error");
+          console.error(error);
+        }
+      }
+
+      async function sendTerminalAction(action, sessionId, extra = {}) {
+        if (!invoke) return null;
+        const request = {
+          request_id: buildRequestId(),
+          command: "terminal",
+          payload: {
+            action,
+            session_id: sessionId,
+            ...extra,
+          },
+        };
+        try {
+          const response = await invoke("handle_agent_command", { request });
+          if (response?.status === "error") {
+            const message = response?.error?.message || "Terminal action failed.";
+            setStatus(message, "error");
+            return null;
+          }
+          return response?.payload || null;
+        } catch (error) {
+          setStatus("Terminal action failed.", "error");
+          console.error(error);
+          return null;
+        }
+      }
+
+      function createActionButton(label, className, onClick) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = className;
+        btn.textContent = label;
+        btn.addEventListener("click", onClick);
+        return btn;
+      }
+
+      function createTag(label, className) {
+        const tag = document.createElement("span");
+        tag.className = className ? `tag ${className}` : "tag";
+        tag.textContent = label;
+        return tag;
+      }
+
+      function renderDeviceList(container, devices, emptyLabel, options = {}) {
+        const { showActions = false, activeLabel = false, pairedTag = false } = options;
+        container.innerHTML = "";
+        if (!devices || devices.length === 0) {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          item.textContent = emptyLabel;
+          container.appendChild(item);
+          return;
+        }
+        devices.forEach((device) => {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          if (device.disabled) {
+            item.classList.add("disabled");
+          }
+          if (activeLabel) {
+            item.classList.add("connected");
+          }
+          const header = document.createElement("div");
+          header.className = "device-header";
+          const title = document.createElement("div");
+          title.className = "device-title";
+          title.textContent = device.name || device.id || "Unknown device";
+          const tags = document.createElement("div");
+          tags.className = "device-tags";
+          if (activeLabel) {
+            const label = typeof activeLabel === "string" ? activeLabel : "active";
+            tags.appendChild(createTag(label, "connected"));
+          }
+          if (pairedTag && device.paired_at) {
+            tags.appendChild(createTag("paired", "paired"));
+          }
+          if (device.disabled) {
+            tags.appendChild(createTag("disabled", "disabled"));
+          }
+          if (device.blocked_until) {
+            tags.appendChild(createTag("blocked", "blocked"));
+          }
+          header.appendChild(title);
+          if (tags.childNodes.length > 0) {
+            header.appendChild(tags);
+          }
+          const meta = document.createElement("div");
+          meta.className = "device-meta";
+          const parts = [];
+          if (device.id) {
+            parts.push(`id ${device.id}`);
+          }
+          if (device.paired_at) {
+            parts.push(`paired ${formatTime(device.paired_at)}`);
+          }
+          if (device.last_seen_at) {
+            parts.push(`seen ${formatTime(device.last_seen_at)}`);
+          }
+          if (device.source) {
+            parts.push(device.source);
+          }
+          if (device.blocked_until) {
+            parts.push(`blocked until ${formatTime(device.blocked_until)}`);
+          }
+          meta.textContent = parts.join(" · ");
+          item.appendChild(header);
+          if (parts.length > 0) {
+            item.appendChild(meta);
+          }
+          if (showActions) {
+            const actions = document.createElement("div");
+            actions.className = "device-actions";
+            const renameBtn = createActionButton("Rename", "secondary mini", async () => {
+              const name = window.prompt("Rename device", device.name || "");
+              if (name === null) return;
+              const trimmed = name.trim();
+              if (!trimmed) {
+                setStatus("Device name cannot be empty.", "error");
+                return;
+              }
+              await applyPairingAction(
+                "rename_client",
+                { client_id: device.id, name: trimmed },
+                "Device renamed."
+              );
+            });
+            const toggleBtn = createActionButton(
+              device.disabled ? "Enable" : "Disable",
+              "secondary mini",
+              async () => {
+                await applyPairingAction(
+                  "set_client_blocked",
+                  { client_id: device.id, blocked: !device.disabled },
+                  device.disabled ? "Device enabled." : "Device disabled."
+                );
+              }
+            );
+            const kickBtn = createActionButton("Kick", "secondary mini", async () => {
+              if (!confirm("Kick this device for 60 seconds?")) return;
+              await applyPairingAction(
+                "kick_client",
+                { client_id: device.id },
+                "Device kicked."
+              );
+            });
+            const forgetBtn = createActionButton("Forget", "danger mini", async () => {
+              if (!confirm("Forget this device?")) return;
+              await applyPairingAction(
+                "forget_client",
+                { client_id: device.id },
+                "Device removed."
+              );
+            });
+            actions.appendChild(renameBtn);
+            actions.appendChild(toggleBtn);
+            actions.appendChild(kickBtn);
+            actions.appendChild(forgetBtn);
+            item.appendChild(actions);
+          }
+          container.appendChild(item);
+        });
+      }
+
+      function renderTerminalSessions(sessions) {
+        if (!terminalSessionsEl) return;
+        terminalSessionsEl.innerHTML = "";
+        if (!sessions || sessions.length === 0) {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          item.textContent = "No running terminal sessions.";
+          terminalSessionsEl.appendChild(item);
+          return;
+        }
+        sessions.forEach((session) => {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          const header = document.createElement("div");
+          header.className = "device-header";
+          const title = document.createElement("div");
+          title.className = "device-title";
+          title.textContent = session.id;
+          const tags = document.createElement("div");
+          tags.className = "device-tags";
+          tags.appendChild(createTag(session.status, "connected"));
+          header.appendChild(title);
+          header.appendChild(tags);
+          item.appendChild(header);
+          const meta = document.createElement("div");
+          meta.className = "device-meta";
+          meta.textContent = `started ${formatTime(session.created_at)} · last ${formatTime(
+            session.last_activity
+          )}`;
+          item.appendChild(meta);
+          if (session.last_output) {
+            const preview = document.createElement("div");
+            preview.className = "device-preview";
+            preview.textContent = session.last_output;
+            item.appendChild(preview);
+          }
+          const actions = document.createElement("div");
+          actions.className = "device-actions";
+          const keepaliveBtn = createActionButton("Keep alive", "secondary mini", async () => {
+            await sendTerminalAction("keepalive", session.id);
+            await refreshStatus();
+            setStatus("Terminal keepalive sent.");
+          });
+          const pollBtn = createActionButton("Poll output", "secondary mini", async () => {
+            const payload = await sendTerminalAction("poll", session.id, {
+              limit: 20,
+            });
+            const output = payload?.output || [];
+            if (output.length > 0) {
+              const last = output[output.length - 1];
+              const text = (last?.data || "").trim();
+              if (text) {
+                const preview =
+                  item.querySelector(".device-preview") || document.createElement("div");
+                preview.className = "device-preview";
+                preview.textContent = text;
+                if (!item.contains(preview)) item.appendChild(preview);
+              }
+            }
+            await refreshStatus();
+          });
+          const stopBtn = createActionButton("Disconnect", "danger mini", async () => {
+            if (!confirm("Disconnect this terminal session?")) return;
+            await sendTerminalAction("stop", session.id);
+            await refreshStatus();
+          });
+          actions.appendChild(keepaliveBtn);
+          actions.appendChild(pollBtn);
+          actions.appendChild(stopBtn);
+          item.appendChild(actions);
+          terminalSessionsEl.appendChild(item);
+        });
+      }
+
+      function renderTokenList(tokens) {
+        if (!tokenListEl) return;
+        tokenListEl.innerHTML = "";
+        if (!tokens || tokens.length === 0) {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          item.textContent = "No tokens yet.";
+          tokenListEl.appendChild(item);
+          return;
+        }
+        tokens.forEach((record) => {
+          const item = document.createElement("div");
+          item.className = "device-item";
+          if (record.revoked_at) item.classList.add("disabled");
+          const header = document.createElement("div");
+          header.className = "device-header";
+          const title = document.createElement("div");
+          title.className = "device-title";
+          title.textContent = record.label || "Access token";
+          const tags = document.createElement("div");
+          tags.className = "device-tags";
+          if (record.is_primary) {
+            tags.appendChild(createTag("primary", "paired"));
+          }
+          if (record.client_id) {
+            tags.appendChild(createTag("bound", "connected"));
+          }
+          if (record.revoked_at) {
+            tags.appendChild(createTag("revoked", "disabled"));
+          }
+          header.appendChild(title);
+          if (tags.childNodes.length > 0) {
+            header.appendChild(tags);
+          }
+          item.appendChild(header);
+          const meta = document.createElement("div");
+          meta.className = "device-meta";
+          const parts = [
+            `token ${maskToken(record.token)}`,
+            `created ${formatDateTime(record.created_at)}`,
+          ];
+          if (record.client_id) {
+            parts.push(`device ${record.client_id}`);
+          }
+          if (record.revoked_at) {
+            parts.push(`revoked ${formatDateTime(record.revoked_at)}`);
+          }
+          meta.textContent = parts.join(" · ");
+          item.appendChild(meta);
+          const actions = document.createElement("div");
+          actions.className = "device-actions";
+          const copyBtn = createActionButton("Copy", "secondary mini", async () => {
+            await copyText(record.token, "Token copied.");
+          });
+          actions.appendChild(copyBtn);
+          if (!record.revoked_at) {
+            const primaryBtn = createActionButton(
+              record.is_primary ? "Primary" : "Set primary",
+              "secondary mini",
+              async () => {
+                if (record.is_primary) return;
+                await applyPairingAction(
+                  "set_primary_auth_token",
+                  { token: record.token, label: record.label },
+                  "Primary token updated."
+                );
+              }
+            );
+            actions.appendChild(primaryBtn);
+            const revokeBtn = createActionButton("Revoke", "danger mini", async () => {
+              if (!confirm("Revoke this token?")) return;
+              await applyPairingAction(
+                "revoke_auth_token",
+                { token: record.token },
+                "Token revoked."
+              );
+            });
+            actions.appendChild(revokeBtn);
+          }
+          item.appendChild(actions);
+          tokenListEl.appendChild(item);
+        });
+      }
+
       function renderPending(pending) {
         if (pending) {
           approvalCard.classList.remove("hidden");
           const when = new Date(pending.requested_at * 1000).toLocaleTimeString();
           const source = pending.source ? ` from ${pending.source}` : "";
-          pendingMetaEl.textContent = `Token ${pending.token} requested ${when}${source}.`;
+          const name = pending.client_name ? ` (${pending.client_name})` : "";
+          pendingMetaEl.textContent = `Token ${pending.token}${name} requested ${when}${source}.`;
         } else {
           approvalCard.classList.add("hidden");
           pendingMetaEl.textContent = "No pending requests.";
@@ -695,10 +1551,21 @@
 
       function renderStatus(data) {
         if (data.session) {
-          tokenEl.textContent = data.session.token;
-          secretEl.textContent = data.session.secret;
-          expiresEl.textContent = formatExpiry(data.session.expires_at);
+          if (tokenEl) tokenEl.textContent = data.session.token;
+          if (secretEl) secretEl.textContent = data.session.secret;
+          if (expiresEl) expiresEl.textContent = formatExpiry(data.session.expires_at);
+          if (data.session.expires_at && data.session.expires_at * 1000 <= Date.now()) {
+            clearQrDisplay('QR expired. Click "New handshake" to generate a new one.');
+          }
         }
+        if (data.device_id && deviceIdEl) {
+          deviceIdEl.textContent = data.device_id;
+        }
+        if (data.auth_token) {
+          setAuthToken(data.auth_token);
+        }
+        renderWifiSsid(data.wifi_ssid);
+        renderLocalIps(data.local_ips);
         if (data.connected_at) {
           setStatus("Paired and connected.");
         } else if (data.pending) {
@@ -711,7 +1578,20 @@
         syncingToggle = false;
         renderLocalUrls(data.local_urls);
         renderTunnel(data.tunnel_url, data.tunnel_error);
+        renderFrpUrl(data.frp_url);
         renderPending(data.pending);
+        updateConnectionMode(data);
+        updateCounts(data);
+        renderDeviceList(pairedDevicesEl, data.paired_devices, "No paired devices.", {
+          showActions: true,
+          pairedTag: true,
+        });
+        const connectedDevices = data.connected_devices || data.active_devices || [];
+        renderDeviceList(activeDevicesEl, connectedDevices, "No connected devices.", {
+          activeLabel: "Connected",
+        });
+        renderTerminalSessions(data.terminal_sessions);
+        renderTokenList(data.auth_tokens);
       }
 
       async function refreshStatus() {
@@ -734,7 +1614,9 @@
           const data = await invoke("create_pairing_session");
           renderSession(data);
           renderLocalUrls(data.local_urls || []);
+          renderLocalIps(data.local_ips || []);
           renderTunnel(data.tunnel_url, data.tunnel_error);
+          renderFrpUrl(data.frp_url);
           setStatus("Waiting for mobile confirmation.");
         } catch (error) {
           setStatus("Failed to generate pairing token.", "error");
@@ -742,66 +1624,183 @@
         }
       }
 
-      copyBtn.addEventListener("click", async () => {
-        if (!session) return;
-        try {
-          await navigator.clipboard.writeText(session.qr_payload);
-          setStatus("QR payload copied to clipboard.");
-        } catch (error) {
-          setStatus("Clipboard unavailable.", "error");
-          console.error(error);
-        }
-      });
+      if (copyBtn) {
+        copyBtn.addEventListener("click", async () => {
+          if (!session) return;
+          await copyText(session.qr_payload, "QR payload copied to clipboard.");
+        });
+      }
 
-      generateBtn.addEventListener("click", createSession);
+      if (generateBtn) {
+        generateBtn.addEventListener("click", createSession);
+      }
 
-      approvalToggle.addEventListener("change", async () => {
-        if (!invoke || syncingToggle) return;
-        try {
-          const status = await invoke("set_pairing_requires_approval", {
-            requires_approval: approvalToggle.checked,
-          });
-          renderStatus(status);
-        } catch (error) {
-          console.error(error);
-        }
-      });
+      if (copyAuthTokenBtn) {
+        copyAuthTokenBtn.addEventListener("click", async () => {
+          await copyText(authTokenRaw, "Login token copied.");
+        });
+      }
 
-      approveBtn.addEventListener("click", async () => {
-        if (!invoke) return;
-        try {
-          const response = await invoke("approve_pairing_request");
-          if (response?.status === "connected") {
-            setStatus("Paired and connected.");
+      if (toggleAuthTokenBtn) {
+        toggleAuthTokenBtn.addEventListener("click", () => {
+          authTokenVisible = !authTokenVisible;
+          updateAuthTokenDisplay();
+        });
+      }
+
+      if (copyDeviceIdBtn) {
+        copyDeviceIdBtn.addEventListener("click", async () => {
+          await copyText(deviceIdEl.textContent, "Device ID copied.");
+        });
+      }
+
+      if (resetAuthTokenBtn) {
+        resetAuthTokenBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          if (!confirm("Rotate login token? Existing sessions will disconnect.")) {
+            return;
           }
-          await refreshStatus();
-        } catch (error) {
-          console.error(error);
-        }
-      });
+          try {
+            const response = await invoke("reset_auth_token");
+            if (response?.device_id && deviceIdEl) {
+              deviceIdEl.textContent = response.device_id;
+            }
+            setAuthToken(response?.auth_token);
+            setStatus("Login token rotated.");
+            await refreshStatus();
+          } catch (error) {
+            setStatus("Failed to reset login token.", "error");
+            console.error(error);
+          }
+        });
+      }
 
-      denyBtn.addEventListener("click", async () => {
-        if (!invoke) return;
-        try {
-          const status = await invoke("deny_pairing_request");
-          renderStatus(status);
-        } catch (error) {
-          console.error(error);
-        }
+      if (generateTokenBtn) {
+        generateTokenBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          try {
+            await invoke("create_auth_token", { label: "Manual token" });
+            setStatus("Token generated.");
+            await refreshStatus();
+          } catch (error) {
+            setStatus("Failed to generate token.", "error");
+            console.error(error);
+          }
+        });
+      }
+
+      if (addTokenBtn) {
+        addTokenBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          const token = customTokenInput?.value?.trim() || "";
+          const label = customTokenLabelInput?.value?.trim() || undefined;
+          if (!token) {
+            setStatus("Token cannot be empty.", "error");
+            return;
+          }
+          if (token.length !== 64) {
+            setStatus("Token must be 64 characters.", "error");
+            return;
+          }
+          try {
+            await invoke("add_auth_token", { token, label });
+            if (customTokenInput) customTokenInput.value = "";
+            if (customTokenLabelInput) customTokenLabelInput.value = "";
+            setStatus("Token added.");
+            await refreshStatus();
+          } catch (error) {
+            setStatus("Failed to add token.", "error");
+            console.error(error);
+          }
+        });
+      }
+
+      if (saveFrpUrlBtn) {
+        saveFrpUrlBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          const url = frpUrlInput?.value?.trim() || "";
+          try {
+            const status = await invoke("set_frp_url", { url });
+            renderStatus(status);
+            setStatus("FRP URL updated.");
+          } catch (error) {
+            setStatus("Failed to update FRP URL.", "error");
+            console.error(error);
+          }
+        });
+      }
+
+      if (approvalToggle) {
+        approvalToggle.addEventListener("change", async () => {
+          if (!invoke || syncingToggle) return;
+          try {
+            const status = await invoke("set_pairing_requires_approval", {
+              requires_approval: approvalToggle.checked,
+            });
+            renderStatus(status);
+          } catch (error) {
+            console.error(error);
+          }
+        });
+      }
+
+      if (approveBtn) {
+        approveBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          try {
+            const response = await invoke("approve_pairing_request");
+            if (response?.status === "connected") {
+              setStatus("Paired and connected.");
+            }
+            await refreshStatus();
+          } catch (error) {
+            console.error(error);
+          }
+        });
+      }
+
+      if (denyBtn) {
+        denyBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          try {
+            const status = await invoke("deny_pairing_request");
+            renderStatus(status);
+          } catch (error) {
+            console.error(error);
+          }
+        });
+      }
+
+      viewTabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          viewTabs.forEach((btn) => btn.classList.remove("active"));
+          tab.classList.add("active");
+          const view = tab.dataset.view;
+          if (view === "settings") {
+            overviewView?.classList.add("hidden");
+            settingsView?.classList.remove("hidden");
+          } else {
+            settingsView?.classList.add("hidden");
+            overviewView?.classList.remove("hidden");
+          }
+        });
       });
 
       setInterval(() => {
-        if (session) {
+        if (session && expiresEl) {
           expiresEl.textContent = formatExpiry(session.expires_at);
           if (session.expires_at * 1000 <= Date.now()) {
-            setStatus("Token expired. Generate a new token.", "error");
+            clearQrDisplay('QR expired. Click "New handshake" to generate a new one.');
+            setStatus('Token expired. Click "New handshake" to generate a new token.', "error");
           }
         }
       }, 1000);
 
       setInterval(refreshStatus, 2000);
 
-      createSession();
+      updateAuthTokenDisplay();
+      clearQrDisplay('Click "New handshake" to generate a 2-minute QR.');
+      setBridgeState(!!invoke);
       refreshStatus();
     </script>
   </body>

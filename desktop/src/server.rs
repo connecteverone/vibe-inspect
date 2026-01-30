@@ -1,6 +1,6 @@
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -11,10 +11,14 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::SystemTime;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::command::{AgentCommandRequest, AgentCommandResponse, AgentCommandStatus};
-use crate::pairing::{confirm_pairing_with_state, PairingError, PairingState};
+use crate::pairing::{
+    confirm_pairing_with_state, current_local_ips, current_local_urls, current_wifi_ssid,
+    record_client_seen, PairingError, PairingState,
+};
 use crate::terminal::serve_terminal_socket;
 use crate::vnc::{serve_vnc_socket, VncManager};
 
@@ -22,6 +26,36 @@ use crate::vnc::{serve_vnc_socket, VncManager};
 struct LocalServerState {
     pairing: Arc<Mutex<PairingState>>,
     vnc: Arc<Mutex<VncManager>>,
+}
+
+struct ClientConnectionGuard {
+    state: Arc<Mutex<PairingState>>,
+    client_id: Option<String>,
+}
+
+impl Drop for ClientConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.client_id.as_deref() {
+            if let Ok(mut state) = self.state.lock() {
+                state.disconnect_client(id);
+            }
+        }
+    }
+}
+
+fn track_client_connection(
+    state: &Arc<Mutex<PairingState>>,
+    client_id: Option<String>,
+) -> ClientConnectionGuard {
+    if let Some(id) = client_id.as_deref() {
+        if let Ok(mut state) = state.lock() {
+            state.connect_client(id);
+        }
+    }
+    ClientConnectionGuard {
+        state: state.clone(),
+        client_id,
+    }
 }
 
 pub fn start_local_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::io::Error> {
@@ -64,8 +98,19 @@ pub fn start_local_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::i
 
 async fn handle_command(
     State(state): State<LocalServerState>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if let Err(response) = ensure_authorized(&state.pairing, &headers) {
+        return response;
+    }
+
+    let (client_id, client_name, source) = extract_client_headers(&headers);
+    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
+        return response;
+    }
+    record_client_activity(&state.pairing, client_id, client_name, source);
+
     let request: AgentCommandRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(error) => {
@@ -79,17 +124,53 @@ async fn handle_command(
                     details: None,
                 }),
             };
-            return (StatusCode::BAD_REQUEST, Json(response));
+            return (StatusCode::BAD_REQUEST, Json(json!(response)));
         }
     };
 
+    if request.command == "identity" {
+        let identity = match state.pairing.lock() {
+            Ok(state) => {
+                let local_urls = current_local_urls(&state);
+                let local_ips = current_local_ips();
+                let wifi_ssid = current_wifi_ssid();
+                let frp_url = state.frp_url();
+                json!({
+                    "type": "identity",
+                    "device_id": state.device_id(),
+                    "auth_token": state.auth_token(),
+                    "wifi_ssid": wifi_ssid,
+                    "local_ips": local_ips,
+                    "local_urls": local_urls,
+                    "frp_url": frp_url,
+                })
+            }
+            Err(_) => json!({
+                "type": "identity",
+                "device_id": "",
+                "auth_token": "",
+                "wifi_ssid": null,
+                "local_ips": [],
+                "local_urls": [],
+                "frp_url": null,
+            }),
+        };
+        let response = AgentCommandResponse {
+            request_id: request.request_id.clone(),
+            status: AgentCommandStatus::Ok,
+            payload: Some(identity),
+            error: None,
+        };
+        return (StatusCode::OK, Json(json!(response)));
+    }
+
     if request.command == "vnc" {
         let response = handle_vnc_command(&request, &state.vnc);
-        return (StatusCode::OK, Json(response));
+        return (StatusCode::OK, Json(json!(response)));
     }
 
     let response = crate::command::handle_agent_command(request);
-    (StatusCode::OK, Json(response))
+    (StatusCode::OK, Json(json!(response)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +326,8 @@ fn handle_vnc_command(
 struct PairingConfirmRequest {
     token: String,
     secret: String,
+    client_id: Option<String>,
+    client_name: Option<String>,
 }
 
 async fn handle_pairing_confirm(
@@ -266,11 +349,17 @@ async fn handle_pairing_confirm(
         }
     };
 
+    if let Err(response) = ensure_client_allowed(&state.pairing, &confirm_request.client_id) {
+        return response;
+    }
+
     match confirm_pairing_with_state(
         &state.pairing,
         &confirm_request.token,
         &confirm_request.secret,
         None,
+        confirm_request.client_id.clone(),
+        confirm_request.client_name.clone(),
     ) {
         Ok(response) => (StatusCode::OK, Json(json!(response))),
         Err(error) => (
@@ -296,17 +385,254 @@ async fn handle_vnc_ws(
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let token = params.get("token").cloned().unwrap_or_default();
+    let auth_token = params.get("auth_token").cloned().unwrap_or_default();
+    let client_id = params.get("client_id").cloned();
+    let client_name = params.get("client_name").cloned();
+    if let Err(response) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+        return response.into_response();
+    }
+    if !is_auth_token_valid(&state.pairing, &auth_token, client_id.as_deref()) {
+        record_auth_failure(&state.pairing, client_id.as_deref());
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    record_auth_success(&state.pairing, client_id.as_deref());
+    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
+        return response.into_response();
+    }
+    let guard_id = client_id.clone();
+    record_client_activity(&state.pairing, client_id, client_name, None);
+    let guard = track_client_connection(&state.pairing, guard_id);
     let manager = state.vnc.clone();
     ws.on_upgrade(move |socket| async move {
+        let _guard = guard;
         serve_vnc_socket(socket, manager, session_id, token).await;
     })
 }
 
 async fn handle_terminal_ws(
+    State(state): State<LocalServerState>,
     Path(session_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    let auth_token = params.get("auth_token").cloned().unwrap_or_default();
+    let client_id = params.get("client_id").cloned();
+    let client_name = params.get("client_name").cloned();
+    if let Err(response) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+        return response.into_response();
+    }
+    if !is_auth_token_valid(&state.pairing, &auth_token, client_id.as_deref()) {
+        record_auth_failure(&state.pairing, client_id.as_deref());
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    record_auth_success(&state.pairing, client_id.as_deref());
+    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
+        return response.into_response();
+    }
+    let guard_id = client_id.clone();
+    record_client_activity(&state.pairing, client_id, client_name, None);
+    let guard = track_client_connection(&state.pairing, guard_id);
     ws.on_upgrade(move |socket| async move {
+        let _guard = guard;
         serve_terminal_socket(socket, session_id).await;
     })
+}
+
+fn ensure_authorized(
+    state: &Arc<Mutex<PairingState>>,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let (client_id, _, _) = extract_client_headers(headers);
+    if let Err(response) = ensure_auth_not_blocked(state, client_id.as_deref()) {
+        return Err(response);
+    }
+    let token = extract_auth_token(headers).unwrap_or_default();
+    if token.is_empty() || !is_auth_token_valid(state, &token, client_id.as_deref()) {
+        if let Some(until) = record_auth_failure(state, client_id.as_deref()) {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "error": {
+                        "code": "rate_limited",
+                        "message": "Too many invalid tokens. Try again later.",
+                        "retry_after": until
+                    }
+                })),
+            ));
+        }
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": {
+                    "code": "unauthorized",
+                    "message": "Missing or invalid agent token."
+                }
+            })),
+        ));
+    }
+    record_auth_success(state, client_id.as_deref());
+    Ok(())
+}
+
+fn ensure_auth_not_blocked(
+    state: &Arc<Mutex<PairingState>>,
+    client_id: Option<&str>,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    let mut guard = state
+        .lock()
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "state_locked",
+                        "message": "Pairing state unavailable."
+                    }
+                })),
+            )
+        })?;
+    if guard.is_auth_blocked(client_id, now) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "error": {
+                    "code": "rate_limited",
+                    "message": "Too many invalid tokens. Try again later."
+                }
+            })),
+        ));
+    }
+    Ok(())
+}
+
+fn record_auth_failure(
+    state: &Arc<Mutex<PairingState>>,
+    client_id: Option<&str>,
+) -> Option<u64> {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    if let Ok(mut guard) = state.lock() {
+        return guard.record_auth_failure(client_id, now);
+    }
+    None
+}
+
+fn record_auth_success(state: &Arc<Mutex<PairingState>>, client_id: Option<&str>) {
+    if let Ok(mut guard) = state.lock() {
+        guard.record_auth_success(client_id);
+    }
+}
+
+fn ensure_client_allowed(
+    state: &Arc<Mutex<PairingState>>,
+    client_id: &Option<String>,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let client_id = match client_id {
+        Some(value) if !value.trim().is_empty() => value.trim(),
+        _ => return Ok(()),
+    };
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    let mut state = state
+        .lock()
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": {
+                        "code": "state_locked",
+                        "message": "Pairing state unavailable."
+                    }
+                })),
+            )
+        })?;
+    if state.is_client_blocked(client_id, now) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": {
+                    "code": "client_blocked",
+                    "message": "Client has been disabled."
+                }
+            })),
+        ));
+    }
+    Ok(())
+}
+
+fn is_auth_token_valid(
+    state: &Arc<Mutex<PairingState>>,
+    token: &str,
+    client_id: Option<&str>,
+) -> bool {
+    let guard = state.lock();
+    if let Ok(state) = guard {
+        return state.is_auth_token_valid(token, client_id);
+    }
+    false
+}
+
+fn extract_auth_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get("x-agent-token") {
+        if let Ok(token) = value.to_str() {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(value) = value.to_str() {
+            let trimmed = value.trim();
+            if let Some(rest) = trimmed.strip_prefix("Bearer ") {
+                let token = rest.trim();
+                if !token.is_empty() {
+                    return Some(token.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_client_headers(headers: &HeaderMap) -> (Option<String>, Option<String>, Option<String>) {
+    let client_id = headers
+        .get("x-client-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let client_name = headers
+        .get("x-client-name")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let source = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    (client_id, client_name, source)
+}
+
+fn record_client_activity(
+    state: &Arc<Mutex<PairingState>>,
+    client_id: Option<String>,
+    client_name: Option<String>,
+    source: Option<String>,
+) {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    if let Ok(mut state) = state.lock() {
+        record_client_seen(&mut state, client_id, client_name, source, now);
+    }
 }

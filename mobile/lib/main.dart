@@ -11,8 +11,11 @@ import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:xterm/xterm.dart';
+import 'package:mobile/utils/network_io_stub.dart'
+    if (dart.library.io) 'package:mobile/utils/network_io.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -149,11 +152,15 @@ class VibeInspectApp extends StatelessWidget {
     required this.storageInitializer,
     this.pairingHttpClient,
     this.forceManualQr = false,
+    this.enableConnectivityRefresh = true,
+    this.enableNetworkHints = true,
   });
 
   final StorageInitializer storageInitializer;
   final http.Client? pairingHttpClient;
   final bool forceManualQr;
+  final bool enableConnectivityRefresh;
+  final bool enableNetworkHints;
 
   @override
   Widget build(BuildContext context) {
@@ -165,6 +172,8 @@ class VibeInspectApp extends StatelessWidget {
         storageInitializer: storageInitializer,
         pairingHttpClient: pairingHttpClient,
         forceManualQr: forceManualQr,
+        enableConnectivityRefresh: enableConnectivityRefresh,
+        enableNetworkHints: enableNetworkHints,
       ),
     );
   }
@@ -176,11 +185,15 @@ class StorageGate extends StatefulWidget {
     required this.storageInitializer,
     this.pairingHttpClient,
     this.forceManualQr = false,
+    this.enableConnectivityRefresh = true,
+    this.enableNetworkHints = true,
   });
 
   final StorageInitializer storageInitializer;
   final http.Client? pairingHttpClient;
   final bool forceManualQr;
+  final bool enableConnectivityRefresh;
+  final bool enableNetworkHints;
 
   @override
   State<StorageGate> createState() => _StorageGateState();
@@ -225,6 +238,8 @@ class _StorageGateState extends State<StorageGate> {
           storage: storage,
           pairingHttpClient: widget.pairingHttpClient,
           forceManualQr: widget.forceManualQr,
+          enableConnectivityRefresh: widget.enableConnectivityRefresh,
+          enableNetworkHints: widget.enableNetworkHints,
         );
       },
     );
@@ -312,11 +327,15 @@ class PairingScreen extends StatefulWidget {
     required this.storage,
     this.pairingHttpClient,
     this.forceManualQr = false,
+    this.enableConnectivityRefresh = true,
+    this.enableNetworkHints = true,
   });
 
   final StorageRepository storage;
   final http.Client? pairingHttpClient;
   final bool forceManualQr;
+  final bool enableConnectivityRefresh;
+  final bool enableNetworkHints;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -330,6 +349,7 @@ class _PairingScreenState extends State<PairingScreen> {
   String? _pairingDetailStatus;
   bool _pairingDetailStatusIsError = false;
   String? _manualAgentUrl;
+  String? _clientId;
   bool _isPairing = false;
   Timer? _pairingPoller;
   String? _pairingAgentUrl;
@@ -338,18 +358,22 @@ class _PairingScreenState extends State<PairingScreen> {
   bool _ownsPairingClient = false;
   bool _forceTunnel = false;
   bool _isPendingPollActive = false;
+  bool _isRefreshingAgents = false;
   List<ConnectionRecord> _connections = [];
+  Map<String, String> _agentProbeErrors = {};
   String? _activeAgentId;
   String? _exportStatus;
   bool _exportStatusIsError = false;
   String? _importStatus;
   bool _importStatusIsError = false;
+  static const String _clientIdStorageKey = 'mobile_client_id';
 
   @override
   void initState() {
     super.initState();
     _pairingClient = widget.pairingHttpClient ?? http.Client();
     _ownsPairingClient = widget.pairingHttpClient == null;
+    _ensureClientId();
     _loadHistory();
   }
 
@@ -431,6 +455,115 @@ class _PairingScreenState extends State<PairingScreen> {
     return payload;
   }
 
+  Future<_ManualLoginInput?> _promptFixedTokenInput() async {
+    final urlController = TextEditingController(text: _manualAgentUrl ?? '');
+    final tokenController = TextEditingController();
+    final result = await showDialog<_ManualLoginInput>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Connect with fixed token'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  labelText: 'Agent URL',
+                  hintText: 'https://agent.local:8080',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: tokenController,
+                decoration: const InputDecoration(
+                  labelText: 'Fixed token',
+                  hintText: 'Paste the login token from desktop',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(
+                _ManualLoginInput(
+                  url: urlController.text,
+                  token: tokenController.text,
+                ),
+              ),
+              child: const Text('Connect'),
+            ),
+          ],
+        );
+      },
+    );
+    return result;
+  }
+
+  Future<void> _connectWithFixedToken() async {
+    final input = await _promptFixedTokenInput();
+    if (input == null) {
+      return;
+    }
+    final url = _normalizeManualUrl(input.url);
+    final token = input.token.trim();
+    if (url.isEmpty || token.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agent URL and token are required.')),
+      );
+      return;
+    }
+    setState(() {
+      _pairingStatus = 'Connecting with fixed token...';
+      _pairingStatusIsError = false;
+      _pairingDetailStatus = null;
+      _pairingDetailStatusIsError = false;
+    });
+    final httpClient = http.Client();
+    try {
+      final client = AgentCommandClient(
+        baseUrl: url,
+        client: httpClient,
+        authToken: token,
+        clientId: _clientId,
+        clientName: _resolveDeviceName(),
+      );
+      final identity = await client.fetchIdentity();
+      final deviceId = identity['device_id']?.toString();
+      await _recordManualConnection(
+        agentUrl: url,
+        authToken: token,
+        deviceId: deviceId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pairingStatus = 'Connected using fixed token.';
+        _pairingStatusIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pairingStatus = 'Failed to connect with fixed token.';
+        _pairingStatusIsError = true;
+        _pairingDetailStatus = error.toString();
+        _pairingDetailStatusIsError = true;
+      });
+    } finally {
+      httpClient.close();
+    }
+  }
+
   Future<void> _applyQrPayload(String raw) async {
     final parsed = PairingPayload.tryParse(raw);
     _pairingPoller?.cancel();
@@ -471,7 +604,12 @@ class _PairingScreenState extends State<PairingScreen> {
     }
     switch (result.status) {
       case _PairingAttemptStatus.connected:
-        await _completePairing(payload, result.agentUrl!);
+        await _completePairing(
+          payload,
+          result.agentUrl!,
+          authToken: result.authToken,
+          deviceId: result.deviceId,
+        );
         break;
       case _PairingAttemptStatus.pending:
         _pairingPoller?.cancel();
@@ -505,15 +643,24 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _retryPairing() async {
     final payload = _payload;
     if (payload == null) {
+      if (widget.enableConnectivityRefresh) {
+        await _refreshAgentConnectivity();
+      }
       return;
     }
     if (payload.isExpired) {
       setState(() {
         _scanError = 'Token expired. Request a new token and retry.';
       });
+      if (widget.enableConnectivityRefresh) {
+        await _refreshAgentConnectivity();
+      }
       return;
     }
     await _attemptAutoPairing(payload);
+    if (widget.enableConnectivityRefresh) {
+      await _refreshAgentConnectivity();
+    }
   }
 
   void _startPendingPolling(PairingPayload payload, String agentUrl) {
@@ -551,7 +698,12 @@ class _PairingScreenState extends State<PairingScreen> {
         return;
       }
       if (result.status == _PairingAttemptStatus.connected) {
-        await _completePairing(payload, agentUrl);
+        await _completePairing(
+          payload,
+          agentUrl,
+          authToken: result.authToken,
+          deviceId: result.deviceId,
+        );
         return;
       }
       if (result.status == _PairingAttemptStatus.failed) {
@@ -573,8 +725,11 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _completePairing(
     PairingPayload payload,
     String agentUrl,
+    {String? authToken, String? deviceId}
   ) async {
     _pairingPoller?.cancel();
+    final resolvedDeviceId = deviceId ??
+        (payload.deviceId?.trim().isNotEmpty == true ? payload.deviceId : null);
     setState(() {
       _pairingAgentUrl = agentUrl;
       _pairingUsesTunnel = _isTunnelUrl(payload, agentUrl);
@@ -584,7 +739,12 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingDetailStatus = null;
       _pairingDetailStatusIsError = false;
     });
-    await _recordPairingEvent(payload, agentUrl);
+    await _recordPairingEvent(
+      payload,
+      agentUrl,
+      authToken: authToken,
+      deviceId: resolvedDeviceId,
+    );
   }
 
   Future<_PairingAttemptResult> _confirmPairingWithUrls(
@@ -627,8 +787,22 @@ class _PairingScreenState extends State<PairingScreen> {
     PairingPayload payload,
   ) async {
     final tunnelUrl = payload.tunnelUrl?.trim() ?? '';
+    final frpUrl = payload.frpUrl?.trim() ?? '';
+    final remoteUrls = <String>[
+      if (tunnelUrl.isNotEmpty) tunnelUrl,
+      if (frpUrl.isNotEmpty && frpUrl != tunnelUrl) frpUrl,
+    ];
     final localUrls = payload.localUrls;
     final manualUrl = _manualAgentUrl?.trim();
+    final currentSsid = await _currentWifiSsid();
+    final currentIps = await _currentLocalIps();
+    final sameLan = _isSameLan(
+      agentSsid: payload.wifiSsid,
+      agentIps: payload.localIps,
+      currentSsid: currentSsid,
+      currentIps: currentIps,
+      allowUnknown: true,
+    );
     if (manualUrl != null && manualUrl.isNotEmpty && !_forceTunnel) {
       final normalizedManual = _normalizeManualUrl(manualUrl);
       final rest = localUrls
@@ -637,7 +811,7 @@ class _PairingScreenState extends State<PairingScreen> {
       final candidates = <String>[
         normalizedManual,
         ...rest,
-        if (tunnelUrl.isNotEmpty) tunnelUrl,
+        ...remoteUrls,
       ];
       return _PairingCandidateSelection(
         candidates: candidates,
@@ -645,18 +819,29 @@ class _PairingScreenState extends State<PairingScreen> {
       );
     }
     if (_forceTunnel) {
-      if (tunnelUrl.isNotEmpty) {
-        return _PairingCandidateSelection(candidates: [tunnelUrl]);
+      if (remoteUrls.isNotEmpty) {
+        return _PairingCandidateSelection(candidates: remoteUrls);
       }
       final message = payload.tunnelError != null &&
               payload.tunnelError!.trim().isNotEmpty
           ? payload.tunnelError!
-          : 'Tunnel URL unavailable. Disable "Force tunnel" or install Cloudflared.';
+          : 'Remote URL unavailable. Disable "Force tunnel" or add an FRP URL.';
       return _PairingCandidateSelection(candidates: const [], message: message);
     }
 
     if (localUrls.isNotEmpty) {
-      final diagnostics = await _probeLocalUrls(localUrls);
+      if (!sameLan) {
+        return _PairingCandidateSelection(
+          candidates: remoteUrls,
+          message: remoteUrls.isNotEmpty
+              ? 'SSID/subnet mismatch. Trying public endpoint.'
+              : 'SSID/subnet mismatch. No public endpoint available.',
+        );
+      }
+      final diagnostics = await _probeLocalUrls(
+        localUrls,
+        timeout: const Duration(seconds: 2),
+      );
       final reachable = diagnostics
           .where((result) => result.reachable)
           .map((result) => result.url)
@@ -664,7 +849,7 @@ class _PairingScreenState extends State<PairingScreen> {
       final localDetail = _formatLocalDiagnostics(diagnostics);
       final candidates = <String>[
         if (reachable.isNotEmpty) ...reachable else ...localUrls,
-        if (tunnelUrl.isNotEmpty) tunnelUrl,
+        ...remoteUrls,
       ];
       if (reachable.isNotEmpty) {
         return _PairingCandidateSelection(
@@ -674,15 +859,15 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       return _PairingCandidateSelection(
         candidates: candidates,
-        message: tunnelUrl.isNotEmpty
+        message: remoteUrls.isNotEmpty
             ? 'Local health check failed. Trying LAN first, then tunnel.'
             : 'Local health check failed. Trying LAN endpoints directly.',
         detail: localDetail,
       );
     }
 
-    if (tunnelUrl.isNotEmpty) {
-      return _PairingCandidateSelection(candidates: [tunnelUrl]);
+    if (remoteUrls.isNotEmpty) {
+      return _PairingCandidateSelection(candidates: remoteUrls);
     }
 
     final fallbackMessage = payload.tunnelError != null &&
@@ -696,61 +881,20 @@ class _PairingScreenState extends State<PairingScreen> {
   }
 
   Future<List<_ReachabilityResult>> _probeLocalUrls(
-    List<String> localUrls,
-  ) async {
+    List<String> localUrls, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
     final results = await Future.wait(
-      localUrls.map(_probeLocalUrl),
+      localUrls.map((url) => _probeLocalUrl(url, timeout: timeout)),
     );
     return results;
   }
 
-  Future<_ReachabilityResult> _probeLocalUrl(String baseUrl) async {
-    final client = _pairingClient;
-    if (client == null) {
-      return _ReachabilityResult(
-        url: baseUrl,
-        reachable: false,
-        reason: 'HTTP client unavailable.',
-      );
-    }
-    Uri uri;
-    try {
-      uri = _healthUri(baseUrl);
-    } catch (_) {
-      return _ReachabilityResult(
-        url: baseUrl,
-        reachable: false,
-        reason: 'Invalid URL.',
-      );
-    }
-    try {
-      final response =
-          await client.get(uri).timeout(const Duration(seconds: 1));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return _ReachabilityResult(
-          url: baseUrl,
-          reachable: true,
-          reason: 'OK',
-        );
-      }
-      return _ReachabilityResult(
-        url: baseUrl,
-        reachable: false,
-        reason: 'HTTP ${response.statusCode}.',
-      );
-    } on TimeoutException {
-      return _ReachabilityResult(
-        url: baseUrl,
-        reachable: false,
-        reason: 'Timeout after 1s.',
-      );
-    } catch (error) {
-      return _ReachabilityResult(
-        url: baseUrl,
-        reachable: false,
-        reason: _describeNetworkError(error),
-      );
-    }
+  Future<_ReachabilityResult> _probeLocalUrl(
+    String baseUrl, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    return _probeUrl(baseUrl, timeout);
   }
 
   String _formatAttemptDetail(String url, String? message) {
@@ -884,6 +1028,8 @@ class _PairingScreenState extends State<PairingScreen> {
             body: jsonEncode({
               'token': payload.token,
               'secret': payload.secret,
+              'client_id': _clientId,
+              'client_name': _resolveDeviceName(),
             }),
           )
           .timeout(const Duration(seconds: 4));
@@ -924,9 +1070,21 @@ class _PairingScreenState extends State<PairingScreen> {
 
     final status = decoded['status']?.toString();
     if (status == 'connected') {
+      final authTokenRaw =
+          decoded['auth_token']?.toString().trim() ??
+          decoded['authToken']?.toString().trim();
+      final resolvedAuthToken =
+          authTokenRaw != null && authTokenRaw.isNotEmpty ? authTokenRaw : payload.token;
+      final deviceIdRaw =
+          decoded['device_id']?.toString().trim() ??
+          decoded['deviceId']?.toString().trim();
+      final resolvedDeviceId =
+          deviceIdRaw != null && deviceIdRaw.isNotEmpty ? deviceIdRaw : null;
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.connected,
         agentUrl: baseUrl,
+        authToken: resolvedAuthToken,
+        deviceId: resolvedDeviceId,
       );
     }
     if (status == 'pending') {
@@ -983,10 +1141,16 @@ class _PairingScreenState extends State<PairingScreen> {
 
   bool _isTunnelUrl(PairingPayload payload, String agentUrl) {
     final tunnelUrl = payload.tunnelUrl?.trim();
-    if (tunnelUrl == null || tunnelUrl.isEmpty) {
-      return false;
+    final frpUrl = payload.frpUrl?.trim();
+    if (tunnelUrl != null && tunnelUrl.isNotEmpty) {
+      if (_normalizeUrl(tunnelUrl) == _normalizeUrl(agentUrl)) {
+        return true;
+      }
     }
-    return _normalizeUrl(tunnelUrl) == _normalizeUrl(agentUrl);
+    if (frpUrl != null && frpUrl.isNotEmpty) {
+      return _normalizeUrl(frpUrl) == _normalizeUrl(agentUrl);
+    }
+    return false;
   }
 
   String _normalizeUrl(String url) {
@@ -1014,25 +1178,56 @@ class _PairingScreenState extends State<PairingScreen> {
 
   Future<void> _recordPairingEvent(
     PairingPayload payload,
-    String agentUrl,
-  ) async {
+    String agentUrl, {
+    String? authToken,
+    String? deviceId,
+  }) async {
     try {
       final now = DateTime.now();
-      final connectionId = createStorageId();
+      final resolvedToken = (authToken ?? '').trim().isNotEmpty
+          ? authToken!.trim()
+          : payload.token;
+      ConnectionRecord? existing;
+      if (deviceId != null) {
+        for (final connection in _connections) {
+          if (connection.deviceId == deviceId) {
+            existing = connection;
+            break;
+          }
+        }
+      }
+      if (existing == null) {
+        for (final connection in _connections) {
+          if ((connection.agentUrl ?? '').trim() == agentUrl.trim()) {
+            existing = connection;
+            break;
+          }
+        }
+      }
+      final connectionId = existing?.id ?? createStorageId();
       final connection = ConnectionRecord(
         id: connectionId,
-        token: payload.token,
+        token: resolvedToken,
         status: 'connected',
         connectedAt: now,
+        deviceId: deviceId ?? existing?.deviceId,
         agentUrl: agentUrl,
         tunnelUrl: payload.tunnelUrl,
         tunnelError: payload.tunnelError,
+        frpUrl: payload.frpUrl ?? existing?.frpUrl,
+        wifiSsid: payload.wifiSsid ?? existing?.wifiSsid,
+        localIps: payload.localIps.isNotEmpty
+            ? payload.localIps
+            : existing?.localIps ?? const [],
+        localUrls: payload.localUrls.isNotEmpty
+            ? payload.localUrls
+            : existing?.localUrls ?? const [],
         lastSeenAt: now,
       );
       final session = ToolSession(
         id: createStorageId(),
         type: 'pairing',
-        label: 'Pairing ${payload.token}',
+        label: 'Pairing ${_truncate(resolvedToken, 6)}',
         status: 'connected',
         agentId: connectionId,
         createdAt: now,
@@ -1043,7 +1238,8 @@ class _PairingScreenState extends State<PairingScreen> {
         type: 'pairing',
         title: 'Paired with desktop agent',
         payload: {
-          'token': payload.token,
+          'token': resolvedToken,
+          'device_id': deviceId ?? '',
           'agent_url': agentUrl,
           'tunnel_url': payload.tunnelUrl ?? '',
           'connected_at': now.toIso8601String(),
@@ -1068,6 +1264,88 @@ class _PairingScreenState extends State<PairingScreen> {
           content: Text(
             'Failed to save local history: ${error.toString()}',
           ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _recordManualConnection({
+    required String agentUrl,
+    required String authToken,
+    String? deviceId,
+  }) async {
+    try {
+      final now = DateTime.now();
+      ConnectionRecord? existing;
+      if (deviceId != null && deviceId.trim().isNotEmpty) {
+        for (final connection in _connections) {
+          if (connection.deviceId == deviceId) {
+            existing = connection;
+            break;
+          }
+        }
+      }
+      if (existing == null) {
+        for (final connection in _connections) {
+          if ((connection.agentUrl ?? '').trim() == agentUrl.trim()) {
+            existing = connection;
+            break;
+          }
+        }
+      }
+      final connectionId = existing?.id ?? createStorageId();
+      final connection = ConnectionRecord(
+        id: connectionId,
+        token: authToken,
+        status: 'connected',
+        connectedAt: now,
+        deviceId: deviceId ?? existing?.deviceId,
+        agentUrl: agentUrl,
+        tunnelUrl: existing?.tunnelUrl,
+        tunnelError: existing?.tunnelError,
+        frpUrl: existing?.frpUrl,
+        wifiSsid: existing?.wifiSsid,
+        localIps: existing?.localIps ?? const [],
+        localUrls: existing?.localUrls ?? const [],
+        lastSeenAt: now,
+      );
+      final session = ToolSession(
+        id: createStorageId(),
+        type: 'pairing',
+        label: 'Login ${_truncate(authToken, 6)}',
+        status: 'connected',
+        agentId: connectionId,
+        createdAt: now,
+      );
+      final event = TimelineEvent(
+        id: createStorageId(),
+        sessionId: session.id,
+        type: 'pairing',
+        title: 'Connected with fixed token',
+        payload: {
+          'token': authToken,
+          'device_id': deviceId ?? '',
+          'agent_url': agentUrl,
+          'connected_at': now.toIso8601String(),
+        },
+        createdAt: now,
+      );
+      await widget.storage.insertConnection(connection);
+      await widget.storage.insertToolSession(session);
+      await widget.storage.insertTimelineEvent(event);
+      await _loadHistory();
+      if (mounted) {
+        setState(() {
+          _activeAgentId = connectionId;
+        });
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save connection: ${error.toString()}'),
         ),
       );
     }
@@ -1276,10 +1554,419 @@ class _PairingScreenState extends State<PairingScreen> {
         _connections = connections;
         _activeAgentId ??= connections.isNotEmpty ? connections.first.id : null;
       });
+      if (widget.enableConnectivityRefresh) {
+        unawaited(_refreshAgentConnectivity());
+      }
     } catch (_) {
       if (!mounted) {
         return;
       }
+    }
+  }
+
+  Future<void> _refreshAgentConnectivity() async {
+    if (_isRefreshingAgents) {
+      return;
+    }
+    if (_connections.isEmpty) {
+      return;
+    }
+    _isRefreshingAgents = true;
+    try {
+      final currentSsid = await _currentWifiSsid();
+      final currentIps = await _currentLocalIps();
+      final updated = <ConnectionRecord>[];
+      final probeErrors = <String, String>{};
+      for (final agent in _connections) {
+        final resolution = await _resolveAgentRoute(
+          agent,
+          currentSsid: currentSsid,
+          currentIps: currentIps,
+        );
+        updated.add(resolution.record);
+        final detail = resolution.errorDetail;
+        if (detail != null && detail.trim().isNotEmpty) {
+          probeErrors[agent.id] = detail.trim();
+        }
+      }
+      for (final agent in updated) {
+        await widget.storage.insertConnection(agent);
+      }
+      if (mounted) {
+        setState(() {
+          _connections = updated;
+          _agentProbeErrors = probeErrors;
+        });
+      }
+    } finally {
+      _isRefreshingAgents = false;
+    }
+  }
+
+  Future<String?> _currentWifiSsid() async {
+    if (kIsWeb || !widget.enableNetworkHints) {
+      return null;
+    }
+    try {
+      final info = NetworkInfo();
+      final ssid =
+          await info.getWifiName().timeout(const Duration(seconds: 1));
+      if (ssid == null) {
+        return null;
+      }
+      final cleaned = ssid.replaceAll('"', '').trim();
+      if (cleaned.isEmpty) {
+        return null;
+      }
+      final lower = cleaned.toLowerCase();
+      if (lower == '<unknown ssid>' || lower == 'unknown ssid') {
+        return null;
+      }
+      return cleaned;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<String>> _currentLocalIps() async {
+    if (kIsWeb || !widget.enableNetworkHints) {
+      return const [];
+    }
+    try {
+      return await listLocalIps().timeout(const Duration(seconds: 1));
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  bool _isSameLan({
+    required String? agentSsid,
+    required List<String> agentIps,
+    required String? currentSsid,
+    required List<String> currentIps,
+    bool allowUnknown = false,
+  }) {
+    if (agentSsid == null ||
+        currentSsid == null ||
+        agentSsid.trim().isEmpty ||
+        currentSsid.trim().isEmpty) {
+      return allowUnknown;
+    }
+    if (agentSsid.trim() != currentSsid.trim()) {
+      return false;
+    }
+    if (agentIps.isEmpty || currentIps.isEmpty) {
+      return allowUnknown;
+    }
+    for (final agentIp in agentIps) {
+      for (final deviceIp in currentIps) {
+        if (_sameSubnet(agentIp, deviceIp)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _sameSubnet(String a, String b) {
+    final partsA = a.split('.');
+    final partsB = b.split('.');
+    if (partsA.length != 4 || partsB.length != 4) {
+      return false;
+    }
+    for (var i = 0; i < 3; i++) {
+      final ai = int.tryParse(partsA[i]);
+      final bi = int.tryParse(partsB[i]);
+      if (ai == null || bi == null || ai != bi) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _isPrivateIpv4(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) {
+      return false;
+    }
+    final a = int.tryParse(parts[0]) ?? -1;
+    final b = int.tryParse(parts[1]) ?? -1;
+    if (a == 10) {
+      return true;
+    }
+    if (a == 192 && b == 168) {
+      return true;
+    }
+    if (a == 172 && b >= 16 && b <= 31) {
+      return true;
+    }
+    return false;
+  }
+
+  List<String> _fallbackLocalUrls(ConnectionRecord agent) {
+    if (agent.localUrls.isNotEmpty) {
+      return agent.localUrls;
+    }
+    final url = agent.agentUrl;
+    if (url == null || url.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final uri = Uri.parse(url);
+      final host = uri.host;
+      if (_isPrivateIpv4(host)) {
+        return [url.trim()];
+      }
+    } catch (_) {
+      return const [];
+    }
+    return const [];
+  }
+
+  Future<List<_ReachabilityResult>> _probeReachability(
+    List<String> urls,
+    Duration timeout,
+  ) async {
+    if (urls.isEmpty) {
+      return const [];
+    }
+    final results = await Future.wait(
+      urls.map((url) => _probeUrl(url, timeout)),
+    );
+    return results;
+  }
+
+  _ReachabilityResult? _firstReachable(List<_ReachabilityResult> results) {
+    for (final result in results) {
+      if (result.reachable) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  String? _summarizeProbeFailures(
+    List<_ReachabilityResult> localResults,
+    List<_ReachabilityResult> remoteResults, {
+    String? fallbackMessage,
+  }) {
+    final summaries = <String>[];
+    final localSummary = _summarizeProbeGroup('LAN', localResults);
+    if (localSummary != null) {
+      summaries.add(localSummary);
+    }
+    final remoteSummary = _summarizeProbeGroup('FRP', remoteResults);
+    if (remoteSummary != null) {
+      summaries.add(remoteSummary);
+    }
+    if (summaries.isNotEmpty) {
+      return summaries.join(' | ');
+    }
+    return fallbackMessage;
+  }
+
+  String? _summarizeProbeGroup(
+    String label,
+    List<_ReachabilityResult> results,
+  ) {
+    if (results.isEmpty) {
+      return null;
+    }
+    if (results.any((result) => result.reachable)) {
+      return null;
+    }
+    final first = results.first;
+    final reason = first.reason ?? 'Unreachable.';
+    final count = results.length;
+    final countLabel = count > 1 ? ' ($count endpoints)' : '';
+    return '$label probe failed: $reason$countLabel';
+  }
+
+  Future<_ReachabilityResult> _probeUrl(
+    String baseUrl,
+    Duration timeout,
+  ) async {
+    final client = _pairingClient;
+    if (client == null) {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'HTTP client unavailable.',
+      );
+    }
+    Uri uri;
+    try {
+      uri = _healthUri(baseUrl);
+    } catch (_) {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'Invalid URL.',
+      );
+    }
+    try {
+      final response = await client.get(uri).timeout(timeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return _ReachabilityResult(
+          url: baseUrl,
+          reachable: true,
+          reason: 'OK',
+        );
+      }
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'HTTP ${response.statusCode}.',
+      );
+    } on TimeoutException {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: 'Timeout after ${timeout.inSeconds}s.',
+      );
+    } catch (error) {
+      return _ReachabilityResult(
+        url: baseUrl,
+        reachable: false,
+        reason: _describeNetworkError(error),
+      );
+    }
+  }
+
+  Future<_AgentRouteResolution> _resolveAgentRoute(
+    ConnectionRecord agent, {
+    required String? currentSsid,
+    required List<String> currentIps,
+  }) async {
+    final sameLan = _isSameLan(
+      agentSsid: agent.wifiSsid,
+      agentIps: agent.localIps,
+      currentSsid: currentSsid,
+      currentIps: currentIps,
+      allowUnknown: true,
+    );
+    final localUrls = _fallbackLocalUrls(agent);
+    final remoteUrls = <String>[
+      if (agent.frpUrl != null && agent.frpUrl!.trim().isNotEmpty)
+        agent.frpUrl!.trim(),
+      if (agent.tunnelUrl != null && agent.tunnelUrl!.trim().isNotEmpty)
+        agent.tunnelUrl!.trim(),
+    ].toSet().toList();
+
+    final localFuture = sameLan && localUrls.isNotEmpty
+        ? _probeReachability(localUrls, const Duration(seconds: 2))
+        : Future<List<_ReachabilityResult>>.value(const []);
+    final remoteFuture = remoteUrls.isNotEmpty
+        ? _probeReachability(remoteUrls, const Duration(seconds: 3))
+        : Future<List<_ReachabilityResult>>.value(const []);
+
+    final results = await Future.wait([localFuture, remoteFuture]);
+    final localResults = results[0];
+    final remoteResults = results[1];
+    final localHit = _firstReachable(localResults);
+    final remoteHit = _firstReachable(remoteResults);
+    final now = DateTime.now();
+
+    if (localHit != null) {
+      final connected = agent.copyWith(
+        status: 'connected',
+        agentUrl: localHit.url,
+        lastSeenAt: now,
+      );
+      return _AgentRouteResolution(
+        record: await _refreshAgentIdentity(connected),
+      );
+    }
+    if (remoteHit != null) {
+      final connected = agent.copyWith(
+        status: 'connected',
+        agentUrl: remoteHit.url,
+        lastSeenAt: now,
+      );
+      return _AgentRouteResolution(
+        record: await _refreshAgentIdentity(connected),
+      );
+    }
+    final errorDetail = _summarizeProbeFailures(
+      localResults,
+      remoteResults,
+      fallbackMessage:
+          (localUrls.isEmpty && remoteUrls.isEmpty)
+              ? 'No LAN/FRP endpoints available.'
+              : null,
+    );
+    return _AgentRouteResolution(
+      record: agent.copyWith(
+        status: 'offline',
+      ),
+      errorDetail: errorDetail,
+    );
+  }
+
+  Future<ConnectionRecord> _refreshAgentIdentity(ConnectionRecord agent) async {
+    final url = agent.agentUrl?.trim();
+    if (url == null || url.isEmpty) {
+      return agent;
+    }
+    final client = _pairingClient ?? http.Client();
+    try {
+      final commandClient = AgentCommandClient(
+        baseUrl: url,
+        client: client,
+        authToken: agent.token,
+        clientId: _clientId,
+        clientName: _resolveDeviceName(),
+      );
+      final identity = await commandClient.fetchIdentity();
+      final deviceId = identity['device_id']?.toString();
+      final wifiSsid =
+          identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+      final localIps =
+          _parseLocalIps(identity['local_ips'] ?? identity['localIps']);
+      final localUrls = _parseLocalUrls(
+        identity['local_urls'] ??
+            identity['localUrls'] ??
+            identity['local_url'],
+      );
+      final frpUrl =
+          identity['frp_url']?.toString() ?? identity['frpUrl']?.toString();
+      final tunnelUrl =
+          identity['tunnel_url']?.toString() ?? identity['tunnelUrl']?.toString();
+      return agent.copyWith(
+        deviceId: deviceId ?? agent.deviceId,
+        wifiSsid: wifiSsid ?? agent.wifiSsid,
+        localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+        localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+        frpUrl: frpUrl ?? agent.frpUrl,
+        tunnelUrl: tunnelUrl ?? agent.tunnelUrl,
+        status: 'connected',
+        lastSeenAt: DateTime.now(),
+      );
+    } catch (_) {
+      return agent.copyWith(status: 'error');
+    } finally {
+      if (_pairingClient == null) {
+        client.close();
+      }
+    }
+  }
+
+  Future<void> _ensureClientId() async {
+    final existing = await widget.storage.readKeyValue(_clientIdStorageKey);
+    if (existing != null && existing.trim().isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _clientId = existing.trim();
+        });
+      }
+      return;
+    }
+    final generated = createStorageId();
+    await widget.storage.writeKeyValue(_clientIdStorageKey, generated);
+    if (mounted) {
+      setState(() {
+        _clientId = generated;
+      });
     }
   }
 
@@ -1294,6 +1981,8 @@ class _PairingScreenState extends State<PairingScreen> {
               storage: widget.storage,
               agent: agent,
               agents: _connections,
+              clientId: _clientId,
+              clientName: _resolveDeviceName(),
             ),
           ),
         )
@@ -1372,7 +2061,7 @@ class _PairingScreenState extends State<PairingScreen> {
                   PairingStepCard(
                     title: 'Add agent',
                     description:
-                        'Scan a short-lived token to add a desktop agent.',
+                        'Scan a pairing token to add a desktop agent.',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1381,6 +2070,12 @@ class _PairingScreenState extends State<PairingScreen> {
                           onPressed: _scanQrPayload,
                           icon: const Icon(Icons.qr_code_2),
                           label: const Text('Scan QR token'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _connectWithFixedToken,
+                          icon: const Icon(Icons.vpn_key),
+                          label: const Text('Use fixed token'),
                         ),
                         const SizedBox(height: 16),
                         if (_payload == null)
@@ -1428,6 +2123,24 @@ class _PairingScreenState extends State<PairingScreen> {
                                   ),
                                 ),
                             ],
+                          ),
+                        ],
+                        if (_payload?.frpUrl != null &&
+                            _payload!.frpUrl!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            'Public endpoint (FRP)',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFF64748B),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _payload!.frpUrl!,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFF0F172A),
+                                ),
                           ),
                         ],
                         if (_scanError != null) ...[
@@ -1630,6 +2343,7 @@ class _PairingScreenState extends State<PairingScreen> {
                                 _AgentCard(
                                   agent: agent,
                                   isActive: agent.id == _activeAgentId,
+                                  probeDetail: _agentProbeErrors[agent.id],
                                   onOpenWorkspace: () =>
                                       _openAgentWorkspace(agent),
                                   onDelete: () => _deleteAgent(agent),
@@ -1961,11 +2675,15 @@ class AgentWorkspaceScreen extends StatefulWidget {
     required this.storage,
     required this.agent,
     required this.agents,
+    required this.clientId,
+    required this.clientName,
   });
 
   final StorageRepository storage;
   final ConnectionRecord agent;
   final List<ConnectionRecord> agents;
+  final String? clientId;
+  final String? clientName;
 
   @override
   State<AgentWorkspaceScreen> createState() => _AgentWorkspaceScreenState();
@@ -2059,6 +2777,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
             builder: (_) => TerminalWorkspaceScreen(
               storage: widget.storage,
               agentBaseUrl: _agentBaseUrl,
+              authToken: _activeAgent.token,
+              clientId: widget.clientId,
+              clientName: widget.clientName,
               agentId: widget.agent.id,
               initialSession: session,
             ),
@@ -2114,6 +2835,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
               context: apiContext,
               storage: widget.storage,
               agentBaseUrl: _agentBaseUrl,
+              authToken: _activeAgent.token,
+              clientId: widget.clientId,
+              clientName: widget.clientName,
             ),
           ),
         )
@@ -2206,6 +2930,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
               session: session,
               storage: widget.storage,
               agentBaseUrl: baseUrl,
+              authToken: _activeAgent.token,
+              clientId: widget.clientId,
+              clientName: widget.clientName,
             ),
           ),
         )
@@ -2266,6 +2993,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
               builder: (_) => TerminalWorkspaceScreen(
                 storage: widget.storage,
                 agentBaseUrl: baseUrl,
+                authToken: _activeAgent.token,
+                clientId: widget.clientId,
+                clientName: widget.clientName,
                 agentId: _activeAgent.id,
                 initialSession: session,
                 initialEvent: latestEvent,
@@ -2293,6 +3023,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
                 context: apiContext,
                 storage: widget.storage,
                 agentBaseUrl: baseUrl,
+                authToken: _activeAgent.token,
+                clientId: widget.clientId,
+                clientName: widget.clientName,
               ),
             ),
           )
@@ -2488,12 +3221,14 @@ class _AgentCard extends StatelessWidget {
   const _AgentCard({
     required this.agent,
     required this.isActive,
+    this.probeDetail,
     required this.onOpenWorkspace,
     required this.onDelete,
   });
 
   final ConnectionRecord agent;
   final bool isActive;
+  final String? probeDetail;
   final VoidCallback onOpenWorkspace;
   final VoidCallback onDelete;
 
@@ -2509,6 +3244,7 @@ class _AgentCard extends StatelessWidget {
     final subtitle = agentUrl == null || agentUrl.trim().isEmpty
         ? 'Agent URL missing'
         : agentUrl;
+    final detail = probeDetail?.trim();
     return Material(
       color: background,
       borderRadius: BorderRadius.circular(16),
@@ -2551,6 +3287,18 @@ class _AgentCard extends StatelessWidget {
                         color: const Color(0xFF64748B),
                       ),
                     ),
+                    if (detail != null && detail.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        detail,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFFB91C1C),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2774,6 +3522,7 @@ _AgentStatusStyle _agentStatusStyle(String status) {
         Color(0xFF92400E),
       );
     case 'disconnected':
+    case 'offline':
     case 'error':
       return const _AgentStatusStyle(
         Color(0xFFFEE2E2),
@@ -4188,12 +4937,18 @@ class ApiExplorerScreen extends StatefulWidget {
     required this.context,
     required this.storage,
     required this.agentBaseUrl,
+    required this.authToken,
+    required this.clientId,
+    required this.clientName,
   });
 
   final TimelineEvent event;
   final ApiEventContext context;
   final StorageRepository storage;
   final String? agentBaseUrl;
+  final String? authToken;
+  final String? clientId;
+  final String? clientName;
 
   @override
   State<ApiExplorerScreen> createState() => _ApiExplorerScreenState();
@@ -4268,7 +5023,13 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
       return;
     }
     _httpClient = http.Client();
-    _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
+    _agentClient = AgentCommandClient(
+      baseUrl: baseUrl,
+      client: _httpClient!,
+      authToken: widget.authToken,
+      clientId: widget.clientId,
+      clientName: widget.clientName,
+    );
   }
 
   List<_HeaderEditor> _buildHeaderEditors(Map<String, String> headers) {
@@ -5135,6 +5896,9 @@ class TerminalWorkspaceScreen extends StatefulWidget {
     super.key,
     required this.storage,
     required this.agentBaseUrl,
+    required this.authToken,
+    required this.clientId,
+    required this.clientName,
     this.initialSession,
     this.initialEvent,
     this.agentId,
@@ -5142,6 +5906,9 @@ class TerminalWorkspaceScreen extends StatefulWidget {
 
   final StorageRepository storage;
   final String? agentBaseUrl;
+  final String? authToken;
+  final String? clientId;
+  final String? clientName;
   final ToolSession? initialSession;
   final TimelineEvent? initialEvent;
   final String? agentId;
@@ -5245,7 +6012,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     }
     _httpClient?.close();
     _httpClient = http.Client();
-    _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
+    _agentClient = AgentCommandClient(
+      baseUrl: baseUrl,
+      client: _httpClient!,
+      authToken: widget.authToken,
+      clientId: widget.clientId,
+      clientName: widget.clientName,
+    );
   }
 
   Uri? _terminalWsUri(String baseUrl, String sessionId) {
@@ -5270,7 +6043,24 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         : base.path;
     final path =
         basePath.isEmpty ? '/terminal/$sessionId' : '$basePath/terminal/$sessionId';
-    return base.replace(scheme: scheme, path: path);
+    final queryParameters = Map<String, String>.from(base.queryParameters);
+    final token = widget.authToken?.trim();
+    if (token != null && token.isNotEmpty) {
+      queryParameters['auth_token'] = token;
+    }
+    final clientId = widget.clientId?.trim();
+    if (clientId != null && clientId.isNotEmpty) {
+      queryParameters['client_id'] = clientId;
+    }
+    final clientName = widget.clientName?.trim();
+    if (clientName != null && clientName.isNotEmpty) {
+      queryParameters['client_name'] = clientName;
+    }
+    return base.replace(
+      scheme: scheme,
+      path: path,
+      queryParameters: queryParameters,
+    );
   }
 
   TerminalTargetPlatform _resolveTerminalPlatform() {
@@ -8595,18 +9385,27 @@ class TerminalSessionScreen extends StatelessWidget {
     required this.session,
     required this.storage,
     required this.agentBaseUrl,
+    required this.authToken,
+    required this.clientId,
+    required this.clientName,
   });
 
   final TimelineEvent event;
   final ToolSession session;
   final StorageRepository storage;
   final String? agentBaseUrl;
+  final String? authToken;
+  final String? clientId;
+  final String? clientName;
 
   @override
   Widget build(BuildContext context) {
     return TerminalWorkspaceScreen(
       storage: storage,
       agentBaseUrl: agentBaseUrl,
+      authToken: authToken,
+      clientId: clientId,
+      clientName: clientName,
       initialSession: session,
       initialEvent: event,
       agentId: session.agentId,
@@ -8900,12 +9699,18 @@ class VncSessionScreen extends StatefulWidget {
     required this.session,
     required this.storage,
     required this.agentBaseUrl,
+    required this.authToken,
+    required this.clientId,
+    required this.clientName,
   });
 
   final TimelineEvent event;
   final ToolSession session;
   final StorageRepository storage;
   final String? agentBaseUrl;
+  final String? authToken;
+  final String? clientId;
+  final String? clientName;
 
   @override
   State<VncSessionScreen> createState() => _VncSessionScreenState();
@@ -9001,6 +9806,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   final List<String> _cursorDebugLog = [];
   DateTime? _lastCursorDebugLoggedAt;
   Offset? _lastCursorDebugPointer;
+  DateTime? _lastGestureDoubleTapAt;
   bool? _directInputBackup;
   int? _selectedDisplayIndex;
   List<VncDisplayInfo> _availableDisplays = const [];
@@ -9076,7 +9882,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     _httpClient = http.Client();
-    _agentClient = AgentCommandClient(baseUrl: baseUrl, client: _httpClient!);
+    _agentClient = AgentCommandClient(
+      baseUrl: baseUrl,
+      client: _httpClient!,
+      authToken: widget.authToken,
+      clientId: widget.clientId,
+      clientName: widget.clientName,
+    );
   }
 
   void _resetCursorState() {
@@ -9437,6 +10249,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final mergedPath = basePath.isEmpty ? '/$wsPath' : '$basePath$wsPath';
     final queryParameters = Map<String, String>.from(baseUri.queryParameters);
     queryParameters['token'] = info.token;
+    final authToken = widget.authToken?.trim();
+    if (authToken != null && authToken.isNotEmpty) {
+      queryParameters['auth_token'] = authToken;
+    }
+    final clientId = widget.clientId?.trim();
+    if (clientId != null && clientId.isNotEmpty) {
+      queryParameters['client_id'] = clientId;
+    }
+    final clientName = widget.clientName?.trim();
+    if (clientName != null && clientName.isNotEmpty) {
+      queryParameters['client_name'] = clientName;
+    }
     return baseUri.replace(
       scheme: scheme,
       path: mergedPath,
@@ -10398,6 +11222,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _activePointers.remove(event.pointer);
     if (_activePointers.isEmpty) {
       final now = DateTime.now();
+      final lastGestureTap = _lastGestureDoubleTapAt;
+      if (lastGestureTap != null &&
+          now.difference(lastGestureTap) <= _doubleTapTimeout) {
+        _lastGestureDoubleTapAt = null;
+        _resetPointerTracking();
+        return;
+      }
       if (_isDragging) {
         _endDrag();
       } else if (!wasMultiFinger && _isTapCandidate(now)) {
@@ -11473,9 +12304,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required Size screenSize,
   }) {
     final trackpadEnabled = isInteractive && !_directInputEnabled;
+    final overlayOpacity = isInteractive ? 0.8 : 0.5;
     return LayoutBuilder(
       builder: (context, constraints) {
         final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
+        final zoomHeight =
+            (constraints.maxHeight - 140).clamp(220.0, 360.0);
         _updateTrackpadSize(
           areaSize,
           source: 'fullscreen_landscape_overlay',
@@ -11496,12 +12330,21 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             ),
             if (trackpadEnabled)
               Positioned.fill(
-                child: Listener(
+                child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onPointerDown: _handleTrackpadPointerDown,
-                  onPointerMove: _handleTrackpadPointerMove,
-                  onPointerUp: _handleTrackpadPointerUp,
-                  onPointerCancel: _handleTrackpadPointerCancel,
+                  onDoubleTap: () {
+                    _lastGestureDoubleTapAt = DateTime.now();
+                    _sendClick(1);
+                  },
+                  onSecondaryTap: () => _sendClick(2),
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: _handleTrackpadPointerDown,
+                    onPointerMove: _handleTrackpadPointerMove,
+                    onPointerUp: _handleTrackpadPointerUp,
+                    onPointerCancel: _handleTrackpadPointerCancel,
+                    child: const SizedBox.expand(),
+                  ),
                 ),
               ),
             Positioned(
@@ -11517,17 +12360,25 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               left: 12 + safePadding.left,
               top: 60 + safePadding.top,
               child: Opacity(
-                opacity: 0.38,
-                child: SizedBox(
-                  width: 48,
-                  child: _VncZoomBar(
-                    stops: _zoomStops,
-                    index: _zoomIndex,
-                    enabled: isInteractive,
-                    glassStyle: true,
-                    onIndexChanged: _updateZoomIndex,
-                    onIndexCommitted: _commitZoomIndex,
-                    onReset: _resetZoom,
+                opacity: overlayOpacity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withAlpha(120),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.white.withAlpha(60)),
+                  ),
+                  child: SizedBox(
+                    width: 52,
+                    height: zoomHeight,
+                    child: _VncZoomBar(
+                      stops: _zoomStops,
+                      index: _zoomIndex,
+                      enabled: isInteractive,
+                      glassStyle: true,
+                      onIndexChanged: _updateZoomIndex,
+                      onIndexCommitted: _commitZoomIndex,
+                      onReset: _resetZoom,
+                    ),
                   ),
                 ),
               ),
@@ -11542,12 +12393,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     bottom: 12 + safePadding.bottom,
                   ),
                   child: Opacity(
-                    opacity: 0.35,
+                    opacity: overlayOpacity,
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 240),
-                      child: _buildTrackpadClickBar(
-                        enabled: trackpadEnabled,
-                        glassStyle: true,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(110),
+                          borderRadius: BorderRadius.circular(12),
+                          border:
+                              Border.all(color: Colors.white.withAlpha(60)),
+                        ),
+                        child: _buildTrackpadClickBar(
+                          enabled: trackpadEnabled,
+                          glassStyle: true,
+                        ),
                       ),
                     ),
                   ),
@@ -13726,11 +14585,19 @@ class VncDisplayInfo {
 }
 
 class AgentCommandClient {
-  AgentCommandClient({required this.baseUrl, http.Client? client})
-      : _client = client ?? http.Client();
+  AgentCommandClient({
+    required this.baseUrl,
+    http.Client? client,
+    this.authToken,
+    this.clientId,
+    this.clientName,
+  }) : _client = client ?? http.Client();
 
   final String baseUrl;
   final http.Client _client;
+  final String? authToken;
+  final String? clientId;
+  final String? clientName;
 
   Future<AgentApiResult> sendApiCommand({
     required String method,
@@ -13766,6 +14633,18 @@ class AgentCommandClient {
         Map<String, dynamic>.from(responsePayload),
       ),
     );
+  }
+
+  Future<Map<String, dynamic>> fetchIdentity() async {
+    final response = await _sendCommand(
+      command: 'identity',
+      payload: const {},
+    );
+    final payload = response.payload;
+    if (payload is! Map<String, dynamic>) {
+      throw const AgentCommandFailure('Agent identity response missing payload.');
+    }
+    return payload;
   }
 
   Future<Map<String, dynamic>> sendTerminalAction({
@@ -13884,11 +14763,26 @@ class AgentCommandClient {
       'command': command,
       'payload': payload,
     });
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+    };
+    final token = authToken?.trim();
+    if (token != null && token.isNotEmpty) {
+      headers['x-agent-token'] = token;
+    }
+    final resolvedClientId = clientId?.trim();
+    if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
+      headers['x-client-id'] = resolvedClientId;
+    }
+    final resolvedClientName = clientName?.trim();
+    if (resolvedClientName != null && resolvedClientName.isNotEmpty) {
+      headers['x-client-name'] = resolvedClientName;
+    }
     http.Response response;
     try {
       response = await _client.post(
         uri,
-        headers: const {'Content-Type': 'application/json'},
+        headers: headers,
         body: requestBody,
       ).timeout(const Duration(seconds: 6));
     } catch (error) {
@@ -14163,6 +15057,36 @@ List<String> _parseLocalUrls(dynamic raw) {
   return [];
 }
 
+List<String> _parseLocalIps(dynamic raw) {
+  if (raw == null) {
+    return const [];
+  }
+  if (raw is List) {
+    return raw.map((entry) => entry.toString().trim()).where((entry) => entry.isNotEmpty).toList();
+  }
+  if (raw is String) {
+    if (raw.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .map((entry) => entry.toString().trim())
+            .where((entry) => entry.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {
+      return raw
+          .split(',')
+          .map((entry) => entry.trim())
+          .where((entry) => entry.isNotEmpty)
+          .toList();
+    }
+  }
+  return const [];
+}
+
 bool _isIgnoredLocalUrl(String url) {
   Uri? uri = Uri.tryParse(url);
   if (uri == null || uri.host.isEmpty) {
@@ -14201,8 +15125,12 @@ class PairingPayload {
   const PairingPayload({
     required this.token,
     required this.secret,
-    required this.expiresAt,
+    this.expiresAt,
+    this.deviceId,
+    this.wifiSsid,
+    this.localIps = const [],
     this.tunnelUrl,
+    this.frpUrl,
     this.tunnelError,
     this.localUrls = const [],
     this.requiresApproval = false,
@@ -14210,16 +15138,28 @@ class PairingPayload {
 
   final String token;
   final String secret;
-  final DateTime expiresAt;
+  final DateTime? expiresAt;
+  final String? deviceId;
+  final String? wifiSsid;
+  final List<String> localIps;
   final String? tunnelUrl;
+  final String? frpUrl;
   final String? tunnelError;
   final List<String> localUrls;
   final bool requiresApproval;
 
-  bool get isExpired => DateTime.now().isAfter(expiresAt);
+  bool get isExpired {
+    if (expiresAt == null) {
+      return false;
+    }
+    return DateTime.now().isAfter(expiresAt!);
+  }
 
   String get expiryLabel {
-    final remaining = expiresAt.difference(DateTime.now());
+    if (expiresAt == null) {
+      return 'Active';
+    }
+    final remaining = expiresAt!.difference(DateTime.now());
     if (remaining.isNegative) {
       return 'Expired';
     }
@@ -14254,15 +15194,26 @@ class PairingPayload {
       return null;
     }
 
-    final token = data['token']?.toString();
-    final secret = data['secret']?.toString();
+    final token = data['token']?.toString() ??
+        data['pairing_token']?.toString() ??
+        data['pairingToken']?.toString();
+    final secret = data['secret']?.toString() ??
+        data['pairing_secret']?.toString() ??
+        data['pairingSecret']?.toString();
     final expiresValue = data['expires_at'] ?? data['expiresAt'];
     if (token == null || secret == null || expiresValue == null) {
       return null;
     }
 
+    final deviceId =
+        data['device_id']?.toString() ?? data['deviceId']?.toString();
+    final wifiSsid =
+        data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+    final localIps =
+        _parseLocalIps(data['local_ips'] ?? data['localIps']);
     final tunnelUrl =
         data['tunnel_url']?.toString() ?? data['tunnelUrl']?.toString();
+    final frpUrl = data['frp_url']?.toString() ?? data['frpUrl']?.toString();
     final tunnelError =
         data['tunnel_error']?.toString() ?? data['tunnelError']?.toString();
     final localUrls = _parseLocalUrls(
@@ -14271,16 +15222,23 @@ class PairingPayload {
     final requiresApprovalRaw =
         data['requires_approval'] ?? data['requiresApproval'];
     final requiresApproval = _parseBool(requiresApprovalRaw);
-    final expiresAt = int.tryParse(expiresValue.toString());
-    if (expiresAt == null) {
+    final expiresAtRaw = int.tryParse(expiresValue.toString());
+    if (expiresAtRaw == null) {
       return null;
     }
+    final expiresAt = expiresAtRaw == 0
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(expiresAtRaw * 1000);
 
     return PairingPayload(
       token: token,
       secret: secret,
-      expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt * 1000),
+      expiresAt: expiresAt,
+      deviceId: deviceId,
+      wifiSsid: wifiSsid,
+      localIps: localIps,
       tunnelUrl: tunnelUrl,
+      frpUrl: frpUrl,
       tunnelError: tunnelError,
       localUrls: localUrls,
       requiresApproval: requiresApproval,
@@ -14293,8 +15251,18 @@ class PairingPayload {
     if (tunnelUrl != null && tunnelUrl!.trim().isNotEmpty) {
       urls.add(tunnelUrl!.trim());
     }
+    if (frpUrl != null && frpUrl!.trim().isNotEmpty) {
+      urls.add(frpUrl!.trim());
+    }
     return urls.toSet().toList();
   }
+}
+
+class _ManualLoginInput {
+  const _ManualLoginInput({required this.url, required this.token});
+
+  final String url;
+  final String token;
 }
 
 enum _PairingAttemptStatus { connected, pending, failed }
@@ -14305,12 +15273,16 @@ class _PairingAttemptResult {
     this.message,
     this.detail,
     this.agentUrl,
+    this.authToken,
+    this.deviceId,
   });
 
   final _PairingAttemptStatus status;
   final String? message;
   final String? detail;
   final String? agentUrl;
+  final String? authToken;
+  final String? deviceId;
 }
 
 class _PairingCandidateSelection {
@@ -14337,6 +15309,16 @@ class _ReachabilityResult {
   final String? reason;
 }
 
+class _AgentRouteResolution {
+  const _AgentRouteResolution({
+    required this.record,
+    this.errorDetail,
+  });
+
+  final ConnectionRecord record;
+  final String? errorDetail;
+}
+
 String _agentLabel(ConnectionRecord agent) {
   final url = agent.agentUrl?.trim();
   if (url != null && url.isNotEmpty) {
@@ -14345,6 +15327,10 @@ String _agentLabel(ConnectionRecord agent) {
       return uri.host;
     }
     return url;
+  }
+  final deviceId = agent.deviceId?.trim();
+  if (deviceId != null && deviceId.isNotEmpty) {
+    return 'Agent ${_truncate(deviceId, 6)}';
   }
   final token = agent.token.trim();
   if (token.isEmpty) {

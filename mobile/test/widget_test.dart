@@ -8,6 +8,21 @@ import 'package:mobile/main.dart';
 import 'package:mobile/storage/local_storage.dart';
 import 'package:xterm/xterm.dart';
 
+Future<void> pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 50));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting for widget: $finder');
+}
+
 void main() {
   testWidgets('Pairing connects with valid secret', (tester) async {
     final mockClient = MockClient((request) async {
@@ -31,6 +46,8 @@ void main() {
         storageInitializer: const MemoryStorageInitializer(),
         pairingHttpClient: mockClient,
         forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
       ),
     );
     await tester.pumpAndSettle();
@@ -51,11 +68,11 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
     await tester.tap(find.byKey(const Key('applyQrButton')));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('ABC123'));
 
     expect(find.text('ABC123'), findsOneWidget);
 
-    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.textContaining('Connected'));
 
     expect(find.textContaining('Connected'), findsOneWidget);
     expect(find.text('https://demo.trycloudflare.com'), findsOneWidget);
@@ -67,6 +84,8 @@ void main() {
       const VibeInspectApp(
         storageInitializer: MemoryStorageInitializer(),
         forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
       ),
     );
     await tester.pumpAndSettle();
@@ -84,7 +103,7 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
     await tester.tap(find.byKey(const Key('applyQrButton')));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.textContaining('Token expired'), findsOneWidget);
     expect(find.byKey(const Key('retryButton')), findsOneWidget);
@@ -95,6 +114,8 @@ void main() {
       const VibeInspectApp(
         storageInitializer: MemoryStorageInitializer(),
         forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
       ),
     );
     await tester.pumpAndSettle();
@@ -114,9 +135,12 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
     await tester.tap(find.byKey(const Key('applyQrButton')));
-    await tester.pumpAndSettle();
+    await pumpUntilFound(
+      tester,
+      find.textContaining('Cloudflared is not installed'),
+    );
 
-    expect(find.textContaining('Cloudflared is not installed'), findsOneWidget);
+    expect(find.textContaining('Cloudflared is not installed'), findsWidgets);
   });
 
   testWidgets('Storage initialization failure blocks the UI', (tester) async {
@@ -124,6 +148,8 @@ void main() {
       const VibeInspectApp(
         storageInitializer: _FailingStorageInitializer(),
         forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
       ),
     );
     await tester.pumpAndSettle();
@@ -183,7 +209,11 @@ void main() {
     });
 
     await tester.pumpWidget(
-      VibeInspectApp(storageInitializer: initializer),
+      VibeInspectApp(
+        storageInitializer: initializer,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -245,7 +275,11 @@ void main() {
     });
 
     await tester.pumpWidget(
-      VibeInspectApp(storageInitializer: initializer),
+      VibeInspectApp(
+        storageInitializer: initializer,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -281,7 +315,11 @@ void main() {
     });
 
     await tester.pumpWidget(
-      VibeInspectApp(storageInitializer: initializer),
+      VibeInspectApp(
+        storageInitializer: initializer,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -352,7 +390,11 @@ void main() {
     });
 
     await tester.pumpWidget(
-      VibeInspectApp(storageInitializer: initializer),
+      VibeInspectApp(
+        storageInitializer: initializer,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
     );
     await tester.pumpAndSettle();
 

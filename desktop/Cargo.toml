@@ -21,6 +21,8 @@ enigo = "0.1"
 flate2 = "1"
 rfb-encodings = "0.1"
 jpeg-encoder = { version = "0.7", default-features = true }
+directories = "5"
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
@@ -29,6 +31,7 @@ core-graphics = "0.24"
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_System_Registry",
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
 ] }

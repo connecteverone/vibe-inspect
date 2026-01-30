@@ -137,6 +137,16 @@ pub struct TerminalActionRequest {
     pub env: Option<HashMap<String, String>>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TerminalSessionSummary {
+    pub id: String,
+    pub status: String,
+    pub created_at: u64,
+    pub last_activity: u64,
+    pub exit_code: Option<i32>,
+    pub last_output: String,
+}
+
 pub struct TerminalError {
     pub code: &'static str,
     pub message: String,
@@ -159,6 +169,46 @@ pub fn terminal_manager() -> &'static Arc<Mutex<TerminalManager>> {
         spawn_cleanup(manager.clone());
         manager
     })
+}
+
+pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
+    let manager = terminal_manager();
+    let manager = match manager.lock() {
+        Ok(manager) => manager,
+        Err(_) => return Vec::new(),
+    };
+    let mut sessions = Vec::new();
+    for session in manager.sessions.values() {
+        if let Ok(session) = session.lock() {
+            let last_output = session
+                .buffer
+                .back()
+                .map(|chunk| chunk.data.trim().to_string())
+                .unwrap_or_default();
+            let preview = if last_output.chars().count() > 160 {
+                last_output
+                    .chars()
+                    .rev()
+                    .take(160)
+                    .collect::<Vec<char>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
+            } else {
+                last_output
+            };
+            sessions.push(TerminalSessionSummary {
+                id: session.id.clone(),
+                status: session.status.as_str().to_string(),
+                created_at: session.created_at,
+                last_activity: session.last_activity,
+                exit_code: session.exit_code,
+                last_output: preview,
+            });
+        }
+    }
+    sessions.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    sessions
 }
 
 pub fn handle_terminal_command(request: TerminalActionRequest) -> Result<Value, TerminalError> {
