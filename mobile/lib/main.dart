@@ -8932,7 +8932,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const double _scrollStep = 18;
   static const Duration _tapTimeout = Duration(milliseconds: 240);
   static const Duration _dragHoldDelay = Duration(milliseconds: 360);
-  static const Duration _twoFingerTapTimeout = Duration(milliseconds: 240);
+  static const Duration _doubleTapTimeout = Duration(milliseconds: 220);
   static const int _encodingRaw = 0;
   static const int _encodingCopyRect = 1;
   static const int _encodingZlib = 6;
@@ -8988,11 +8988,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Offset? _primaryDownPosition;
   DateTime? _primaryDownTime;
   Offset? _lastPrimaryPosition;
-  Offset? _twoFingerStartAverage;
-  DateTime? _twoFingerStartTime;
-  Offset? _lastScrollAverage;
-  bool _twoFingerTapPossible = false;
-  double _scrollAccumulator = 0;
+  DateTime? _lastTapTime;
+  Offset? _lastTapPosition;
   bool _isFullscreen = false;
   double _inputScaleX = 1;
   double _inputScaleY = 1;
@@ -10287,11 +10284,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _primaryDownPosition = null;
     _primaryDownTime = null;
     _lastPrimaryPosition = null;
-    _twoFingerStartAverage = null;
-    _twoFingerStartTime = null;
-    _lastScrollAverage = null;
-    _twoFingerTapPossible = false;
-    _scrollAccumulator = 0;
     _cancelDragHold();
   }
 
@@ -10305,13 +10297,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = event.position;
       _scheduleDragHold();
-    } else if (_activePointers.length == 2) {
-      _cancelDragHold();
-      _twoFingerTapPossible = true;
-      _twoFingerStartTime = DateTime.now();
-      _twoFingerStartAverage = _averagePointerPosition();
-      _lastScrollAverage = _twoFingerStartAverage;
-      _scrollAccumulator = 0;
     } else {
       _cancelDragHold();
     }
@@ -10336,24 +10321,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _movePointerBy(delta);
       }
       _lastPrimaryPosition = event.position;
-    } else if (_activePointers.length == 2) {
-      final average = _averagePointerPosition();
-      final lastAverage = _lastScrollAverage ?? average;
-      final delta = average - lastAverage;
-      _lastScrollAverage = average;
-      if (_twoFingerTapPossible && _twoFingerStartAverage != null) {
-        if ((average - _twoFingerStartAverage!).distance > _tapSlop) {
-          _twoFingerTapPossible = false;
-        }
-      }
-      if (delta.dy.abs() > 0) {
-        _scrollAccumulator += delta.dy;
-        while (_scrollAccumulator.abs() >= _scrollStep) {
-          final direction = _scrollAccumulator.sign;
-          _scrollAccumulator -= _scrollStep * direction;
-          _sendScrollStep(direction);
-        }
-      }
+    } else {
+      // Multi-finger gestures are handled by the OS, do not intercept.
     }
   }
 
@@ -10361,19 +10330,27 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (!_activePointers.containsKey(event.pointer)) {
       return;
     }
-    final wasTwoFinger = _activePointers.length >= 2;
+    final wasMultiFinger = _activePointers.length >= 2;
     _activePointers.remove(event.pointer);
     if (_activePointers.isEmpty) {
       final now = DateTime.now();
       if (_isDragging) {
         _endDrag();
-      } else if (wasTwoFinger &&
-          _twoFingerTapPossible &&
-          _twoFingerStartTime != null &&
-          now.difference(_twoFingerStartTime!) <= _twoFingerTapTimeout) {
-        _sendClick(4);
-      } else if (!wasTwoFinger && _isTapCandidate(now)) {
-        _sendClick(1);
+      } else if (!wasMultiFinger && _isTapCandidate(now)) {
+        final lastTap = _lastTapTime;
+        final lastPos = _lastTapPosition;
+        if (lastTap != null &&
+            now.difference(lastTap) <= _doubleTapTimeout &&
+            lastPos != null &&
+            (_primaryDownPosition == null ||
+                (_primaryDownPosition! - lastPos).distance <= _tapSlop)) {
+          _sendClick(2);
+          _lastTapTime = null;
+          _lastTapPosition = null;
+        } else {
+          _lastTapTime = now;
+          _lastTapPosition = _primaryDownPosition;
+        }
       }
       _resetPointerTracking();
     } else if (_activePointers.length == 1) {
@@ -10381,7 +10358,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = remaining;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = remaining;
-      _twoFingerTapPossible = false;
       _scheduleDragHold();
     }
   }
@@ -11323,18 +11299,29 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       onPointerUp: _handleTrackpadPointerUp,
                       onPointerCancel: _handleTrackpadPointerCancel,
                     );
-                    if (isLandscape) {
-                      return surface;
-                    }
-                    return Stack(
+                    final trackpadColumn = Column(
                       children: [
-                        Positioned.fill(child: surface),
-                        _buildTrackpadMoreButton(
-                          areaSize: trackpadSize,
-                          isInteractive: isInteractive,
+                        Expanded(
+                          child: isLandscape
+                              ? surface
+                              : Stack(
+                                  children: [
+                                    Positioned.fill(child: surface),
+                                    _buildTrackpadMoreButton(
+                                      areaSize: trackpadSize,
+                                      isInteractive: isInteractive,
+                                    ),
+                                  ],
+                                ),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildTrackpadClickBar(
+                          enabled: trackpadEnabled,
+                          glassStyle: isLandscape,
                         ),
                       ],
                     );
+                    return trackpadColumn;
                   },
                 ),
               ),
@@ -11518,15 +11505,26 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: _VncTrackpadSurface(
-                  enabled: trackpadEnabled,
-                  glassStyle: glassStyle,
-                  disabledMessage:
-                      _directInputEnabled ? 'Direct touch enabled' : null,
-                  onPointerDown: _handleTrackpadPointerDown,
-                  onPointerMove: _handleTrackpadPointerMove,
-                  onPointerUp: _handleTrackpadPointerUp,
-                  onPointerCancel: _handleTrackpadPointerCancel,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _VncTrackpadSurface(
+                        enabled: trackpadEnabled,
+                        glassStyle: glassStyle,
+                        disabledMessage:
+                            _directInputEnabled ? 'Direct touch enabled' : null,
+                        onPointerDown: _handleTrackpadPointerDown,
+                        onPointerMove: _handleTrackpadPointerMove,
+                        onPointerUp: _handleTrackpadPointerUp,
+                        onPointerCancel: _handleTrackpadPointerCancel,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildTrackpadClickBar(
+                      enabled: trackpadEnabled,
+                      glassStyle: glassStyle,
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -11775,13 +11773,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           glassStyle: glassStyle,
         ),
         _VncGestureHint(
-          icon: Icons.touch_app,
-          label: 'Tap',
+          icon: Icons.ads_click,
+          label: 'Double tap = Right click',
           glassStyle: glassStyle,
         ),
         _VncGestureHint(
-          icon: Icons.swap_vert,
-          label: 'Scroll',
+          icon: Icons.mouse,
+          label: 'Use buttons to click',
           glassStyle: glassStyle,
         ),
         _VncGestureHint(
@@ -11790,6 +11788,73 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           glassStyle: glassStyle,
         ),
       ],
+    );
+  }
+
+  Widget _buildTrackpadClickBar({
+    required bool enabled,
+    bool glassStyle = false,
+  }) {
+    final borderColor =
+        glassStyle ? Colors.white.withAlpha(60) : const Color(0xFFE2E8F0);
+    final background =
+        glassStyle ? Colors.white.withAlpha(18) : Colors.white;
+    final textColor = glassStyle ? Colors.white : const Color(0xFF0F172A);
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+        boxShadow: glassStyle
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withAlpha(12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: enabled ? () => _sendClick(1) : null,
+              borderRadius: const BorderRadius.horizontal(
+                left: Radius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  '左键',
+                  style: TextStyle(
+                    color: enabled ? textColor : textColor.withAlpha(120),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Container(width: 1, color: borderColor),
+          Expanded(
+            child: InkWell(
+              onTap: enabled ? () => _sendClick(2) : null,
+              borderRadius: const BorderRadius.horizontal(
+                right: Radius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  '右键',
+                  style: TextStyle(
+                    color: enabled ? textColor : textColor.withAlpha(120),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
