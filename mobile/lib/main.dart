@@ -8931,7 +8931,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const double _dragSlop = 6;
   static const double _scrollStep = 18;
   static const Duration _tapTimeout = Duration(milliseconds: 240);
-  static const Duration _dragHoldDelay = Duration(milliseconds: 360);
   static const Duration _doubleTapTimeout = Duration(milliseconds: 220);
   static const int _encodingRaw = 0;
   static const int _encodingCopyRect = 1;
@@ -8983,6 +8982,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   int _buttonMask = 0;
   bool _isDragging = false;
   Size _lastViewSize = Size.zero;
+  Size _lastTrackpadSize = Size.zero;
   bool _directDragActive = false;
   final Map<int, Offset> _activePointers = {};
   Offset? _primaryDownPosition;
@@ -9327,6 +9327,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       'type': 'header',
       'sessionId': widget.session.id,
       'frameSize': {'w': _frameSize.width, 'h': _frameSize.height},
+      'trackpadSize': {
+        'w': _lastTrackpadSize.width,
+        'h': _lastTrackpadSize.height,
+      },
       'viewMode': _viewMode.name,
       'zoom': _zoom,
       'localCursor': _showLocalCursor,
@@ -9888,14 +9892,54 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return delta * factor;
   }
 
-  void _movePointerBy(Offset delta) {
-    final viewSize = _lastViewSize;
-    if (viewSize.width <= 0 || viewSize.height <= 0) {
-      final accelerated = _applyTrackpadAcceleration(delta);
-      _setPointerPosition(_pointerPosition + accelerated / _zoom);
+  void _updateTrackpadSize(Size size, {required String source}) {
+    if (size.width <= 0 || size.height <= 0) {
       return;
     }
-    final scale = _baseScale(viewSize) * _zoom;
+    if (_lastTrackpadSize == size) {
+      return;
+    }
+    _lastTrackpadSize = size;
+    if (_cursorDebugEnabled) {
+      _logCursorDebug('trackpad_size', {
+        'source': source,
+        'w': size.width,
+        'h': size.height,
+      }, force: true);
+    }
+  }
+
+  double _trackpadBaseScale(Size trackpadSize) {
+    if (_frameSize.width <= 0 || _frameSize.height <= 0) {
+      return 1;
+    }
+    final scaleX = trackpadSize.width / _frameSize.width;
+    final scaleY = trackpadSize.height / _frameSize.height;
+    if (_viewMode == VncViewMode.fill) {
+      return scaleX > scaleY ? scaleX : scaleY;
+    }
+    return scaleX < scaleY ? scaleX : scaleY;
+  }
+
+  void _movePointerBy(Offset delta) {
+    final trackpadSize = _lastTrackpadSize;
+    final viewSize = _lastViewSize;
+    if (trackpadSize.width <= 0 || trackpadSize.height <= 0) {
+      if (viewSize.width <= 0 || viewSize.height <= 0) {
+        final accelerated = _applyTrackpadAcceleration(delta);
+        _setPointerPosition(_pointerPosition + accelerated / _zoom);
+        return;
+      }
+      final scale = _baseScale(viewSize) * _zoom;
+      if (scale == 0) {
+        return;
+      }
+      final accelerated = _applyTrackpadAcceleration(delta, scale: scale);
+      final scaled = accelerated / scale;
+      _setPointerPosition(_pointerPosition + scaled);
+      return;
+    }
+    final scale = _trackpadBaseScale(trackpadSize) * _zoom;
     if (scale == 0) {
       return;
     }
@@ -10233,17 +10277,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return max < 0 ? 0 : max;
   }
 
-  void _scheduleDragHold() {
-    _dragHoldTimer?.cancel();
-    _dragHoldTimer = Timer(_dragHoldDelay, () {
-      if (_activePointers.length == 1 && !_isDragging) {
-        _isDragging = true;
-        _buttonMask |= 1;
-        _sendPointerEvent();
-      }
-    });
-  }
-
   void _cancelDragHold() {
     _dragHoldTimer?.cancel();
     _dragHoldTimer = null;
@@ -10296,7 +10329,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = event.position;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = event.position;
-      _scheduleDragHold();
     } else {
       _cancelDragHold();
     }
@@ -10344,7 +10376,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             lastPos != null &&
             (_primaryDownPosition == null ||
                 (_primaryDownPosition! - lastPos).distance <= _tapSlop)) {
-          _sendClick(2);
+          _sendClick(1);
           _lastTapTime = null;
           _lastTapPosition = null;
         } else {
@@ -10358,7 +10390,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = remaining;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = remaining;
-      _scheduleDragHold();
     }
   }
 
@@ -11282,11 +11313,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               child: Opacity(
                 opacity: trackpadOpacity,
                 child: LayoutBuilder(
-                  builder: (context, trackpadConstraints) {
-                    final trackpadSize = Size(
-                      trackpadConstraints.maxWidth,
-                      trackpadConstraints.maxHeight,
-                    );
+                  builder: (context, _) {
                     final surface = _VncTrackpadSurface(
                       enabled: trackpadEnabled,
                       glassStyle: isLandscape,
@@ -11302,17 +11329,32 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     final trackpadColumn = Column(
                       children: [
                         Expanded(
-                          child: isLandscape
-                              ? surface
-                              : Stack(
-                                  children: [
-                                    Positioned.fill(child: surface),
-                                    _buildTrackpadMoreButton(
-                                      areaSize: trackpadSize,
-                                      isInteractive: isInteractive,
-                                    ),
-                                  ],
-                                ),
+                          child: LayoutBuilder(
+                            builder: (context, surfaceConstraints) {
+                              final trackpadSize = Size(
+                                surfaceConstraints.maxWidth,
+                                surfaceConstraints.maxHeight,
+                              );
+                              _updateTrackpadSize(
+                                trackpadSize,
+                                source: isLandscape
+                                    ? 'fullscreen_landscape'
+                                    : 'fullscreen_portrait',
+                              );
+                              if (isLandscape) {
+                                return surface;
+                              }
+                              return Stack(
+                                children: [
+                                  Positioned.fill(child: surface),
+                                  _buildTrackpadMoreButton(
+                                    areaSize: trackpadSize,
+                                    isInteractive: isInteractive,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
                         ),
                         const SizedBox(height: 8),
                         _buildTrackpadClickBar(
@@ -11508,15 +11550,28 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 child: Column(
                   children: [
                     Expanded(
-                      child: _VncTrackpadSurface(
-                        enabled: trackpadEnabled,
-                        glassStyle: glassStyle,
-                        disabledMessage:
-                            _directInputEnabled ? 'Direct touch enabled' : null,
-                        onPointerDown: _handleTrackpadPointerDown,
-                        onPointerMove: _handleTrackpadPointerMove,
-                        onPointerUp: _handleTrackpadPointerUp,
-                        onPointerCancel: _handleTrackpadPointerCancel,
+                      child: LayoutBuilder(
+                        builder: (context, surfaceConstraints) {
+                          final trackpadSize = Size(
+                            surfaceConstraints.maxWidth,
+                            surfaceConstraints.maxHeight,
+                          );
+                          _updateTrackpadSize(
+                            trackpadSize,
+                            source: glassStyle ? 'trackpad_glass' : 'trackpad',
+                          );
+                          return _VncTrackpadSurface(
+                            enabled: trackpadEnabled,
+                            glassStyle: glassStyle,
+                            disabledMessage: _directInputEnabled
+                                ? 'Direct touch enabled'
+                                : null,
+                            onPointerDown: _handleTrackpadPointerDown,
+                            onPointerMove: _handleTrackpadPointerMove,
+                            onPointerUp: _handleTrackpadPointerUp,
+                            onPointerCancel: _handleTrackpadPointerCancel,
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -11774,7 +11829,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         ),
         _VncGestureHint(
           icon: Icons.ads_click,
-          label: 'Double tap = Right click',
+          label: 'Double tap = Left click',
           glassStyle: glassStyle,
         ),
         _VncGestureHint(
@@ -11783,8 +11838,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           glassStyle: glassStyle,
         ),
         _VncGestureHint(
-          icon: Icons.drag_indicator,
-          label: 'Hold to drag',
+          icon: Icons.track_changes,
+          label: 'System 2/3-finger gestures',
           glassStyle: glassStyle,
         ),
       ],
