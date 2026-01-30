@@ -19,17 +19,37 @@ class VncFrame {
   final ui.PixelFormat format;
 }
 
+class VncCursor {
+  const VncCursor({
+    required this.width,
+    required this.height,
+    required this.hotX,
+    required this.hotY,
+    required this.pixels,
+    required this.format,
+  });
+
+  final int width;
+  final int height;
+  final int hotX;
+  final int hotY;
+  final Uint8List pixels;
+  final ui.PixelFormat format;
+}
+
 class VncRfbClient {
   VncRfbClient({
     required this.uri,
     required this.onFrame,
     required this.onError,
+    this.onCursor,
     this.preferredEncodings,
   });
 
   final Uri uri;
   final void Function(VncFrame frame) onFrame;
   final void Function(String message) onError;
+  final void Function(VncCursor? cursor)? onCursor;
   final List<int>? preferredEncodings;
 
   WebSocketChannel? _channel;
@@ -37,8 +57,17 @@ class VncRfbClient {
   Completer<void>? _waiter;
   bool _handshakeComplete = false;
   bool _closed = false;
+  bool _closing = false;
   int _width = 0;
   int _height = 0;
+
+  /// The framebuffer width negotiated during the VNC handshake.
+  /// Use this for pointer coordinate calculations, not the dynamic frame size.
+  int get serverWidth => _width;
+
+  /// The framebuffer height negotiated during the VNC handshake.
+  /// Use this for pointer coordinate calculations, not the dynamic frame size.
+  int get serverHeight => _height;
   int _bytesPerPixel = 4;
   int _depth = 24;
   bool _bigEndian = false;
@@ -60,6 +89,7 @@ class VncRfbClient {
   static const int _encodingZlib = 6;
   static const int _encodingTight = 7;
   static const int _encodingZrle = 16;
+  static const int _encodingCursor = -239;
   static const int _zrleTileSize = 64;
 
   Future<void> connect() async {
@@ -70,10 +100,16 @@ class VncRfbClient {
     _channel!.stream.listen(
       _handleMessage,
       onError: (Object error) {
+        if (_closing) {
+          return;
+        }
         _closed = true;
         onError('VNC socket error: $error');
       },
       onDone: () {
+        if (_closing) {
+          return;
+        }
         _closed = true;
         onError('VNC socket closed.');
       },
@@ -90,6 +126,7 @@ class VncRfbClient {
   }
 
   void close() {
+    _closing = true;
     _closed = true;
     _channel?.sink.close();
   }
@@ -268,6 +305,41 @@ class VncRfbClient {
               _buffer[offset + 11],
         );
         offset += 12;
+        if (encoding == _encodingCursor) {
+          final pixelBytes = width * height * _bytesPerPixel;
+          final maskStride = (width + 7) ~/ 8;
+          final maskBytes = maskStride * height;
+          if (_buffer.length < offset + pixelBytes + maskBytes) {
+            return;
+          }
+          if (width == 0 || height == 0) {
+            offset += pixelBytes + maskBytes;
+            onCursor?.call(null);
+            continue;
+          }
+          final pixels = Uint8List.fromList(
+            _buffer.sublist(offset, offset + pixelBytes),
+          );
+          final mask = Uint8List.fromList(
+            _buffer.sublist(
+              offset + pixelBytes,
+              offset + pixelBytes + maskBytes,
+            ),
+          );
+          offset += pixelBytes + maskBytes;
+          final cursorPixels = _decodeCursorPixels(pixels, mask, width, height);
+          onCursor?.call(
+            VncCursor(
+              width: width,
+              height: height,
+              hotX: x,
+              hotY: y,
+              pixels: cursorPixels,
+              format: ui.PixelFormat.bgra8888,
+            ),
+          );
+          continue;
+        }
         if (!_validateRect(x, y, width, height)) {
           onError('Invalid VNC rectangle received.');
           close();
@@ -932,6 +1004,62 @@ class VncRfbClient {
     return (0xff << 24) | (r << 16) | (g << 8) | b;
   }
 
+  int _readPackedPixel(Uint8List data, int offset) {
+    if (_bytesPerPixel == 4) {
+      if (_bigEndian) {
+        final a = data[offset];
+        final r = data[offset + 1];
+        final g = data[offset + 2];
+        final b = data[offset + 3];
+        return (a << 24) | (r << 16) | (g << 8) | b;
+      }
+      final b = data[offset];
+      final g = data[offset + 1];
+      final r = data[offset + 2];
+      final a = data[offset + 3];
+      return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+    if (_bytesPerPixel == 3) {
+      if (_bigEndian) {
+        final r = data[offset];
+        final g = data[offset + 1];
+        final b = data[offset + 2];
+        return (0xff << 24) | (r << 16) | (g << 8) | b;
+      }
+      final b = data[offset];
+      final g = data[offset + 1];
+      final r = data[offset + 2];
+      return (0xff << 24) | (r << 16) | (g << 8) | b;
+    }
+    return 0;
+  }
+
+  Uint8List _decodeCursorPixels(
+    Uint8List pixelData,
+    Uint8List maskData,
+    int width,
+    int height,
+  ) {
+    final output = Uint8List(width * height * 4);
+    final maskStride = (width + 7) ~/ 8;
+    for (var row = 0; row < height; row += 1) {
+      final maskRowOffset = row * maskStride;
+      final pixelRowOffset = row * width * _bytesPerPixel;
+      for (var col = 0; col < width; col += 1) {
+        final maskByte = maskData[maskRowOffset + (col >> 3)];
+        final maskBit = (maskByte >> (7 - (col & 7))) & 1;
+        final pixelOffset = pixelRowOffset + col * _bytesPerPixel;
+        final packed = _readPackedPixel(pixelData, pixelOffset);
+        final withAlpha = maskBit == 1
+            ? (packed | 0xff000000)
+            : (packed & 0x00ffffff);
+        final outOffset = (row * width + col) * 4;
+        _writePackedPixel(output, outOffset, withAlpha);
+      }
+    }
+    return output;
+  }
+
   void _writePackedPixel(Uint8List buffer, int index, int packed) {
     buffer[index] = packed & 0xff;
     buffer[index + 1] = (packed >> 8) & 0xff;
@@ -954,14 +1082,18 @@ class VncRfbClient {
 
   void _sendSetEncodings() {
     final encodings = _preferredEncodings.isNotEmpty
-        ? _preferredEncodings
+        ? List<int>.from(_preferredEncodings)
         : [
+            _encodingCursor,
             _encodingZrle,
             _encodingTight,
             _encodingZlib,
             _encodingCopyRect,
             _encodingRaw
           ];
+    if (!encodings.contains(_encodingCursor)) {
+      encodings.add(_encodingCursor);
+    }
     final payload = Uint8List(4 + encodings.length * 4);
     payload[0] = 2;
     payload[2] = (encodings.length >> 8) & 0xff;

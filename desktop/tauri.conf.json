@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.vibeinspect.agent",
   "build": {
-    "frontendDist": "../frontend",
-    "devUrl": "http://localhost:1420"
+    "frontendDist": "frontend"
   },
   "app": {
     "windows": [

@@ -25,5 +25,19 @@ jpeg-encoder = { version = "0.7", default-features = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_HiDpi",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(x11)"] }
+
+[patch.crates-io]
+scrap = { path = "vendor/scrap" }

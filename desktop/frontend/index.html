@@ -4,16 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vibe Inspect Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
-        color-scheme: light;
-        --ink: #0f172a;
-        --slate: #334155;
-        --stone: #e2e8f0;
-        --cream: #f8fafc;
-        --accent: #e07a5f;
-        --accent-dark: #be5a3c;
-        --mint: #d7f2e3;
+        color-scheme: dark;
+        --ink: #f8fafc;
+        --ink-soft: #e2e8f0;
+        --ink-muted: #94a3b8;
+        --accent: #22c55e;
+        --accent-strong: #16a34a;
+        --accent-wash: rgba(34, 197, 94, 0.16);
+        --sky-wash: rgba(56, 189, 248, 0.18);
+        --mint: rgba(34, 197, 94, 0.2);
+        --mint-ink: #bbf7d0;
+        --rose: rgba(248, 113, 113, 0.18);
+        --rose-ink: #fecaca;
+        --border: rgba(148, 163, 184, 0.2);
+        --glass: rgba(15, 23, 42, 0.85);
+        --shadow: 0 30px 80px rgba(2, 6, 23, 0.5);
+        --radius-lg: 28px;
+        --radius-md: 18px;
       }
 
       * {
@@ -23,95 +38,186 @@
       body {
         margin: 0;
         min-height: 100vh;
-        font-family: "Avenir Next", "Futura", "Trebuchet MS", sans-serif;
+        font-family: "IBM Plex Sans", "Avenir Next", "Avenir", "Futura",
+          "Gill Sans", "Trebuchet MS", sans-serif;
         color: var(--ink);
-        background: radial-gradient(circle at top, #fef3c7 0%, #f8fafc 45%, #e2e8f0 100%);
+        background:
+          radial-gradient(900px 520px at 12% 10%, rgba(34, 197, 94, 0.14) 0%, rgba(15, 23, 42, 0) 60%),
+          radial-gradient(760px 520px at 88% 0%, rgba(56, 189, 248, 0.18) 0%, rgba(15, 23, 42, 0) 55%),
+          linear-gradient(160deg, #0f172a 0%, #111827 45%, #0b1220 100%),
+          repeating-linear-gradient(
+            135deg,
+            rgba(148, 163, 184, 0.06) 0,
+            rgba(148, 163, 184, 0.06) 1px,
+            transparent 1px,
+            transparent 48px
+          );
       }
 
-      .page {
-        max-width: 960px;
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        width: 340px;
+        height: 340px;
+        border-radius: 50%;
+        filter: blur(45px);
+        opacity: 0.55;
+        z-index: 0;
+        animation: drift 18s ease-in-out infinite;
+      }
+
+      body::before {
+        background: rgba(34, 197, 94, 0.6);
+        top: -170px;
+        right: -120px;
+      }
+
+      body::after {
+        background: rgba(56, 189, 248, 0.5);
+        bottom: -200px;
+        left: -160px;
+        animation-delay: 4s;
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        max-width: 1040px;
         margin: 0 auto;
-        padding: 48px 32px 60px;
+        padding: 56px 32px 64px;
       }
 
       .hero {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 14px;
         margin-bottom: 32px;
+        animation: rise 0.6s ease-out;
+      }
+
+      .hero-top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: var(--accent-wash);
+        color: var(--mint-ink);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        box-shadow: 0 10px 18px rgba(34, 197, 94, 0.16);
+      }
+
+      .pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--ink-soft);
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(148, 163, 184, 0.2);
       }
 
       .hero h1 {
-        font-size: 2.3rem;
-        letter-spacing: -0.02em;
         margin: 0;
+        font-size: clamp(2.1rem, 4vw, 2.8rem);
+        letter-spacing: -0.02em;
       }
 
       .hero p {
         margin: 0;
-        color: var(--slate);
-        max-width: 520px;
-        line-height: 1.5;
+        max-width: 560px;
+        color: var(--ink-muted);
+        line-height: 1.55;
       }
 
-      .panel {
+      .board {
         display: grid;
-        grid-template-columns: minmax(220px, 280px) 1fr;
+        grid-template-columns: minmax(260px, 340px) 1fr;
         gap: 28px;
-        background: rgba(248, 250, 252, 0.85);
-        border-radius: 24px;
         padding: 28px;
-        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+        border-radius: var(--radius-lg);
+        background: var(--glass);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+        animation: floatIn 0.7s ease-out 0.05s both;
       }
 
-      .qr-card {
+      .qr-panel {
         display: flex;
         flex-direction: column;
-        align-items: center;
         gap: 16px;
-        padding: 16px;
-        background: white;
-        border-radius: 18px;
-        border: 1px solid var(--stone);
+        padding: 18px;
+        border-radius: var(--radius-md);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(15, 23, 42, 0.92) 100%);
+        border: 1px solid var(--border);
       }
 
-      .qr-card svg {
+      .panel-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      .panel-title h2 {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .hint {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+      }
+
+      .qr-frame {
+        display: grid;
+        place-items: center;
+        min-height: 236px;
+        border-radius: 16px;
+        border: 1px dashed rgba(148, 163, 184, 0.28);
+        background:
+          repeating-linear-gradient(
+            135deg,
+            rgba(34, 197, 94, 0.12),
+            rgba(34, 197, 94, 0.12) 12px,
+            transparent 12px,
+            transparent 24px
+          );
+        color: var(--ink-muted);
+        font-weight: 600;
+      }
+
+      .qr-frame svg {
         width: 220px;
         height: 220px;
+        opacity: 0;
+        transform: scale(0.96);
+        transition: opacity 0.25s ease, transform 0.25s ease;
       }
 
-      .actions {
+      .qr-frame.loaded svg {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .qr-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 18px;
-      }
-
-      button {
-        border: none;
-        border-radius: 999px;
-        padding: 10px 18px;
-        font-size: 0.95rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-      }
-
-      .primary {
-        background: var(--accent);
-        color: white;
-        box-shadow: 0 12px 24px rgba(224, 122, 95, 0.3);
-      }
-
-      .primary:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 14px 30px rgba(224, 122, 95, 0.35);
-      }
-
-      .secondary {
-        background: var(--cream);
-        color: var(--ink);
-        border: 1px solid var(--stone);
+        gap: 10px;
       }
 
       .details {
@@ -120,90 +226,374 @@
         gap: 18px;
       }
 
-      .meta-row {
+      .details-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .details-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+
+      .details-subtitle {
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+        color: var(--ink-muted);
+      }
+
+      .status {
+        padding: 10px 16px;
+        border-radius: 999px;
+        background: var(--mint);
+        color: var(--mint-ink);
+        font-weight: 700;
+        font-size: 0.9rem;
+      }
+
+      .status.error {
+        background: var(--rose);
+        color: var(--rose-ink);
+      }
+
+      .status.notice {
+        background: var(--sky-wash);
+        color: #bae6fd;
+      }
+
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        background: rgba(15, 23, 42, 0.6);
+        width: fit-content;
+        font-weight: 600;
+        color: var(--ink-soft);
+      }
+
+      .toggle input {
+        width: 38px;
+        height: 20px;
+        accent-color: var(--accent);
+      }
+
+      .info-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .stat {
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
         display: flex;
         flex-direction: column;
         gap: 6px;
       }
 
       .label {
-        font-size: 0.78rem;
+        font-size: 0.72rem;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        color: var(--slate);
+        color: var(--ink-muted);
       }
 
       .value {
-        font-size: 1.2rem;
-        font-weight: 600;
+        font-size: 1.05rem;
+        font-weight: 700;
       }
 
       .payload {
-        font-family: "SFMono-Regular", "Menlo", monospace;
-        font-size: 0.82rem;
-        color: var(--slate);
-        background: var(--cream);
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px dashed var(--stone);
+        padding: 16px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px dashed rgba(148, 163, 184, 0.28);
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-size: 0.85rem;
+        color: var(--ink-soft);
         word-break: break-all;
       }
 
-      .status {
-        padding: 12px 16px;
-        border-radius: 14px;
-        background: var(--mint);
-        color: #0f5132;
-        font-weight: 600;
+      .url-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
 
-      .status.error {
-        background: #fee2e2;
-        color: #7f1d1d;
+      .url-pill {
+        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+        font-size: 0.82rem;
+        padding: 6px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.7);
+      }
+
+      .connectivity-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .approval-card {
+        border-radius: 18px;
+        border: 1px solid rgba(34, 197, 94, 0.2);
+        background: rgba(34, 197, 94, 0.08);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+      }
+
+      .approval-card.hidden {
+        opacity: 0;
+        transform: translateY(6px);
+        pointer-events: none;
+        height: 0;
+        overflow: hidden;
+        padding: 0 16px;
+        border-width: 0;
+      }
+
+      .approval-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .steps {
+        display: grid;
+        gap: 12px;
+      }
+
+      .step {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+      }
+
+      .step span {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent-wash);
+        color: var(--mint-ink);
+        font-weight: 700;
+        font-size: 0.9rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 11px 20px;
+        font-size: 0.95rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        font-family: "IBM Plex Sans", "Avenir Next", "Avenir", "Futura",
+          "Gill Sans", "Trebuchet MS", sans-serif;
+      }
+
+      .primary {
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+        color: #f0fdf4;
+        box-shadow: 0 12px 26px rgba(34, 197, 94, 0.35);
+      }
+
+      .primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 16px 32px rgba(34, 197, 94, 0.4);
+      }
+
+      .secondary {
+        background: rgba(15, 23, 42, 0.7);
+        color: var(--ink);
+        border: 1px solid var(--border);
+      }
+
+      .secondary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(2, 6, 23, 0.4);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes floatIn {
+        from {
+          opacity: 0;
+          transform: translateY(16px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      @keyframes drift {
+        0% {
+          transform: translate(0, 0);
+        }
+        50% {
+          transform: translate(20px, -10px);
+        }
+        100% {
+          transform: translate(0, 0);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .board {
+          grid-template-columns: 1fr;
+        }
+
+        .info-grid {
+          grid-template-columns: 1fr;
+        }
       }
 
       @media (max-width: 720px) {
-        .panel {
+        .connectivity-grid {
           grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 600px) {
+        main {
+          padding: 40px 20px 48px;
+        }
+
+        .details-header {
+          flex-direction: column;
+          align-items: flex-start;
         }
       }
     </style>
   </head>
   <body>
-    <main class="page">
+    <main>
       <header class="hero">
-        <h1>Secure pairing session</h1>
+        <div class="hero-top">
+          <span class="badge">Desktop pairing</span>
+          <span class="pill">LAN-first</span>
+          <span class="pill">Auto pairing</span>
+          <span class="pill">Approval optional</span>
+        </div>
+        <h1>Vibe Inspect Agent is ready to pair.</h1>
         <p>
-          Generate a short-lived QR token and shared secret to pair your mobile app
-          with this desktop agent.
+          Scan the QR code with the mobile app to link this desktop agent. Tokens
+          expire quickly for safety, so refresh anytime.
         </p>
       </header>
 
-      <section class="panel">
-        <div class="qr-card">
-          <div id="qr">Loading QR...</div>
-          <button class="secondary" id="copyPayload">Copy QR payload</button>
+      <section class="board">
+        <div class="qr-panel">
+          <div class="panel-title">
+            <h2>QR session</h2>
+            <span class="hint">Scan in mobile app</span>
+          </div>
+          <div class="qr-frame" id="qr">Loading QR...</div>
+          <div class="qr-actions">
+            <button class="secondary" id="copyPayload">Copy QR payload</button>
+          </div>
         </div>
+
         <div class="details">
-          <div class="meta-row">
-            <span class="label">Pairing token</span>
-            <span class="value" id="token">--</span>
+          <div class="details-header">
+            <div>
+              <h2>Session details</h2>
+              <p class="details-subtitle">LAN preferred. Tunnel fallback.</p>
+            </div>
+            <div class="status" id="status">Waiting for mobile confirmation.</div>
           </div>
-          <div class="meta-row">
-            <span class="label">Shared secret</span>
-            <span class="value" id="secret">--</span>
+
+          <label class="toggle">
+            <input type="checkbox" id="requireApproval" />
+            Require desktop approval
+          </label>
+
+          <div class="approval-card hidden" id="approvalCard">
+            <strong>Pending pairing approval</strong>
+            <div id="pendingMeta">No pending requests.</div>
+            <div class="approval-actions">
+              <button class="primary" id="approvePairing">Approve pairing</button>
+              <button class="secondary" id="denyPairing">Deny</button>
+            </div>
           </div>
-          <div class="meta-row">
-            <span class="label">Expires in</span>
-            <span class="value" id="expires">--</span>
+
+          <div class="info-grid">
+            <div class="stat">
+              <span class="label">Pairing token</span>
+              <span class="value" id="token">--</span>
+            </div>
+            <div class="stat">
+              <span class="label">Shared secret</span>
+              <span class="value" id="secret">--</span>
+            </div>
+            <div class="stat">
+              <span class="label">Expires in</span>
+              <span class="value" id="expires">--</span>
+            </div>
           </div>
-          <div class="meta-row">
-            <span class="label">QR payload</span>
+
+          <div class="connectivity-grid">
+            <div>
+              <div class="label">Local endpoints (LAN first)</div>
+              <div class="url-list" id="localUrls">
+                <span class="url-pill">--</span>
+              </div>
+            </div>
+            <div>
+              <div class="label">Tunnel URL</div>
+              <div class="payload" id="tunnelUrl">--</div>
+            </div>
+          </div>
+
+          <div class="status error" id="tunnelError" style="display: none"></div>
+
+          <div>
+            <div class="label">QR payload</div>
             <div class="payload" id="payload">--</div>
           </div>
+
           <div class="actions">
             <button class="primary" id="generate">Generate new token</button>
-            <div class="status" id="status">Waiting for mobile confirmation.</div>
+          </div>
+
+          <div class="steps">
+            <div class="step"><span>1</span>Open the mobile app and tap Pair.</div>
+            <div class="step"><span>2</span>Scan this QR code to connect securely.</div>
+            <div class="step"><span>3</span>Approve here if required.</div>
           </div>
         </div>
       </section>
@@ -211,20 +601,34 @@
 
     <script>
       const invoke =
-        window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke || null;
+        window.__TAURI__?.core?.invoke ||
+        window.__TAURI__?.invoke ||
+        window.__TAURI_INTERNALS__?.invoke ||
+        null;
       const statusEl = document.getElementById("status");
       const qrEl = document.getElementById("qr");
       const tokenEl = document.getElementById("token");
       const secretEl = document.getElementById("secret");
       const expiresEl = document.getElementById("expires");
       const payloadEl = document.getElementById("payload");
+      const localUrlsEl = document.getElementById("localUrls");
+      const tunnelUrlEl = document.getElementById("tunnelUrl");
+      const tunnelErrorEl = document.getElementById("tunnelError");
       const copyBtn = document.getElementById("copyPayload");
       const generateBtn = document.getElementById("generate");
-      let session = null;
+      const approvalToggle = document.getElementById("requireApproval");
+      const approvalCard = document.getElementById("approvalCard");
+      const pendingMetaEl = document.getElementById("pendingMeta");
+      const approveBtn = document.getElementById("approvePairing");
+      const denyBtn = document.getElementById("denyPairing");
 
-      function setStatus(message, isError = false) {
+      let session = null;
+      let syncingToggle = false;
+
+      function setStatus(message, tone = "ok") {
         statusEl.textContent = message;
-        statusEl.classList.toggle("error", isError);
+        statusEl.classList.toggle("error", tone === "error");
+        statusEl.classList.toggle("notice", tone === "notice");
       }
 
       function formatExpiry(expiresAt) {
@@ -245,21 +649,95 @@
         secretEl.textContent = data.secret;
         payloadEl.textContent = data.qr_payload;
         qrEl.innerHTML = data.qr_svg;
+        qrEl.classList.add("loaded");
         expiresEl.textContent = formatExpiry(data.expires_at);
-        setStatus("Waiting for mobile confirmation.");
+      }
+
+      function renderLocalUrls(urls) {
+        localUrlsEl.innerHTML = "";
+        if (!urls || urls.length === 0) {
+          const fallback = document.createElement("span");
+          fallback.className = "url-pill";
+          fallback.textContent = "--";
+          localUrlsEl.appendChild(fallback);
+          return;
+        }
+        urls.forEach((url) => {
+          const pill = document.createElement("span");
+          pill.className = "url-pill";
+          pill.textContent = url;
+          localUrlsEl.appendChild(pill);
+        });
+      }
+
+      function renderTunnel(tunnelUrl, tunnelError) {
+        tunnelUrlEl.textContent = tunnelUrl || "--";
+        if (tunnelError) {
+          tunnelErrorEl.style.display = "block";
+          tunnelErrorEl.textContent = tunnelError;
+        } else {
+          tunnelErrorEl.style.display = "none";
+          tunnelErrorEl.textContent = "";
+        }
+      }
+
+      function renderPending(pending) {
+        if (pending) {
+          approvalCard.classList.remove("hidden");
+          const when = new Date(pending.requested_at * 1000).toLocaleTimeString();
+          const source = pending.source ? ` from ${pending.source}` : "";
+          pendingMetaEl.textContent = `Token ${pending.token} requested ${when}${source}.`;
+        } else {
+          approvalCard.classList.add("hidden");
+          pendingMetaEl.textContent = "No pending requests.";
+        }
+      }
+
+      function renderStatus(data) {
+        if (data.session) {
+          tokenEl.textContent = data.session.token;
+          secretEl.textContent = data.session.secret;
+          expiresEl.textContent = formatExpiry(data.session.expires_at);
+        }
+        if (data.connected_at) {
+          setStatus("Paired and connected.");
+        } else if (data.pending) {
+          setStatus("Awaiting desktop approval.", "notice");
+        } else {
+          setStatus("Waiting for mobile confirmation.");
+        }
+        syncingToggle = true;
+        approvalToggle.checked = !!data.requires_approval;
+        syncingToggle = false;
+        renderLocalUrls(data.local_urls);
+        renderTunnel(data.tunnel_url, data.tunnel_error);
+        renderPending(data.pending);
+      }
+
+      async function refreshStatus() {
+        if (!invoke) return;
+        try {
+          const status = await invoke("get_pairing_status");
+          renderStatus(status);
+        } catch (error) {
+          console.error(error);
+        }
       }
 
       async function createSession() {
         if (!invoke) {
-          setStatus("Tauri bridge unavailable.", true);
+          setStatus("Tauri bridge unavailable.", "error");
           return;
         }
         setStatus("Generating pairing token...");
         try {
           const data = await invoke("create_pairing_session");
           renderSession(data);
+          renderLocalUrls(data.local_urls || []);
+          renderTunnel(data.tunnel_url, data.tunnel_error);
+          setStatus("Waiting for mobile confirmation.");
         } catch (error) {
-          setStatus("Failed to generate pairing token.", true);
+          setStatus("Failed to generate pairing token.", "error");
           console.error(error);
         }
       }
@@ -270,23 +748,61 @@
           await navigator.clipboard.writeText(session.qr_payload);
           setStatus("QR payload copied to clipboard.");
         } catch (error) {
-          setStatus("Clipboard unavailable.", true);
+          setStatus("Clipboard unavailable.", "error");
           console.error(error);
         }
       });
 
       generateBtn.addEventListener("click", createSession);
 
+      approvalToggle.addEventListener("change", async () => {
+        if (!invoke || syncingToggle) return;
+        try {
+          const status = await invoke("set_pairing_requires_approval", {
+            requires_approval: approvalToggle.checked,
+          });
+          renderStatus(status);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+
+      approveBtn.addEventListener("click", async () => {
+        if (!invoke) return;
+        try {
+          const response = await invoke("approve_pairing_request");
+          if (response?.status === "connected") {
+            setStatus("Paired and connected.");
+          }
+          await refreshStatus();
+        } catch (error) {
+          console.error(error);
+        }
+      });
+
+      denyBtn.addEventListener("click", async () => {
+        if (!invoke) return;
+        try {
+          const status = await invoke("deny_pairing_request");
+          renderStatus(status);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+
       setInterval(() => {
         if (session) {
           expiresEl.textContent = formatExpiry(session.expires_at);
           if (session.expires_at * 1000 <= Date.now()) {
-            setStatus("Token expired. Generate a new token.", true);
+            setStatus("Token expired. Generate a new token.", "error");
           }
         }
       }, 1000);
 
+      setInterval(refreshStatus, 2000);
+
       createSession();
+      refreshStatus();
     </script>
   </body>
 </html>

@@ -1,12 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod command;
+#[cfg(target_os = "macos")]
+mod cursor_macos;
 mod pairing;
 mod terminal;
 mod server;
 mod vnc;
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+    }
     tauri::Builder::default()
         .manage(std::sync::Arc::new(std::sync::Mutex::new(
             pairing::PairingState::default(),
