@@ -1127,6 +1127,30 @@
         statusEl.classList.toggle("notice", tone === "notice");
       }
 
+      function extractErrorMessage(error) {
+        if (!error) return null;
+        if (typeof error === "string") return error;
+        if (error.message) return error.message;
+        if (error.error) {
+          if (typeof error.error === "string") return error.error;
+          if (error.error.message) return error.error.message;
+        }
+        try {
+          return JSON.stringify(error);
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function setStatusFromError(fallback, error) {
+        const detail = extractErrorMessage(error);
+        if (detail) {
+          setStatus(detail, "error");
+        } else {
+          setStatus(fallback, "error");
+        }
+      }
+
       function setControlsEnabled(enabled) {
         const controls = [
           generateBtn,
@@ -2024,8 +2048,9 @@
             renderStatus(status);
             setStatus("FRP URL updated.");
           } catch (error) {
-            setStatus("Failed to update FRP URL.", "error");
+            setStatusFromError("Failed to update FRP URL.", error);
             console.error(error);
+            await refreshStatus();
           }
         });
       }
@@ -2045,8 +2070,9 @@
             renderStatus(status);
             setStatus("Listen port updated.");
           } catch (error) {
-            setStatus("Failed to update listen port.", "error");
+            setStatusFromError("Failed to update listen port.", error);
             console.error(error);
+            await refreshStatus();
           }
         });
       }
@@ -2066,8 +2092,9 @@
             renderStatus(status);
             setStatus("ROI QUIC port updated.");
           } catch (error) {
-            setStatus("Failed to update ROI QUIC port.", "error");
+            setStatusFromError("Failed to update ROI QUIC port.", error);
             console.error(error);
+            await refreshStatus();
           }
         });
       }

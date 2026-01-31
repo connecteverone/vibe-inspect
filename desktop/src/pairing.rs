@@ -362,6 +362,7 @@ pub fn create_pairing_session(
         "tunnel_url": tunnel_details.url.clone(),
         "tunnel_error": tunnel_details.error.clone(),
         "requires_approval": pairing_state.requires_approval,
+        "roi_quic_port": pairing_state.roi_quic_port(),
     });
 
     let qr_payload = serde_json::to_string(&payload)
@@ -473,17 +474,39 @@ pub fn set_listen_port(
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    let previous_port = pairing_state.listen_port();
+    if port == previous_port {
+        return Ok(build_pairing_status(&pairing_state));
+    }
     pairing_state
         .identity
         .set_listen_port(port)
         .map_err(|_| PairingError::new("identity_error", "Failed to update listen port."))?;
     match ensure_local_server(state.inner(), &mut pairing_state) {
         Ok(_) => {
+            if let Some(handle) = pairing_state.local_server.as_ref() {
+                if handle.port != port {
+                    if let Err(error) = pairing_state.identity.set_listen_port(previous_port) {
+                        eprintln!("Failed to revert listen port {previous_port}: {error}");
+                    }
+                    return Err(PairingError::new(
+                        "listen_port_busy",
+                        "Listen port change deferred while active sessions are connected. Disconnect active sessions and retry.",
+                    ));
+                }
+            }
             clear_local_server_error(&mut pairing_state);
             Ok(build_pairing_status(&pairing_state))
         }
         Err(error) => {
-            pairing_state.tunnel_error = Some(error.message.clone());
+            if let Err(revert_error) = pairing_state.identity.set_listen_port(previous_port) {
+                eprintln!("Failed to revert listen port {previous_port}: {revert_error}");
+            }
+            if ensure_local_server(state.inner(), &mut pairing_state).is_ok() {
+                clear_local_server_error(&mut pairing_state);
+            } else {
+                pairing_state.tunnel_error = Some(error.message.clone());
+            }
             Err(error)
         }
     }
@@ -503,17 +526,39 @@ pub fn set_roi_quic_port(
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    let previous_port = pairing_state.roi_quic_port();
+    if port == previous_port {
+        return Ok(build_pairing_status(&pairing_state));
+    }
     pairing_state
         .identity
         .set_roi_quic_port(port)
         .map_err(|_| PairingError::new("identity_error", "Failed to update ROI QUIC port."))?;
     match ensure_local_server(state.inner(), &mut pairing_state) {
         Ok(_) => {
+            if let Some(handle) = pairing_state.local_server.as_ref() {
+                if handle.quic_port().unwrap_or(0) != port {
+                    if let Err(error) = pairing_state.identity.set_roi_quic_port(previous_port) {
+                        eprintln!("Failed to revert ROI QUIC port {previous_port}: {error}");
+                    }
+                    return Err(PairingError::new(
+                        "roi_quic_port_busy",
+                        "ROI QUIC port change deferred while active sessions are connected. Disconnect active sessions and retry.",
+                    ));
+                }
+            }
             clear_local_server_error(&mut pairing_state);
             Ok(build_pairing_status(&pairing_state))
         }
         Err(error) => {
-            pairing_state.tunnel_error = Some(error.message.clone());
+            if let Err(revert_error) = pairing_state.identity.set_roi_quic_port(previous_port) {
+                eprintln!("Failed to revert ROI QUIC port {previous_port}: {revert_error}");
+            }
+            if ensure_local_server(state.inner(), &mut pairing_state).is_ok() {
+                clear_local_server_error(&mut pairing_state);
+            } else {
+                pairing_state.tunnel_error = Some(error.message.clone());
+            }
             Err(error)
         }
     }
@@ -1087,12 +1132,6 @@ fn ensure_local_server(
     match start_local_tunnel_server(state.clone(), desired_port, roi_port) {
         Ok(handle) => {
             let port = handle.port;
-            let quic_port = handle.quic_port().unwrap_or(0);
-            if quic_port > 0 && quic_port != pairing_state.roi_quic_port() {
-                if let Err(error) = pairing_state.identity.set_roi_quic_port(quic_port) {
-                    eprintln!("Failed to persist ROI QUIC port {quic_port}: {error}");
-                }
-            }
             pairing_state.local_port = Some(port);
             pairing_state.local_server = Some(handle);
             if is_local_server_healthy(port) {
@@ -1107,10 +1146,17 @@ fn ensure_local_server(
         }
         Err(error) => {
             pairing_state.local_port = None;
+            let message = error.to_string();
+            if message.contains("ROI QUIC port") {
+                return Err(PairingError {
+                    code: "roi_quic_port_unavailable".to_string(),
+                    message,
+                });
+            }
             Err(PairingError {
                 code: "local_server_unavailable".to_string(),
                 message: format!(
-                    "Local server unavailable. Failed to bind port {desired_port}: {error}"
+                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
                 ),
             })
         }

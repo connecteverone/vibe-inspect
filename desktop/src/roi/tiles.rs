@@ -110,21 +110,25 @@ pub fn build_tiles(
             if tile_w == 0 || tile_h == 0 {
                 break;
             }
-            let logical_left = ((x as f64) / scale_x).floor();
-            let logical_top = ((y as f64) / scale_y).floor();
-            let logical_right = (((x + tile_w) as f64) / scale_x).ceil();
-            let logical_bottom = (((y + tile_h) as f64) / scale_y).ceil();
-            let logical_left = logical_left.clamp(0.0, info.framebuffer_width as f64);
-            let logical_top = logical_top.clamp(0.0, info.framebuffer_height as f64);
-            let logical_right = logical_right.clamp(0.0, info.framebuffer_width as f64);
-            let logical_bottom = logical_bottom.clamp(0.0, info.framebuffer_height as f64);
-            let logical_w = (logical_right - logical_left).max(1.0);
-            let logical_h = (logical_bottom - logical_top).max(1.0);
+            let (logical_left, logical_right) = map_physical_to_logical_bounds(
+                x,
+                x + tile_w,
+                info.framebuffer_width,
+                frame.width,
+            );
+            let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
+                y,
+                y + tile_h,
+                info.framebuffer_height,
+                frame.height,
+            );
+            let logical_w = logical_right.saturating_sub(logical_left).max(1);
+            let logical_h = logical_bottom.saturating_sub(logical_top).max(1);
             let tile = RoiTile {
-                logical_x: logical_left.round().clamp(0.0, u16::MAX as f64) as u16,
-                logical_y: logical_top.round().clamp(0.0, u16::MAX as f64) as u16,
-                logical_w: logical_w.round().clamp(1.0, u16::MAX as f64) as u16,
-                logical_h: logical_h.round().clamp(1.0, u16::MAX as f64) as u16,
+                logical_x: logical_left.min(u16::MAX as u32) as u16,
+                logical_y: logical_top.min(u16::MAX as u32) as u16,
+                logical_w: logical_w.min(u16::MAX as u32) as u16,
+                logical_h: logical_h.min(u16::MAX as u32) as u16,
                 pixel_w: tile_w as u16,
                 pixel_h: tile_h as u16,
                 pixels: extract_tile(frame, x, y, tile_w, tile_h),
@@ -142,6 +146,31 @@ pub fn build_tiles(
         y += tile_h;
     }
     tiles
+}
+
+fn map_physical_to_logical_bounds(
+    start: usize,
+    end: usize,
+    logical: u32,
+    physical: usize,
+) -> (u32, u32) {
+    if logical == 0 || physical == 0 || end <= start {
+        return (0, 0);
+    }
+    let logical = logical as u64;
+    let physical = physical as u64;
+    let start = start as u64;
+    let end = end as u64;
+    let left = div_ceil(start.saturating_mul(logical), physical).min(logical);
+    let right = div_ceil(end.saturating_mul(logical), physical).min(logical);
+    (left as u32, right as u32)
+}
+
+fn div_ceil(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    (numerator + denominator - 1) / denominator
 }
 
 fn extract_tile(frame: &RoiFrame, x: usize, y: usize, width: usize, height: usize) -> Vec<u8> {
@@ -164,4 +193,56 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_physical_to_logical_bounds;
+
+    fn brute_bounds(
+        start: usize,
+        end: usize,
+        logical: u32,
+        physical: usize,
+    ) -> Option<(u32, u32)> {
+        if logical == 0 || physical == 0 || end <= start {
+            return None;
+        }
+        let mut min: Option<u32> = None;
+        let mut max: u32 = 0;
+        for l in 0..logical {
+            let phys = (l as usize * physical) / logical as usize;
+            if phys >= start && phys < end {
+                min = Some(min.map_or(l, |v| v.min(l)));
+                if l > max {
+                    max = l;
+                }
+            }
+        }
+        min.map(|min| (min, max + 1))
+    }
+
+    #[test]
+    fn map_physical_to_logical_matches_vnc_sampling() {
+        let cases = [
+            (1920usize, 1080u32),
+            (1440usize, 927u32),
+            (2560usize, 1440u32),
+            (1280usize, 720u32),
+        ];
+        for (physical, logical) in cases {
+            let mut x0 = 0usize;
+            while x0 < physical {
+                let x1 = (x0 + 64).min(physical);
+                let expected = brute_bounds(x0, x1, logical, physical)
+                    .expect("expected logical coverage");
+                let actual = map_physical_to_logical_bounds(x0, x1, logical, physical);
+                assert_eq!(
+                    expected, actual,
+                    "physical [{x0},{x1}) logical {logical} physical {physical}"
+                );
+                x0 += 37;
+            }
+        }
+    }
 }

@@ -1237,6 +1237,7 @@ class _PairingScreenState extends State<PairingScreen> {
         tunnelUrl: payload.tunnelUrl,
         tunnelError: payload.tunnelError,
         frpUrl: payload.frpUrl ?? existing?.frpUrl,
+        roiQuicPort: payload.roiQuicPort ?? existing?.roiQuicPort,
         wifiSsid: payload.wifiSsid ?? existing?.wifiSsid,
         localIps: payload.localIps.isNotEmpty
             ? payload.localIps
@@ -1326,6 +1327,7 @@ class _PairingScreenState extends State<PairingScreen> {
         tunnelUrl: existing?.tunnelUrl,
         tunnelError: existing?.tunnelError,
         frpUrl: existing?.frpUrl,
+        roiQuicPort: existing?.roiQuicPort,
         wifiSsid: existing?.wifiSsid,
         localIps: existing?.localIps ?? const [],
         localUrls: existing?.localUrls ?? const [],
@@ -1954,12 +1956,16 @@ class _PairingScreenState extends State<PairingScreen> {
           identity['frp_url']?.toString() ?? identity['frpUrl']?.toString();
       final tunnelUrl =
           identity['tunnel_url']?.toString() ?? identity['tunnelUrl']?.toString();
+      final roiQuicPort = _parsePort(
+        identity['roi_quic_port'] ?? identity['roiQuicPort'],
+      );
       return agent.copyWith(
         deviceId: deviceId ?? agent.deviceId,
         wifiSsid: wifiSsid ?? agent.wifiSsid,
         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
         frpUrl: frpUrl ?? agent.frpUrl,
+        roiQuicPort: roiQuicPort ?? agent.roiQuicPort,
         tunnelUrl: tunnelUrl ?? agent.tunnelUrl,
         status: 'connected',
         lastSeenAt: DateTime.now(),
@@ -10012,6 +10018,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   RoiRenderer? _roiRenderer;
   Timer? _roiRequestTimer;
   Timer? _roiReconnectTimer;
+  Timer? _roiResyncTimer;
+  double _devicePixelRatio = 1.0;
   DateTime? _roiLastTileAt;
   bool _roiConnecting = false;
   bool _roiConnected = false;
@@ -10192,6 +10200,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _roiRequestTimer = null;
     _roiReconnectTimer?.cancel();
     _roiReconnectTimer = null;
+    _roiResyncTimer?.cancel();
+    _roiResyncTimer = null;
     _roiSession = null;
     _roiLastTileAt = null;
     _roiConnected = false;
@@ -10332,6 +10342,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       }
       viewSize = fallback;
     }
+    final center = _clampedCameraCenter(viewSize);
     final scale = _baseScale(viewSize) * _zoom;
     if (scale <= 0) {
       return;
@@ -10343,8 +10354,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             : viewportHeight) *
         0.6;
     unawaited(_roiClient.requestRoi(
-      centerX: _cameraCenter.dx,
-      centerY: _cameraCenter.dy,
+      centerX: center.dx,
+      centerY: center.dy,
       zoom: _zoom,
       viewportWidth: viewportWidth,
       viewportHeight: viewportHeight,
@@ -10421,6 +10432,61 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       },
       rowBytes: payload.pixelWidth * 4,
     );
+  }
+
+  void _maybeResyncRoiForFrame(Size newSize) {
+    final roiSession = _roiSession;
+    if (roiSession == null || _roiConnecting) {
+      return;
+    }
+    final nextWidth = newSize.width.round();
+    final nextHeight = newSize.height.round();
+    if (roiSession.framebufferWidth == nextWidth &&
+        roiSession.framebufferHeight == nextHeight) {
+      return;
+    }
+    final sessionInfo = _lastVncSessionInfo;
+    if (sessionInfo == null) {
+      return;
+    }
+    if (_roiResyncTimer != null) {
+      return;
+    }
+    _roiResyncTimer = Timer(const Duration(milliseconds: 320), () {
+      _roiResyncTimer = null;
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      unawaited(_resyncRoiSession(sessionInfo, nextWidth, nextHeight));
+    });
+  }
+
+  Future<void> _resyncRoiSession(
+    VncSessionInfo sessionInfo,
+    int framebufferWidth,
+    int framebufferHeight,
+  ) async {
+    if (_roiConnecting || _roiClient is RoiNoopClient) {
+      return;
+    }
+    final updated = VncSessionInfo(
+      sessionId: sessionInfo.sessionId,
+      token: sessionInfo.token,
+      wsPath: sessionInfo.wsPath,
+      width: framebufferWidth,
+      height: framebufferHeight,
+      displayIndex: sessionInfo.displayIndex,
+      inputWidth: sessionInfo.inputWidth,
+      inputHeight: sessionInfo.inputHeight,
+      inputOriginX: sessionInfo.inputOriginX,
+      inputOriginY: sessionInfo.inputOriginY,
+      inputScaleX: sessionInfo.inputScaleX,
+      inputScaleY: sessionInfo.inputScaleY,
+      screenWidth: sessionInfo.screenWidth,
+      screenHeight: sessionInfo.screenHeight,
+    );
+    await _stopRoiSession();
+    await _startRoiSession(updated);
   }
 
   void _markInputActivity() {
@@ -10949,6 +11015,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           // Sync cursor position to desktop when frame size changes.
           // This ensures coordinates stay aligned after dynamic resizing.
           _sendPointerEvent();
+          _maybeResyncRoiForFrame(newSize);
         }
         _isDecoding = false;
         final pending = _pendingFrame;
@@ -11545,7 +11612,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final center = Offset(viewSize.width / 2, viewSize.height / 2);
     final scale = _baseScale(viewSize) * _zoom;
     final camera = _clampedCameraCenter(viewSize);
-    return center - camera * scale;
+    var translation = center - camera * scale;
+    if (_zoom > 1.01 && _devicePixelRatio > 0) {
+      final snappedX = (translation.dx * _devicePixelRatio).round() / _devicePixelRatio;
+      final snappedY = (translation.dy * _devicePixelRatio).round() / _devicePixelRatio;
+      translation = Offset(snappedX, snappedY);
+    }
+    return translation;
   }
 
   Offset _pointerToScreen(Size viewSize) {
@@ -12591,6 +12664,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }) {
     final canvas = LayoutBuilder(
       builder: (context, constraints) {
+        _devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
         final viewSize = Size(
           constraints.maxWidth,
           constraints.maxHeight,
@@ -16474,6 +16548,17 @@ bool _parseBool(dynamic raw) {
   return false;
 }
 
+int? _parsePort(dynamic raw) {
+  if (raw == null) {
+    return null;
+  }
+  final port = int.tryParse(raw.toString());
+  if (port == null || port < 1 || port > 65535) {
+    return null;
+  }
+  return port;
+}
+
 List<String> _parseLocalUrls(dynamic raw) {
   if (raw == null) {
     return [];
@@ -16572,6 +16657,7 @@ class PairingPayload {
     this.localIps = const [],
     this.tunnelUrl,
     this.frpUrl,
+    this.roiQuicPort,
     this.tunnelError,
     this.localUrls = const [],
     this.requiresApproval = false,
@@ -16585,6 +16671,7 @@ class PairingPayload {
   final List<String> localIps;
   final String? tunnelUrl;
   final String? frpUrl;
+  final int? roiQuicPort;
   final String? tunnelError;
   final List<String> localUrls;
   final bool requiresApproval;
@@ -16655,6 +16742,9 @@ class PairingPayload {
     final tunnelUrl =
         data['tunnel_url']?.toString() ?? data['tunnelUrl']?.toString();
     final frpUrl = data['frp_url']?.toString() ?? data['frpUrl']?.toString();
+    final roiQuicPort = _parsePort(
+      data['roi_quic_port'] ?? data['roiQuicPort'],
+    );
     final tunnelError =
         data['tunnel_error']?.toString() ?? data['tunnelError']?.toString();
     final localUrls = _parseLocalUrls(
@@ -16680,6 +16770,7 @@ class PairingPayload {
       localIps: localIps,
       tunnelUrl: tunnelUrl,
       frpUrl: frpUrl,
+      roiQuicPort: roiQuicPort,
       tunnelError: tunnelError,
       localUrls: localUrls,
       requiresApproval: requiresApproval,

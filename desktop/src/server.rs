@@ -8,7 +8,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
-use std::env;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -96,37 +95,30 @@ pub fn start_local_server(
         state
             .lock()
             .ok()
-            .map(|guard| resolve_roi_quic_port(&guard))
+            .map(|guard| guard.roi_quic_port())
             .unwrap_or(0)
     });
+    if roi_port == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "ROI QUIC port must be between 1 and 65535.",
+        ));
+    }
     let roi_manager = Arc::new(Mutex::new(RoiManager::new(roi_port)));
-    let mut quic_handle = match start_quic_server(QuicServerConfig {
+    let quic_handle = match start_quic_server(QuicServerConfig {
         port: roi_port,
         roi: Some(roi_manager.clone()),
     }) {
-        Ok(handle) => Some(handle),
+        Ok(handle) => handle,
         Err(error) => {
-            eprintln!(
-                "ROI QUIC server failed to bind port {roi_port}: {error}. Retrying with ephemeral port."
-            );
-            None
+            return Err(std::io::Error::new(
+                error.kind(),
+                format!("ROI QUIC port {roi_port} unavailable: {error}"),
+            ));
         }
     };
-    if quic_handle.is_none() {
-        quic_handle = match start_quic_server(QuicServerConfig {
-            port: 0,
-            roi: Some(roi_manager.clone()),
-        }) {
-            Ok(handle) => Some(handle),
-            Err(error) => {
-                eprintln!("ROI QUIC server failed to start: {error}");
-                None
-            }
-        };
-    }
     if let Ok(mut guard) = roi_manager.lock() {
-        let quic_port = quic_handle.as_ref().map(|handle| handle.port).unwrap_or(0);
-        guard.set_quic_port(quic_port);
+        guard.set_quic_port(quic_handle.port);
     }
     let server_state = LocalServerState {
         pairing: state,
@@ -166,16 +158,8 @@ pub fn start_local_server(
     Ok(LocalServerHandle {
         port,
         shutdown: Some(shutdown_tx),
-        quic: quic_handle,
+        quic: Some(quic_handle),
     })
-}
-
-fn resolve_roi_quic_port(pairing_state: &PairingState) -> u16 {
-    env::var("ROI_QUIC_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or_else(|| pairing_state.roi_quic_port())
 }
 
 async fn handle_command(
@@ -230,6 +214,8 @@ async fn handle_command(
                     "local_ips": local_ips,
                     "local_urls": local_urls,
                     "frp_url": frp_url,
+                    "roi_quic_port": state.roi_quic_port(),
+                    "listen_port": state.listen_port(),
                 })
             }
             Err(_) => json!({

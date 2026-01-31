@@ -28,7 +28,7 @@ class LocalStorageInitializer extends StorageInitializer {
   const LocalStorageInitializer();
 
   static const _databaseName = 'vibe_inspect.db';
-  static const _schemaVersion = 5;
+  static const _schemaVersion = 6;
   static const _storageKeyId = 'vibe_storage_key';
 
   @override
@@ -74,6 +74,11 @@ class LocalStorageInitializer extends StorageInitializer {
           );
           await db.execute(
             'ALTER TABLE connections ADD COLUMN frp_url TEXT',
+          );
+        }
+        if (oldVersion < 6) {
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
           );
         }
       },
@@ -136,6 +141,7 @@ class LocalStorageInitializer extends StorageInitializer {
         tunnel_url TEXT,
         tunnel_error TEXT,
         frp_url TEXT,
+        roi_quic_port INTEGER,
         wifi_ssid TEXT,
         local_ips TEXT,
         local_urls TEXT,
@@ -525,6 +531,7 @@ class ConnectionRecord {
     this.tunnelUrl,
     this.tunnelError,
     this.frpUrl,
+    this.roiQuicPort,
     this.wifiSsid,
     this.localIps = const [],
     this.localUrls = const [],
@@ -540,6 +547,7 @@ class ConnectionRecord {
   final String? tunnelUrl;
   final String? tunnelError;
   final String? frpUrl;
+  final int? roiQuicPort;
   final String? wifiSsid;
   final List<String> localIps;
   final List<String> localUrls;
@@ -555,6 +563,7 @@ class ConnectionRecord {
     String? tunnelUrl,
     String? tunnelError,
     String? frpUrl,
+    int? roiQuicPort,
     String? wifiSsid,
     List<String>? localIps,
     List<String>? localUrls,
@@ -570,6 +579,7 @@ class ConnectionRecord {
       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
       tunnelError: tunnelError ?? this.tunnelError,
       frpUrl: frpUrl ?? this.frpUrl,
+      roiQuicPort: roiQuicPort ?? this.roiQuicPort,
       wifiSsid: wifiSsid ?? this.wifiSsid,
       localIps: localIps ?? this.localIps,
       localUrls: localUrls ?? this.localUrls,
@@ -588,6 +598,7 @@ class ConnectionRecord {
       'tunnel_url': tunnelUrl,
       'tunnel_error': tunnelError,
       'frp_url': frpUrl,
+      'roi_quic_port': roiQuicPort,
       'wifi_ssid': wifiSsid,
       'local_ips': _encodeStringList(localIps),
       'local_urls': _encodeStringList(localUrls),
@@ -608,6 +619,7 @@ class ConnectionRecord {
       tunnelUrl: row['tunnel_url']?.toString(),
       tunnelError: row['tunnel_error']?.toString(),
       frpUrl: row['frp_url']?.toString(),
+      roiQuicPort: row['roi_quic_port'] as int?,
       wifiSsid: row['wifi_ssid']?.toString(),
       localIps: _decodeStringList(row['local_ips']),
       localUrls: _decodeStringList(row['local_urls']),
@@ -630,6 +642,7 @@ class ConnectionRecord {
       'tunnelUrl': tunnelUrl,
       'tunnelError': tunnelError,
       'frpUrl': frpUrl,
+      'roiQuicPort': roiQuicPort,
       'wifiSsid': wifiSsid,
       'localIps': localIps,
       'localUrls': localUrls,
@@ -675,6 +688,12 @@ class ConnectionRecord {
     if (frpUrl != null && frpUrl is! String) {
       throw const FormatException('Connection frpUrl must be a string.');
     }
+    final roiQuicPortRaw = json['roiQuicPort'];
+    if (roiQuicPortRaw != null && roiQuicPortRaw is! num) {
+      throw const FormatException('Connection roiQuicPort must be a number.');
+    }
+    final roiQuicPort =
+        roiQuicPortRaw != null ? (roiQuicPortRaw as num).toInt() : null;
     final wifiSsid = json['wifiSsid'];
     if (wifiSsid != null && wifiSsid is! String) {
       throw const FormatException('Connection wifiSsid must be a string.');
@@ -710,6 +729,7 @@ class ConnectionRecord {
       tunnelUrl: tunnelUrl as String?,
       tunnelError: tunnelError as String?,
       frpUrl: frpUrl as String?,
+      roiQuicPort: roiQuicPort,
       wifiSsid: wifiSsid as String?,
       localIps: localIps,
       localUrls: localUrls,
