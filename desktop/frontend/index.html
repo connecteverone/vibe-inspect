@@ -1309,28 +1309,85 @@
         statusEl.classList.toggle("notice", tone === "notice");
       }
 
-      function extractErrorMessage(error) {
-        if (!error) return null;
-        if (typeof error === "string") return error;
-        if (error.message) return error.message;
-        if (error.error) {
-          if (typeof error.error === "string") return error.error;
-          if (error.error.message) return error.error.message;
+      const FRIENDLY_ERROR_MESSAGES = {
+        invalid_token: "Invalid token. Check the token and try again.",
+        token_expired: "Token expired. Generate a new token.",
+        token_mismatch: "Pairing token mismatch. Generate a new token and retry.",
+        secret_mismatch: "Pairing token mismatch. Generate a new token and retry.",
+        missing_token: "Pairing token is missing. Generate a new token.",
+        approval_pending: "Waiting for desktop approval.",
+        requires_approval: "Waiting for desktop approval.",
+        approval_timeout: "Approval timed out. Generate a new token and retry.",
+        invalid_port: "Port must be between 1 and 65535.",
+        listen_port_busy: "Listen port is already in use. Choose another port.",
+        roi_quic_port_busy: "ROI QUIC port is already in use. Choose another port.",
+        roi_quic_port_unavailable: "ROI QUIC port is unavailable. Choose another port.",
+        local_server_unavailable: "Desktop agent is offline. Start it and try again.",
+        connection_failed: "Unable to reach the desktop agent. Check your connection.",
+        http_error: "Desktop agent returned an error response.",
+        invalid_payload: "Request payload invalid. Try again.",
+        invalid_response: "Desktop agent returned an invalid response.",
+        api_request_failed: "API request failed. Check the target endpoint.",
+        session_not_found: "Terminal session not found. Refresh sessions and try again.",
+        missing_session: "Select a terminal session first.",
+        missing_input: "Enter a command before sending.",
+        missing_size: "Terminal size was missing. Try again.",
+        write_failed: "Failed to send input to the terminal.",
+        resize_failed: "Failed to resize the terminal.",
+        pty_error: "Terminal backend unavailable. Restart the desktop agent.",
+        spawn_error: "Terminal backend unavailable. Restart the desktop agent.",
+        invalid_name: "Device name cannot be empty.",
+        identity_error: "Device update failed. Try again.",
+      };
+
+      function normalizeError(error) {
+        if (!error) return { message: null, code: null, requestId: null, raw: error };
+        if (typeof error === "string") {
+          return { message: error, code: null, requestId: null, raw: error };
         }
-        try {
-          return JSON.stringify(error);
-        } catch (_) {
-          return null;
-        }
+        const nested = error.error || {};
+        const message =
+          error.message || nested.message || (typeof nested === "string" ? nested : null);
+        const code = error.code || nested.code || null;
+        const requestId =
+          error.request_id ||
+          error.requestId ||
+          nested.request_id ||
+          nested.requestId ||
+          null;
+        return { message, code, requestId, raw: error };
       }
 
-      function setStatusFromError(fallback, error) {
-        const detail = extractErrorMessage(error);
-        if (detail) {
-          setStatus(detail, "error");
-        } else {
-          setStatus(fallback, "error");
-        }
+      function resolveFriendlyMessage(info, fallback) {
+        const code = info.code ? info.code.toString().trim().toLowerCase() : "";
+        const friendly = code ? FRIENDLY_ERROR_MESSAGES[code] : null;
+        const message = friendly || info.message || fallback;
+        return { message, code: code || null };
+      }
+
+      function formatStatusText(message, code) {
+        if (!message) return code ? `Error (code: ${code})` : "Error";
+        if (code) return `${message} (code: ${code})`;
+        return message;
+      }
+
+      function logErrorDetails(context, info, extra = {}) {
+        const payload = {
+          context,
+          code: info.code || null,
+          message: info.message || null,
+          requestId: info.requestId || null,
+          ...extra,
+        };
+        console.error("[agent-error]", payload, info.raw);
+      }
+
+      function setStatusFromError(fallback, error, context = "status", extra = {}) {
+        const info = normalizeError(error);
+        const resolved = resolveFriendlyMessage(info, fallback);
+        setStatus(formatStatusText(resolved.message, resolved.code), "error");
+        logErrorDetails(context, info, extra);
+        return resolved;
       }
 
       function setControlsEnabled(enabled) {
@@ -1702,8 +1759,9 @@
           }
           if (message) setStatus(message);
         } catch (error) {
-          setStatus("Action failed.", "error");
-          console.error(error);
+          setStatusFromError("Action failed.", error, "pairing_action", {
+            command: commandName,
+          });
         }
       }
 
@@ -1722,14 +1780,21 @@
         try {
           const response = await invokeFn("handle_agent_command", { request });
           if (response?.status === "error") {
-            const message = response?.error?.message || "Terminal action failed.";
-            setStatus(message, "error");
+            const info = normalizeError(response?.error);
+            const resolved = resolveFriendlyMessage(info, "Terminal action failed.");
+            setStatus(formatStatusText(resolved.message, resolved.code), "error");
+            logErrorDetails("terminal_action", info, {
+              requestId: request.request_id,
+              command: "terminal",
+            });
             return null;
           }
           return response?.payload || null;
         } catch (error) {
-          setStatus("Terminal action failed.", "error");
-          console.error(error);
+          setStatusFromError("Terminal action failed.", error, "terminal_action", {
+            requestId: request.request_id,
+            command: "terminal",
+          });
           return null;
         }
       }

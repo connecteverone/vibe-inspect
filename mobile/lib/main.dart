@@ -561,14 +561,34 @@ class _PairingScreenState extends State<PairingScreen> {
         _pairingStatus = 'Connected using fixed token.';
         _pairingStatusIsError = false;
       });
-    } catch (error) {
+    } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Failed to connect with fixed token.',
+      );
+      _logErrorDetails('manual_login', presentation);
       if (!mounted) {
         return;
       }
       setState(() {
         _pairingStatus = 'Failed to connect with fixed token.';
         _pairingStatusIsError = true;
-        _pairingDetailStatus = error.toString();
+        _pairingDetailStatus = _formatErrorMessage(presentation);
+        _pairingDetailStatusIsError = true;
+      });
+    } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'Failed to connect with fixed token.',
+      );
+      _logErrorDetails('manual_login', presentation);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pairingStatus = 'Failed to connect with fixed token.';
+        _pairingStatusIsError = true;
+        _pairingDetailStatus = _formatErrorMessage(presentation);
         _pairingDetailStatusIsError = true;
       });
     } finally {
@@ -999,30 +1019,7 @@ class _PairingScreenState extends State<PairingScreen> {
     return 'Failed to reach $url: $detail';
   }
 
-  String _describeNetworkError(Object error) {
-    final raw = error.toString();
-    final lower = raw.toLowerCase();
-    if (lower.contains('no route to host') || lower.contains('errno = 65')) {
-      return 'No route to host (errno 65). iOS may be blocking local network access for this app. Check Settings > Local Network and disable VPN/Private Relay.';
-    }
-    if (lower.contains('connection refused') || lower.contains('errno = 61')) {
-      return 'Connection refused (errno 61). The host is reachable but the port was rejected by the OS/firewall.';
-    }
-    if (lower.contains('network is unreachable') || lower.contains('errno = 51')) {
-      return 'Network is unreachable (errno 51). The app has no route to the LAN. Check Wi-Fi and local network permission.';
-    }
-    final socketPrefix = 'SocketException: ';
-    final clientPrefix = 'ClientException: ';
-    if (raw.startsWith(socketPrefix)) {
-      return raw.substring(socketPrefix.length).trim();
-    }
-    if (raw.startsWith(clientPrefix)) {
-      return raw.substring(clientPrefix.length).trim();
-    }
-    return raw.trim();
-  }
-
-  String? _extractPairingErrorMessage(String body) {
+  _PairingErrorInfo? _extractPairingErrorInfo(String body) {
     if (body.trim().isEmpty) {
       return null;
     }
@@ -1032,11 +1029,12 @@ class _PairingScreenState extends State<PairingScreen> {
         final error = decoded['error'];
         if (error is Map) {
           final rawMessage = error['message'];
-          if (rawMessage != null) {
-            final message = rawMessage.toString().trim();
-            if (message.isNotEmpty) {
-              return message;
-            }
+          final rawCode = error['code'];
+          final message = rawMessage?.toString().trim();
+          final code = rawCode?.toString().trim();
+          if ((message != null && message.isNotEmpty) ||
+              (code != null && code.isNotEmpty)) {
+            return _PairingErrorInfo(message: message, code: code);
           }
         }
       }
@@ -1058,10 +1056,17 @@ class _PairingScreenState extends State<PairingScreen> {
     Uri uri;
     try {
       uri = _pairingUri(baseUrl);
-    } catch (_) {
+    } catch (error) {
+      final presentation = _buildErrorPresentation(
+        code: 'invalid_url',
+        message: 'Invalid agent URL: $baseUrl',
+        endpoint: baseUrl,
+        details: error.toString(),
+      );
+      _logErrorDetails('pairing_url', presentation);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: 'Invalid agent URL: $baseUrl',
+        message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
       );
     }
@@ -1084,19 +1089,40 @@ class _PairingScreenState extends State<PairingScreen> {
           )
           .timeout(const Duration(seconds: 4));
     } catch (error) {
+      final detail = _describeNetworkError(error);
+      final presentation = _buildErrorPresentation(
+        code: 'connection_failed',
+        fallbackMessage: _describeReachFailure(baseUrl, error),
+        endpoint: baseUrl,
+        details: error.toString(),
+      );
+      _logErrorDetails('pairing_reach', presentation);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: _describeReachFailure(baseUrl, error),
+        message: _formatErrorMessage(presentation),
+        detail: detail,
         agentUrl: baseUrl,
       );
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final errorMessage = _extractPairingErrorMessage(response.body);
+      final errorInfo = _extractPairingErrorInfo(response.body);
+      final presentation = _buildErrorPresentation(
+        code: errorInfo?.code,
+        message: errorInfo?.message,
+        fallbackMessage: 'Desktop agent returned HTTP ${response.statusCode}.',
+        endpoint: baseUrl,
+        details: errorInfo?.message ?? response.body,
+      );
+      _logErrorDetails('pairing_http', presentation);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: errorMessage ??
-            'Desktop agent returned HTTP ${response.statusCode}.',
+        message: _formatErrorMessage(presentation),
+        detail: errorInfo?.message != null &&
+                errorInfo!.message!.trim().isNotEmpty &&
+                errorInfo.message != presentation.message
+            ? errorInfo.message
+            : null,
         agentUrl: baseUrl,
       );
     }
@@ -1105,17 +1131,31 @@ class _PairingScreenState extends State<PairingScreen> {
     try {
       decoded = jsonDecode(response.body);
     } catch (_) {
+      final presentation = _buildErrorPresentation(
+        code: 'invalid_json',
+        fallbackMessage: 'Desktop agent response was not JSON.',
+        endpoint: baseUrl,
+        details: response.body,
+      );
+      _logErrorDetails('pairing_json', presentation);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: 'Desktop agent response was not JSON.',
+        message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
       );
     }
 
     if (decoded is! Map<String, dynamic>) {
+      final presentation = _buildErrorPresentation(
+        code: 'invalid_response',
+        fallbackMessage: 'Desktop agent response was malformed.',
+        endpoint: baseUrl,
+        details: decoded.toString(),
+      );
+      _logErrorDetails('pairing_response', presentation);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: 'Desktop agent response was malformed.',
+        message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
       );
     }
@@ -1155,19 +1195,32 @@ class _PairingScreenState extends State<PairingScreen> {
     }
     final error = decoded['error'];
     if (error is Map) {
-      final message = error['message']?.toString();
-      if (message != null && message.isNotEmpty) {
-        return _PairingAttemptResult(
-          status: _PairingAttemptStatus.failed,
-          message: message,
-          agentUrl: baseUrl,
-        );
-      }
+      final presentation = _buildErrorPresentation(
+        code: error['code']?.toString(),
+        message: error['message']?.toString(),
+        fallbackMessage: 'Desktop agent returned an error.',
+        endpoint: baseUrl,
+        details: error,
+      );
+      _logErrorDetails('pairing_error', presentation);
+      return _PairingAttemptResult(
+        status: _PairingAttemptStatus.failed,
+        message: _formatErrorMessage(presentation),
+        detail: error['message']?.toString(),
+        agentUrl: baseUrl,
+      );
     }
 
+    final presentation = _buildErrorPresentation(
+      code: 'invalid_response',
+      fallbackMessage: 'Desktop agent returned an unexpected response.',
+      endpoint: baseUrl,
+      details: decoded,
+    );
+    _logErrorDetails('pairing_unexpected', presentation);
     return _PairingAttemptResult(
       status: _PairingAttemptStatus.failed,
-      message: 'Desktop agent returned an unexpected response.',
+      message: _formatErrorMessage(presentation),
       agentUrl: baseUrl,
     );
   }
@@ -5318,25 +5371,36 @@ class _ApiExplorerScreenState extends State<ApiExplorerScreen> {
       if (!mounted) {
         return;
       }
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'API request failed.',
+      );
+      _logErrorDetails('api_request', presentation);
+      final message = _formatErrorMessage(presentation);
       final insight = _buildApiInsight(
         response: null,
-        errorMessage: error.message,
+        errorMessage: message,
         agentBaseUrl: widget.agentBaseUrl,
       );
       setState(() {
-        _requestError = error.message;
+        _requestError = message;
         _aiInsight = insight;
       });
       await _persistApiFailure(
         request: requestDetails,
-        errorMessage: error.message,
+        errorMessage: message,
         insight: insight,
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      final message = 'Request failed: ${error.toString()}';
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'Request failed. Please try again.',
+      );
+      _logErrorDetails('api_request', presentation);
+      final message = _formatErrorMessage(presentation);
       final insight = _buildApiInsight(
         response: null,
         errorMessage: message,
@@ -6212,7 +6276,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final sessions = await client.fetchTerminalSessions();
       return _RemoteTerminalFetchResult.success(sessions);
     } on AgentCommandFailure catch (error) {
-      return _RemoteTerminalFetchResult.failure(error.message);
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Unable to load terminal sessions.',
+      );
+      _logErrorDetails('terminal_sessions', presentation);
+      return _RemoteTerminalFetchResult.failure(
+        _formatErrorMessage(presentation),
+      );
     } catch (_) {
       return _RemoteTerminalFetchResult.failure(
         'Unable to load terminal sessions.',
@@ -7796,9 +7867,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
       return true;
     } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Unable to load terminal session.',
+      );
+      _logErrorDetails('terminal_status', presentation);
       await _markSessionDisconnected(
         view.session.id,
-        error.message,
+        _formatErrorMessage(presentation),
         event: view.lastEvent,
         command: view.lastCommand,
       );
@@ -7835,7 +7911,15 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           return _attachRemoteSession(view);
         }
       }
-      await _markSessionDisconnected(session.id, error.message);
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Unable to start terminal session.',
+      );
+      _logErrorDetails('terminal_start', presentation);
+      await _markSessionDisconnected(
+        session.id,
+        _formatErrorMessage(presentation),
+      );
       return false;
     }
   }
@@ -7907,9 +7991,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         command: active.lastCommand,
       );
     } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Unable to refresh terminal output.',
+      );
+      _logErrorDetails('terminal_poll', presentation);
       await _markSessionDisconnected(
         active.session.id,
-        error.message,
+        _formatErrorMessage(presentation),
         event: active.lastEvent,
         command: active.lastCommand,
       );
@@ -8245,11 +8334,21 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
       _setTerminalStatusMessage('Session renamed.');
     } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Failed to rename session.',
+      );
+      _logErrorDetails('terminal_rename', presentation);
       await revert();
-      _showSessionLabelError(error.message);
+      _showSessionLabelError(_formatErrorMessage(presentation));
     } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'Failed to rename session.',
+      );
+      _logErrorDetails('terminal_rename', presentation);
       await revert();
-      _showSessionLabelError('Failed to rename session.');
+      _showSessionLabelError(_formatErrorMessage(presentation));
     }
   }
 
@@ -8471,16 +8570,26 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         unawaited(_pollActiveSession());
       }
     } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Terminal command failed.',
+      );
+      _logErrorDetails('terminal_input', presentation);
       await _markSessionDisconnected(
         sessionId,
-        error.message,
+        _formatErrorMessage(presentation),
         event: activeView.lastEvent,
         command: activeView.lastCommand,
       );
     } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'Terminal command failed.',
+      );
+      _logErrorDetails('terminal_input', presentation);
       await _markSessionDisconnected(
         sessionId,
-        'Terminal command failed: ${error.toString()}',
+        _formatErrorMessage(presentation),
         event: activeView.lastEvent,
         command: activeView.lastCommand,
       );
@@ -10831,10 +10940,28 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         setState(() {});
       }
       _sendRoiRequest();
-    } catch (error) {
+    } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'ROI stream unavailable.',
+      );
+      _logErrorDetails('roi_session', presentation);
       _roiConnecting = false;
       _roiConnected = false;
-      _roiLastError = error.toString();
+      _roiLastError = _formatErrorMessage(presentation);
+      if (mounted && !_isDisposed) {
+        setState(() {});
+      }
+      _scheduleRoiReconnect(sessionInfo);
+    } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'ROI stream unavailable.',
+      );
+      _logErrorDetails('roi_session', presentation);
+      _roiConnecting = false;
+      _roiConnected = false;
+      _roiLastError = _formatErrorMessage(presentation);
       if (mounted && !_isDisposed) {
         setState(() {});
       }
@@ -11806,20 +11933,32 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _armNoFrameTimeout();
       }
     } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'VNC session failed to connect.',
+      );
+      _logErrorDetails('vnc_session', presentation);
+      final message = _formatErrorMessage(presentation);
       if (!preserveExisting) {
-        await _setStreamFailure(error.message);
+        await _setStreamFailure(message);
       } else if (!silentFailure && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.message)),
+          SnackBar(content: Text(message)),
         );
       }
     } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'VNC stream failed.',
+      );
+      _logErrorDetails('vnc_session', presentation);
+      final message = _formatErrorMessage(presentation);
       if (!preserveExisting) {
-        await _setStreamFailure('VNC stream failed: ${error.toString()}');
+        await _setStreamFailure(message);
       } else if (!silentFailure && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('VNC resize failed: ${error.toString()}'),
+            content: Text(message),
           ),
         );
       }
@@ -16432,14 +16571,214 @@ String _childJsonPath(String parent, String child) {
   return '$parent/$child';
 }
 
+class ErrorPresentation {
+  const ErrorPresentation({
+    required this.message,
+    required this.code,
+    this.endpoint,
+    this.requestId,
+    this.details,
+  });
+
+  final String message;
+  final String code;
+  final String? endpoint;
+  final String? requestId;
+  final Object? details;
+}
+
 class AgentCommandFailure implements Exception {
-  const AgentCommandFailure(this.message, {this.code});
+  const AgentCommandFailure(
+    this.message, {
+    this.code,
+    this.endpoint,
+    this.requestId,
+    this.details,
+  });
 
   final String message;
   final String? code;
+  final String? endpoint;
+  final String? requestId;
+  final Object? details;
 
   @override
   String toString() => message;
+}
+
+String _describeNetworkError(Object error) {
+  final raw = error.toString();
+  final lower = raw.toLowerCase();
+  if (lower.contains('no route to host') || lower.contains('errno = 65')) {
+    return 'No route to host (errno 65). iOS may be blocking local network access for this app. Check Settings > Local Network and disable VPN/Private Relay.';
+  }
+  if (lower.contains('connection refused') || lower.contains('errno = 61')) {
+    return 'Connection refused (errno 61). The host is reachable but the port was rejected by the OS/firewall.';
+  }
+  if (lower.contains('network is unreachable') || lower.contains('errno = 51')) {
+    return 'Network is unreachable (errno 51). The app has no route to the LAN. Check Wi-Fi and local network permission.';
+  }
+  if (lower.contains('timed out') || lower.contains('timeout')) {
+    return 'Network timed out. Check the desktop agent connection and try again.';
+  }
+  if (lower.contains('failed host lookup') ||
+      lower.contains('name or service not known')) {
+    return 'Host lookup failed. Check the agent address and DNS.';
+  }
+  final socketPrefix = 'SocketException: ';
+  final clientPrefix = 'ClientException: ';
+  if (raw.startsWith(socketPrefix)) {
+    return raw.substring(socketPrefix.length).trim();
+  }
+  if (raw.startsWith(clientPrefix)) {
+    return raw.substring(clientPrefix.length).trim();
+  }
+  return 'Unexpected network error. Please try again.';
+}
+
+ErrorPresentation _buildErrorPresentation({
+  String? code,
+  String? message,
+  String? fallbackMessage,
+  String? endpoint,
+  String? requestId,
+  Object? details,
+}) {
+  final normalizedCode =
+      code != null && code.trim().isNotEmpty ? code.trim() : 'unknown_error';
+  final resolvedFallback = (message ?? '').trim().isNotEmpty
+      ? message!.trim()
+      : (fallbackMessage ?? 'Something went wrong.');
+  final friendlyMessage = _friendlyMessageForCode(normalizedCode);
+  return ErrorPresentation(
+    message: friendlyMessage ?? resolvedFallback,
+    code: normalizedCode,
+    endpoint: endpoint,
+    requestId: requestId,
+    details: details,
+  );
+}
+
+ErrorPresentation _presentAgentFailure(
+  AgentCommandFailure error, {
+  String? fallbackMessage,
+}) {
+  return _buildErrorPresentation(
+    code: error.code,
+    message: error.message,
+    fallbackMessage: fallbackMessage,
+    endpoint: error.endpoint,
+    requestId: error.requestId,
+    details: error.details,
+  );
+}
+
+ErrorPresentation _presentUnexpectedFailure(
+  Object error, {
+  String? fallbackMessage,
+  String? endpoint,
+  String? requestId,
+}) {
+  return _buildErrorPresentation(
+    code: 'unexpected_error',
+    message: fallbackMessage ?? 'Something went wrong. Please try again.',
+    endpoint: endpoint,
+    requestId: requestId,
+    details: error.toString(),
+  );
+}
+
+String _formatErrorMessage(ErrorPresentation error) {
+  final trimmed = error.message.trim();
+  final message =
+      trimmed.isNotEmpty ? trimmed : 'Something went wrong. Please try again.';
+  if (error.code.isNotEmpty && error.code != 'unknown_error') {
+    return '$message (code: ${error.code})';
+  }
+  return message;
+}
+
+void _logErrorDetails(String context, ErrorPresentation error) {
+  final detailParts = <String>[];
+  if (error.code.isNotEmpty) {
+    detailParts.add('code=${error.code}');
+  }
+  if (error.requestId != null && error.requestId!.trim().isNotEmpty) {
+    detailParts.add('request_id=${error.requestId}');
+  }
+  if (error.endpoint != null && error.endpoint!.trim().isNotEmpty) {
+    detailParts.add('endpoint=${error.endpoint}');
+  }
+  if (error.details != null) {
+    try {
+      detailParts.add('details=${jsonEncode(error.details)}');
+    } catch (_) {
+      detailParts.add('details=${error.details}');
+    }
+  }
+  final detailText = detailParts.isEmpty ? '' : ' (${detailParts.join(' ')})';
+  debugPrint('[error:$context] ${error.message}$detailText');
+}
+
+String? _friendlyMessageForCode(String code) {
+  switch (code.toLowerCase()) {
+    case 'invalid_token':
+      return 'Invalid token. Check the token and try again.';
+    case 'token_expired':
+      return 'Token expired. Generate a new token.';
+    case 'token_mismatch':
+    case 'secret_mismatch':
+      return 'Pairing token mismatch. Generate a new token and try again.';
+    case 'missing_token':
+      return 'Pairing token is missing. Generate a new token.';
+    case 'requires_approval':
+    case 'approval_pending':
+      return 'Waiting for desktop approval.';
+    case 'approval_timeout':
+      return 'Approval timed out. Generate a new token and retry.';
+    case 'invalid_port':
+      return 'Port must be between 1 and 65535.';
+    case 'listen_port_busy':
+      return 'Listen port is already in use. Choose another port.';
+    case 'roi_quic_port_busy':
+    case 'roi_quic_port_unavailable':
+      return 'ROI QUIC port is unavailable. Choose another port.';
+    case 'local_server_unavailable':
+      return 'Desktop agent is offline. Start it and try again.';
+    case 'connection_failed':
+      return 'Unable to reach the desktop agent. Check your connection.';
+    case 'http_error':
+      return 'Desktop agent returned an error response.';
+    case 'invalid_url':
+      return 'Agent URL is invalid. Include http:// or https://.';
+    case 'invalid_json':
+    case 'invalid_response':
+      return 'Desktop agent returned an invalid response.';
+    case 'api_request_failed':
+      return 'API request failed. Check the target endpoint.';
+    case 'session_not_found':
+      return 'Terminal session not found. Refresh sessions and try again.';
+    case 'missing_session':
+      return 'Select a terminal session first.';
+    case 'missing_input':
+      return 'Enter a command before sending.';
+    case 'missing_size':
+      return 'Terminal size was missing. Try again.';
+    case 'write_failed':
+      return 'Failed to send input to the terminal.';
+    case 'resize_failed':
+      return 'Failed to resize the terminal.';
+    case 'pty_error':
+    case 'spawn_error':
+      return 'Terminal backend unavailable. Restart the desktop agent.';
+    case 'state_locked':
+      return 'Desktop agent is busy. Try again.';
+    case 'invalid_name':
+      return 'Device name cannot be empty.';
+    case 'identity_error':
+      return 'Device update failed. Try again.';
+  }
+  return null;
 }
 
 class AgentApiResult {
@@ -16507,7 +16846,10 @@ class VncSessionInfo {
     final screenHeight =
         int.tryParse(payload['screen_height']?.toString() ?? '');
     if (sessionId.isEmpty || token.isEmpty) {
-      throw const AgentCommandFailure('VNC session response missing fields.');
+      throw const AgentCommandFailure(
+        'VNC session response missing fields.',
+        code: 'invalid_response',
+      );
     }
     return VncSessionInfo(
       sessionId: sessionId,
@@ -16600,7 +16942,10 @@ class RemoteTerminalSession {
         ? closedReasonRaw.trim()
         : null;
     if (id.isEmpty) {
-      throw const AgentCommandFailure('Terminal session missing id.');
+      throw const AgentCommandFailure(
+        'Terminal session missing id.',
+        code: 'invalid_response',
+      );
     }
     final rawLabel = payload['label']?.toString() ?? '';
     final resolvedLabel =
@@ -16650,13 +16995,21 @@ class AgentCommandClient {
     );
     final payload = response.payload;
     if (payload == null) {
-      throw const AgentCommandFailure('Agent response missing payload.');
+      throw AgentCommandFailure(
+        'Agent response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
     }
     final requestPayload = payload['request'];
     final responsePayload = payload['response'];
     if (requestPayload is! Map || responsePayload is! Map) {
-      throw const AgentCommandFailure(
+      throw AgentCommandFailure(
         'Agent response missing request or response details.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
       );
     }
     return AgentApiResult(
@@ -16676,7 +17029,12 @@ class AgentCommandClient {
     );
     final payload = response.payload;
     if (payload is! Map<String, dynamic>) {
-      throw const AgentCommandFailure('Agent identity response missing payload.');
+      throw AgentCommandFailure(
+        'Agent identity response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
     }
     return payload;
   }
@@ -16754,7 +17112,12 @@ class AgentCommandClient {
     );
     final responsePayload = response.payload;
     if (responsePayload is! Map<String, dynamic>) {
-      throw const AgentCommandFailure('Agent response missing payload.');
+      throw AgentCommandFailure(
+        'Agent response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
     }
     return responsePayload;
   }
@@ -16791,7 +17154,12 @@ class AgentCommandClient {
     );
     final payloadData = response.payload;
     if (payloadData == null) {
-      throw const AgentCommandFailure('VNC response missing payload.');
+      throw AgentCommandFailure(
+        'VNC response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
     }
     return VncSessionInfo.fromPayload(
       Map<String, dynamic>.from(payloadData),
@@ -16838,7 +17206,12 @@ class AgentCommandClient {
     );
     final payloadData = response.payload;
     if (payloadData == null) {
-      throw const AgentCommandFailure('ROI response missing payload.');
+      throw AgentCommandFailure(
+        'ROI response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
     }
     return RoiSessionInfo.fromPayload(
       Map<String, dynamic>.from(payloadData),
@@ -16872,8 +17245,9 @@ class AgentCommandClient {
     required Map<String, dynamic> payload,
   }) async {
     final uri = _commandUri();
+    final requestId = createStorageId();
     final requestBody = jsonEncode({
-      'request_id': createStorageId(),
+      'request_id': requestId,
       'command': command,
       'payload': payload,
     });
@@ -16900,27 +17274,54 @@ class AgentCommandClient {
         body: requestBody,
       ).timeout(const Duration(seconds: 6));
     } catch (error) {
-      throw AgentCommandFailure('Failed to reach desktop agent.');
+      throw AgentCommandFailure(
+        'Failed to reach desktop agent.',
+        code: 'connection_failed',
+        endpoint: uri.toString(),
+        requestId: requestId,
+        details: error.toString(),
+      );
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AgentCommandFailure(
         'Desktop agent returned HTTP ${response.statusCode}.',
+        code: 'http_error',
+        endpoint: uri.toString(),
+        requestId: requestId,
+        details: {
+          'status': response.statusCode,
+        },
       );
     }
     dynamic decoded;
     try {
       decoded = jsonDecode(response.body);
     } catch (_) {
-      throw const AgentCommandFailure('Agent response was not JSON.');
+      throw AgentCommandFailure(
+        'Agent response was not JSON.',
+        code: 'invalid_json',
+        endpoint: uri.toString(),
+        requestId: requestId,
+        details: response.body,
+      );
     }
     if (decoded is! Map<String, dynamic>) {
-      throw const AgentCommandFailure('Agent response was malformed.');
+      throw AgentCommandFailure(
+        'Agent response was malformed.',
+        code: 'invalid_response',
+        endpoint: uri.toString(),
+        requestId: requestId,
+        details: decoded.toString(),
+      );
     }
     final parsed = _AgentCommandResponse.fromJson(decoded);
     if (!parsed.isOk) {
       throw AgentCommandFailure(
         parsed.error?.message ?? 'Agent command failed.',
-        code: parsed.error?.code,
+        code: parsed.error?.code ?? 'command_failed',
+        endpoint: uri.toString(),
+        requestId: parsed.requestId.isNotEmpty ? parsed.requestId : requestId,
+        details: parsed.error?.details,
       );
     }
     return parsed;
@@ -16931,6 +17332,7 @@ class AgentCommandClient {
     if (base.scheme.isEmpty) {
       throw const AgentCommandFailure(
         'Agent URL must include a scheme (https://).',
+        code: 'invalid_url',
       );
     }
     final basePath =
@@ -16943,11 +17345,13 @@ class AgentCommandClient {
 class _AgentCommandResponse {
   const _AgentCommandResponse({
     required this.status,
+    required this.requestId,
     this.payload,
     this.error,
   });
 
   final String status;
+  final String requestId;
   final Map<String, dynamic>? payload;
   final _AgentCommandError? error;
 
@@ -16956,6 +17360,9 @@ class _AgentCommandResponse {
   factory _AgentCommandResponse.fromJson(Map<String, dynamic> json) {
     return _AgentCommandResponse(
       status: json['status']?.toString() ?? 'error',
+      requestId: json['request_id']?.toString() ??
+          json['requestId']?.toString() ??
+          '',
       payload: json['payload'] is Map
           ? Map<String, dynamic>.from(json['payload'] as Map)
           : null,
@@ -16969,15 +17376,23 @@ class _AgentCommandResponse {
 }
 
 class _AgentCommandError {
-  const _AgentCommandError({required this.code, required this.message});
+  const _AgentCommandError({
+    required this.code,
+    required this.message,
+    this.details,
+  });
 
   final String code;
   final String message;
+  final Map<String, dynamic>? details;
 
   factory _AgentCommandError.fromJson(Map<String, dynamic> json) {
     return _AgentCommandError(
       code: json['code']?.toString() ?? 'unknown',
       message: json['message']?.toString() ?? 'Agent error.',
+      details: json['details'] is Map
+          ? Map<String, dynamic>.from(json['details'] as Map)
+          : null,
     );
   }
 }
@@ -17399,6 +17814,13 @@ class _ManualLoginInput {
 
   final String url;
   final String token;
+}
+
+class _PairingErrorInfo {
+  const _PairingErrorInfo({this.message, this.code});
+
+  final String? message;
+  final String? code;
 }
 
 enum _PairingAttemptStatus { connected, pending, failed }

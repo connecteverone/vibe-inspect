@@ -308,7 +308,7 @@
     {
       "id": "US-009",
       "title": "Enforce fixed ports for local server and ROI QUIC",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As an operator, I want the desktop agent to fail fast on port conflicts instead of switching ports.",
       "acceptanceCriteria": [
@@ -318,13 +318,13 @@
         "Negative case: the agent does not auto-select another port or start silently"
       ],
       "startedAt": "2026-01-31T18:09:41.400978+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T18:09:41.401092+00:00"
+      "completedAt": "2026-01-31T18:29:50.678634+00:00",
+      "updatedAt": "2026-01-31T18:29:50.678550+00:00"
     },
     {
       "id": "US-010",
       "title": "Standardize error handling and diagnostics across clients",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [],
       "description": "As a user and developer, I want errors to be friendly yet actionable with diagnostic details.",
       "acceptanceCriteria": [
@@ -332,7 +332,10 @@
         "Developer details (code, endpoint, request id) are available via UI expansion or logs",
         "Example: invalid token shows a friendly message and error code 'invalid_token'",
         "Negative case: raw stack traces or empty error dialogs are not shown to users"
-      ]
+      ],
+      "startedAt": "2026-01-31T18:29:52.781510+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T18:29:52.781625+00:00"
     }
   ]
 }
