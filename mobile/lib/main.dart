@@ -9,6 +9,9 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
+import 'package:mobile/roi/roi_client.dart';
+import 'package:mobile/roi/roi_models.dart';
+import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -728,6 +731,18 @@ class _PairingScreenState extends State<PairingScreen> {
     {String? authToken, String? deviceId}
   ) async {
     _pairingPoller?.cancel();
+    final resolvedToken = authToken?.trim();
+    if (resolvedToken == null || resolvedToken.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _pairingStatus =
+              'Desktop approval required. Ask the desktop to approve and re-scan.';
+          _pairingStatusIsError = true;
+          _isPairing = false;
+        });
+      }
+      return;
+    }
     final resolvedDeviceId = deviceId ??
         (payload.deviceId?.trim().isNotEmpty == true ? payload.deviceId : null);
     setState(() {
@@ -742,7 +757,7 @@ class _PairingScreenState extends State<PairingScreen> {
     await _recordPairingEvent(
       payload,
       agentUrl,
-      authToken: authToken,
+      authToken: resolvedToken,
       deviceId: resolvedDeviceId,
     );
   }
@@ -1074,7 +1089,15 @@ class _PairingScreenState extends State<PairingScreen> {
           decoded['auth_token']?.toString().trim() ??
           decoded['authToken']?.toString().trim();
       final resolvedAuthToken =
-          authTokenRaw != null && authTokenRaw.isNotEmpty ? authTokenRaw : payload.token;
+          authTokenRaw != null && authTokenRaw.isNotEmpty ? authTokenRaw : null;
+      if (resolvedAuthToken == null) {
+        return _PairingAttemptResult(
+          status: _PairingAttemptStatus.failed,
+          message:
+              'Desktop approval required. Ask the desktop to approve and re-scan.',
+          agentUrl: baseUrl,
+        );
+      }
       final deviceIdRaw =
           decoded['device_id']?.toString().trim() ??
           decoded['deviceId']?.toString().trim();
@@ -1179,14 +1202,12 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _recordPairingEvent(
     PairingPayload payload,
     String agentUrl, {
-    String? authToken,
+    required String authToken,
     String? deviceId,
   }) async {
     try {
       final now = DateTime.now();
-      final resolvedToken = (authToken ?? '').trim().isNotEmpty
-          ? authToken!.trim()
-          : payload.token;
+      final resolvedToken = authToken.trim();
       ConnectionRecord? existing;
       if (deviceId != null) {
         for (final connection in _connections) {
@@ -2666,6 +2687,43 @@ class _ScannerOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ScannerOverlayPainter oldDelegate) {
     return oldDelegate.scanWindow != scanWindow;
+  }
+}
+
+class _RoiTilePainter extends CustomPainter {
+  _RoiTilePainter({
+    required this.tiles,
+    required this.renderer,
+    required this.translation,
+    required this.scale,
+    required this.revision,
+  });
+
+  final Map<RoiTileKey, ui.Image> tiles;
+  final RoiRenderer renderer;
+  final Offset translation;
+  final double scale;
+  final int revision;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final entry in tiles.entries) {
+      renderer.paintTile(
+        canvas: canvas,
+        tile: entry.key,
+        image: entry.value,
+        scale: scale,
+        translation: translation,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RoiTilePainter oldDelegate) {
+    return oldDelegate.revision != revision ||
+        oldDelegate.scale != scale ||
+        oldDelegate.translation != translation ||
+        !mapEquals(oldDelegate.tiles, tiles);
   }
 }
 
@@ -6023,6 +6081,18 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     );
   }
 
+  Future<List<RemoteTerminalSession>> _fetchRemoteTerminalSessions() async {
+    final client = _agentClient;
+    if (client == null) {
+      return const [];
+    }
+    try {
+      return await client.fetchTerminalSessions();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Uri? _terminalWsUri(String baseUrl, String sessionId) {
     Uri base;
     try {
@@ -7313,10 +7383,55 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final sessions = await widget.storage.fetchToolSessions();
       final events = await widget.storage.fetchTimelineEvents();
       final agentId = widget.agentId;
-      final terminalSessions = sessions
+      var terminalSessions = sessions
           .where((session) => session.type.toLowerCase() == 'terminal')
           .where((session) => agentId == null || session.agentId == agentId)
           .toList();
+      final remoteSessions = await _fetchRemoteTerminalSessions();
+      if (remoteSessions.isNotEmpty) {
+        final remoteById = <String, RemoteTerminalSession>{
+          for (final remote in remoteSessions) remote.id: remote,
+        };
+        final merged = <ToolSession>[];
+        for (final session in terminalSessions) {
+          final remote = remoteById.remove(session.id);
+          if (remote == null) {
+            merged.add(session);
+            continue;
+          }
+          final remoteStatus =
+              remote.status.trim().isNotEmpty ? remote.status : session.status;
+          final updated = remoteStatus != session.status
+              ? ToolSession(
+                  id: session.id,
+                  type: session.type,
+                  label: session.label,
+                  status: remoteStatus,
+                  agentId: session.agentId,
+                  createdAt: session.createdAt,
+                )
+              : session;
+          if (remoteStatus != session.status) {
+            await widget.storage.insertToolSession(updated);
+          }
+          merged.add(updated);
+        }
+        for (final remote in remoteById.values) {
+          final createdAt = remote.createdAt;
+          final label = 'Terminal ${_truncate(remote.id, 6)}';
+          final newSession = ToolSession(
+            id: remote.id,
+            type: 'terminal',
+            label: label,
+            status: remote.status,
+            agentId: agentId,
+            createdAt: createdAt,
+          );
+          await widget.storage.insertToolSession(newSession);
+          merged.add(newSession);
+        }
+        terminalSessions = merged;
+      }
       final terminalEvents = events
           .where((event) => event.type.toLowerCase() == 'terminal')
           .toList();
@@ -9835,7 +9950,9 @@ enum VncColorDepth {
 }
 
 class _VncSessionScreenState extends State<VncSessionScreen> {
-  static const List<double> _zoomStops = [0.5, 0.75, 1, 1.5, 2, 3];
+  static const double _zoomMin = 0.5;
+  static const double _zoomMax = 3.0;
+  static const double _zoomDefault = 1.0;
   static const double _swipeThreshold = 120;
   static const double _tapSlop = 8;
   static const double _dragSlop = 6;
@@ -9851,6 +9968,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const int _encodingCompressLevelBase = -256;
   static const int _encodingQualityLevelBase = -32;
   static const int _encodingDataSaver = -312;
+  static const int _encodingHighPerf = -313;
   static const Duration _noFrameTimeout = Duration(seconds: 8);
   static const Duration _fpsWindow = Duration(milliseconds: 1000);
   static const double _trackpadMoreButtonSize = 40;
@@ -9861,7 +9979,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
   late Offset _pointerPosition;
   late Offset _cameraCenter;
-  int _zoomIndex = 2;
+  double _zoomValue = _zoomDefault;
   VncEncodingPreference _encodingPreference = VncEncodingPreference.zrle;
   int _tightCompressionLevel = 6;
   int _tightQualityLevel = 6;
@@ -9869,6 +9987,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool _lowLatencyEnabled = true;
   VncColorDepth _colorDepth = VncColorDepth.full;
   bool _dataSaverEnabled = false;
+  bool _highPerfEnabled = false;
+  int _highPerfIntervalMs = 100;
   VncViewMode _viewMode = VncViewMode.fit;
   bool _isConnecting = false;
   bool _isResizing = false;
@@ -9883,6 +10003,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   http.Client? _httpClient;
   AgentCommandClient? _agentClient;
   VncRfbClient? _vncClient;
+  RoiClient _roiClient = RoiNoopClient();
+  RoiSessionInfo? _roiSession;
+  StreamSubscription<RoiTilePayload>? _roiSubscription;
+  final Map<RoiTileKey, ui.Image> _roiImages = {};
+  RoiRenderer? _roiRenderer;
+  Timer? _roiRequestTimer;
+  int _roiRevision = 0;
   ui.Image? _frameImage;
   ui.Image? _cursorImage;
   Size _cursorSize = Size.zero;
@@ -9979,6 +10106,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _autoResizeTimer?.cancel();
     _noFrameTimer?.cancel();
     _layoutRecalibrationTimer?.cancel();
+    unawaited(_stopRoiSession());
     _vncClient?.close();
     _frameImage?.dispose();
     _cursorImage?.dispose();
@@ -10017,6 +10145,145 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _streamFps = 0;
     _streamLatencyMs = null;
     _lastInputAt = null;
+  }
+
+  void _resetRoiState() {
+    _roiRequestTimer?.cancel();
+    _roiRequestTimer = null;
+    _roiSession = null;
+    _roiSubscription?.cancel();
+    _roiSubscription = null;
+    for (final image in _roiImages.values) {
+      image.dispose();
+    }
+    _roiImages.clear();
+    _roiRenderer = null;
+    _roiRevision = 0;
+  }
+
+  Future<void> _startRoiSession(VncSessionInfo sessionInfo) async {
+    final agentClient = _agentClient;
+    if (agentClient == null || _roiClient is RoiNoopClient) {
+      return;
+    }
+    final screenWidth = sessionInfo.screenWidth ?? sessionInfo.width;
+    final screenHeight = sessionInfo.screenHeight ?? sessionInfo.height;
+    if (screenWidth <= 0 || screenHeight <= 0) {
+      return;
+    }
+    try {
+      final roiInfo = await agentClient.sendRoiCommand(
+        action: 'start',
+        sessionId: '${sessionInfo.sessionId}-roi',
+        vncSessionId: sessionInfo.sessionId,
+        framebufferWidth: sessionInfo.width,
+        framebufferHeight: sessionInfo.height,
+        screenWidth: screenWidth,
+        screenHeight: screenHeight,
+        displayIndex: sessionInfo.displayIndex,
+      );
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      _roiSession = roiInfo;
+      await _roiClient.connect(roiInfo);
+      _roiSubscription?.cancel();
+      _roiSubscription = _roiClient.tiles.listen(_handleRoiTile);
+      _scheduleRoiRequest();
+    } catch (_) {
+      return;
+    }
+  }
+
+  Future<void> _stopRoiSession() async {
+    if (_roiClient is RoiNoopClient) {
+      _resetRoiState();
+      return;
+    }
+    try {
+      await _roiClient.disconnect();
+    } catch (_) {}
+    _resetRoiState();
+  }
+
+  void _scheduleRoiRequest() {
+    if (_roiSession == null) {
+      return;
+    }
+    if (_roiRequestTimer != null) {
+      return;
+    }
+    _roiRequestTimer = Timer(const Duration(milliseconds: 60), () {
+      _roiRequestTimer = null;
+      _sendRoiRequest();
+    });
+  }
+
+  void _sendRoiRequest() {
+    final roiSession = _roiSession;
+    if (roiSession == null) {
+      return;
+    }
+    final viewSize = _lastViewSize;
+    if (viewSize.width <= 0 || viewSize.height <= 0) {
+      return;
+    }
+    final scale = _baseScale(viewSize) * _zoom;
+    if (scale <= 0) {
+      return;
+    }
+    final viewportWidth = viewSize.width / scale;
+    final viewportHeight = viewSize.height / scale;
+    final prefetchRadius = (viewportWidth < viewportHeight
+            ? viewportWidth
+            : viewportHeight) *
+        0.6;
+    unawaited(_roiClient.requestRoi(
+      centerX: _cameraCenter.dx,
+      centerY: _cameraCenter.dy,
+      zoom: _zoom,
+      viewportWidth: viewportWidth,
+      viewportHeight: viewportHeight,
+      prefetchRadius: prefetchRadius,
+    ));
+  }
+
+  void _handleRoiTile(RoiTilePayload payload) {
+    if (!mounted || _isDisposed) {
+      return;
+    }
+    if (payload.pixelWidth <= 0 || payload.pixelHeight <= 0) {
+      return;
+    }
+    final expected = payload.pixelWidth * payload.pixelHeight * 4;
+    if (payload.pixels.length < expected) {
+      return;
+    }
+    final pixels = payload.pixels.length == expected
+        ? payload.pixels
+        : Uint8List.sublistView(payload.pixels, 0, expected);
+    ui.decodeImageFromPixels(
+      pixels,
+      payload.pixelWidth,
+      payload.pixelHeight,
+      ui.PixelFormat.bgra8888,
+      (image) {
+        if (!mounted || _isDisposed) {
+          image.dispose();
+          return;
+        }
+        setState(() {
+          _roiImages.remove(payload.key)?.dispose();
+          _roiImages[payload.key] = image;
+          _roiRevision += 1;
+          if (_roiImages.length > 256) {
+            final firstKey = _roiImages.keys.first;
+            _roiImages.remove(firstKey)?.dispose();
+          }
+        });
+      },
+      rowBytes: payload.pixelWidth * 4,
+    );
   }
 
   void _markInputActivity() {
@@ -10075,7 +10342,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     final zoomValue = widget.event.payload['zoom'];
     if (zoomValue is num) {
-      _zoomIndex = _closestZoomIndex(zoomValue.toDouble());
+      _zoomValue = _clampZoom(zoomValue.toDouble());
     }
   }
 
@@ -10384,19 +10651,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   String get _resolutionLabel =>
       '${_frameSize.width.toInt()}x${_frameSize.height.toInt()}';
 
-  double get _zoom => _zoomStops[_zoomIndex];
+  double get _zoom => _zoomValue;
 
-  int _closestZoomIndex(double value) {
-    var closest = 0;
-    var distance = double.infinity;
-    for (var index = 0; index < _zoomStops.length; index += 1) {
-      final delta = (_zoomStops[index] - value).abs();
-      if (delta < distance) {
-        distance = delta;
-        closest = index;
-      }
-    }
-    return closest;
+  double _clampZoom(double value) {
+    return value.clamp(_zoomMin, _zoomMax);
   }
 
   Uri _buildVncWebsocketUri(VncSessionInfo info) {
@@ -10476,6 +10734,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _frameImage = image;
           _streamFps = fps;
           _streamLatencyMs = latencyMs;
+          _roiRenderer ??= RoiRenderer(framebufferSize: newSize);
           if (sizeChanged) {
             // Scale pointer position proportionally when frame size changes.
             // This ensures the cursor stays at the same relative position.
@@ -10489,6 +10748,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               (_pointerPosition.dy * scaleY).clamp(0, _frameSize.height),
             );
             _cameraCenter = _applyInputCalibration(_pointerPosition);
+            for (final image in _roiImages.values) {
+              image.dispose();
+            }
+            _roiImages.clear();
+            _roiRenderer = RoiRenderer(framebufferSize: newSize);
+            _roiRevision += 1;
           }
         });
         if (sizeChanged) {
@@ -10576,6 +10841,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _resetCursorState();
         _resetStreamStats();
       });
+      unawaited(_stopRoiSession());
       await _updateSession(status: 'connecting');
     }
 
@@ -10592,6 +10858,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
     VncRfbClient? candidate;
     final previousClient = _vncClient;
+    final previousFrameSize = _frameSize;
     try {
       if (!preserveExisting) {
         _streamStartedAt = DateTime.now();
@@ -10604,6 +10871,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         width: (desired?.width ?? _frameSize.width).round(),
         height: (desired?.height ?? _frameSize.height).round(),
         displayIndex: _selectedDisplayIndex,
+        highPerfIntervalMs: _highPerfEnabled ? _highPerfIntervalMs : null,
       );
       if (_cursorDebugEnabled) {
         _logCursorDebug('session_info', {
@@ -10644,8 +10912,28 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (!mounted || _isDisposed) {
         return;
       }
-      final shouldResetCalibration =
-          sessionInfo.inputWidth != null && sessionInfo.inputHeight != null;
+      unawaited(_startRoiSession(sessionInfo));
+      final shouldResetCalibration = !preserveExisting &&
+          sessionInfo.inputWidth != null &&
+          sessionInfo.inputHeight != null;
+      final nextFrameSize = Size(
+        sessionInfo.width.toDouble(),
+        sessionInfo.height.toDouble(),
+      );
+      final shouldPreservePointer = preserveExisting &&
+          previousFrameSize.width > 0 &&
+          previousFrameSize.height > 0;
+      final nextPointer = shouldPreservePointer
+          ? Offset(
+              (_pointerPosition.dx * nextFrameSize.width / previousFrameSize.width)
+                  .clamp(0, nextFrameSize.width),
+              (_pointerPosition.dy * nextFrameSize.height / previousFrameSize.height)
+                  .clamp(0, nextFrameSize.height),
+            )
+          : Offset(
+              nextFrameSize.width / 2,
+              nextFrameSize.height / 2,
+            );
       setState(() {
         if (!preserveExisting) {
           _isConnecting = false;
@@ -10654,15 +10942,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         if (!preserveExisting) {
           _resetCursorState();
         }
-        _frameSize = Size(
-          sessionInfo.width.toDouble(),
-          sessionInfo.height.toDouble(),
-        );
-        _pointerPosition = Offset(
-          _frameSize.width / 2,
-          _frameSize.height / 2,
-        );
-        _cameraCenter = _applyInputCalibration(_pointerPosition);
+        _frameSize = nextFrameSize;
+        _pointerPosition = nextPointer;
+        _cameraCenter = _applyInputCalibration(nextPointer);
         _hasStreamInfo = true;
         if (sessionInfo.displayIndex != null) {
           _selectedDisplayIndex = sessionInfo.displayIndex;
@@ -10726,6 +11008,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     });
     _noFrameTimer?.cancel();
     _vncClient?.close();
+    unawaited(_stopRoiSession());
     await _updateSession(status: 'failed', errorMessage: message);
   }
 
@@ -10805,16 +11088,17 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
   }
 
-  void _updateZoomIndex(int index, {bool commit = false}) {
-    final clamped = index.clamp(0, _zoomStops.length - 1);
-    if (clamped == _zoomIndex) {
+  void _updateZoomValue(double value, {bool commit = false}) {
+    final clamped = _clampZoom(value);
+    if (clamped == _zoomValue) {
       return;
     }
-    final focus = _applyInputCalibration(_pointerPosition);
+    final focus = _effectivePointerPosition();
     setState(() {
-      _zoomIndex = clamped;
+      _zoomValue = clamped;
       _cameraCenter = focus;
     });
+    _scheduleRoiRequest();
     if (_cursorDebugEnabled) {
       _logCursorDebug('zoom_change', {'zoom': _zoom}, force: true);
     }
@@ -10824,20 +11108,16 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
   }
 
-  void _commitZoomIndex(int index) {
-    _updateZoomIndex(index, commit: true);
-    _requestStreamRefresh(resetAutoResize: true);
+  void _commitZoomValue(double value) {
+    final before = _zoomValue;
+    _updateZoomValue(value, commit: true);
+    if (before != _zoomValue) {
+      _requestStreamRefresh(resetAutoResize: true);
+    }
   }
 
   void _resetZoom() {
-    final focus = _applyInputCalibration(_pointerPosition);
-    setState(() {
-      _zoomIndex = _zoomStops.indexOf(1).clamp(0, _zoomStops.length - 1);
-      _cameraCenter = focus;
-    });
-    _triggerFocusPulse();
-    unawaited(_updateSession(status: _currentStatusLabel));
-    _requestStreamRefresh(resetAutoResize: true);
+    _commitZoomValue(_zoomDefault);
   }
 
   String get _currentStatusLabel {
@@ -10961,6 +11241,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       }
     }
     _sendPointerEvent();
+    _scheduleRoiRequest();
   }
 
   Offset _applyInputCalibration(Offset position) {
@@ -10988,6 +11269,38 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return Offset(
       scaled.dx.clamp(0, width),
       scaled.dy.clamp(0, height),
+    );
+  }
+
+  Offset _removeInputCalibration(Offset position) {
+    if (!_calibrationNormalized) {
+      final scaleX = _inputScaleX == 0 ? 1 : _inputScaleX;
+      final scaleY = _inputScaleY == 0 ? 1 : _inputScaleY;
+      final raw = Offset(
+        (position.dx - _inputOffsetX) / scaleX,
+        (position.dy - _inputOffsetY) / scaleY,
+      );
+      return Offset(
+        raw.dx.clamp(0, _frameSize.width),
+        raw.dy.clamp(0, _frameSize.height),
+      );
+    }
+    final width = _frameSize.width;
+    final height = _frameSize.height;
+    if (width <= 0 || height <= 0) {
+      return position;
+    }
+    final scaleX = _inputScaleX == 0 ? 1 : _inputScaleX;
+    final scaleY = _inputScaleY == 0 ? 1 : _inputScaleY;
+    final normalized = Offset(position.dx / width, position.dy / height);
+    final rawNormalized = Offset(
+      (normalized.dx - _inputOffsetX) / scaleX,
+      (normalized.dy - _inputOffsetY) / scaleY,
+    );
+    final raw = Offset(rawNormalized.dx * width, rawNormalized.dy * height);
+    return Offset(
+      raw.dx.clamp(0, width),
+      raw.dy.clamp(0, height),
     );
   }
 
@@ -11129,7 +11442,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         ordered.add(encoding);
       }
     }
-    if (_dataSaverEnabled) {
+    if (_highPerfEnabled) {
+      ordered.add(_encodingHighPerf);
+    } else if (_dataSaverEnabled) {
       ordered.add(_encodingDataSaver);
     }
     if (_colorDepth == VncColorDepth.depth16) {
@@ -11185,9 +11500,27 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   void _setDataSaverMode(bool enabled) {
     setState(() {
       _dataSaverEnabled = enabled;
+      if (enabled) {
+        _highPerfEnabled = false;
+      }
     });
     _applyEncodingPreferences();
     _requestStreamRefresh(resetAutoResize: true);
+  }
+
+  void _setHighPerfMode(bool enabled) {
+    setState(() {
+      _highPerfEnabled = enabled;
+      if (enabled) {
+        _dataSaverEnabled = false;
+      }
+    });
+    _applyEncodingPreferences();
+    if (enabled) {
+      unawaited(_startStream(preserveExisting: true));
+    } else {
+      _requestStreamRefresh(resetAutoResize: true);
+    }
   }
 
   double _viewAspectRatio(Size screenSize) {
@@ -11231,10 +11564,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         (display?.width ?? 4096) > 0 ? (display?.width ?? 4096) : 4096;
     final maxDisplayHeight =
         (display?.height ?? 4096) > 0 ? (display?.height ?? 4096) : 4096;
-    var targetWidth =
-        (_lastViewSize.width * dpr * zoomFactor).round().clamp(1, maxDisplayWidth);
-    var targetHeight =
-        (targetWidth / aspect).round().clamp(1, maxDisplayHeight);
+    final preferNative = _zoom > 1.05 &&
+        display != null &&
+        display.width > 0 &&
+        display.height > 0;
+    var targetWidth = preferNative
+        ? display!.width
+        : (_lastViewSize.width * dpr * zoomFactor)
+            .round()
+            .clamp(1, maxDisplayWidth);
+    var targetHeight = preferNative
+        ? display!.height
+        : (targetWidth / aspect).round().clamp(1, maxDisplayHeight);
     final viewMaxHeight = (_lastViewSize.height * dpr).round();
     if (zoomFactor <= 1.05 && viewMaxHeight > 0 && targetHeight > viewMaxHeight) {
       targetHeight = viewMaxHeight;
@@ -11585,6 +11926,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (!mounted || _isFullscreen == value) {
       return;
     }
+    _clearPointerState();
     setState(() {
       _isFullscreen = value;
       _autoSizedOnce = false;
@@ -12090,6 +12432,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         final cursorImage = _cursorImage;
         final cursorSize = _cursorSize;
         final cursorHotspot = _cursorHotspot;
+        final roiRenderer = _roiRenderer;
+        final roiImages = _roiImages;
+        final roiRevision = _roiRevision;
         final hasFrame = _frameImage != null;
         return ClipRRect(
           borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
@@ -12133,9 +12478,23 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                         child: RawImage(
                           image: _frameImage,
                           fit: BoxFit.fill,
-                          filterQuality: FilterQuality.medium,
+                          filterQuality: _zoom > 1.01
+                              ? FilterQuality.none
+                              : FilterQuality.medium,
                         ),
                       ),
+                    ),
+                  ),
+                ),
+              if (hasFrame && roiRenderer != null && roiImages.isNotEmpty)
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _RoiTilePainter(
+                      tiles: roiImages,
+                      renderer: roiRenderer,
+                      translation: translation,
+                      scale: scale,
+                      revision: roiRevision,
                     ),
                   ),
                 ),
@@ -12156,13 +12515,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     onTapDown: (details) {
                       final framePos =
                           _screenToFrame(details.localPosition, viewSize);
-                      _setPointerPosition(framePos);
+                      _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanStart: (details) {
                       _directDragActive = true;
                       final framePos =
                           _screenToFrame(details.localPosition, viewSize);
-                      _setPointerPosition(framePos);
+                      _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanUpdate: (details) {
                       if (!_directDragActive) {
@@ -12170,7 +12529,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       }
                       final framePos =
                           _screenToFrame(details.localPosition, viewSize);
-                      _setPointerPosition(framePos);
+                      _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanEnd: (_) {
                       if (!_directDragActive) {
@@ -12253,13 +12612,41 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                   child: Container(
                     color: Colors.black.withAlpha(80),
                     child: Center(
-                      child: Text(
-                        _connectionError != null
-                            ? 'Stream unavailable'
-                            : 'Connecting...',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 320),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _connectionError != null
+                                  ? 'Stream unavailable'
+                                  : 'Connecting...',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (_connectionError != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _connectionError!,
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (isFullscreen) ...[
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: _isConnecting ? null : _startStream,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry stream'),
+                                ),
+                              ],
+                            ],
+                          ],
                         ),
                       ),
                     ),
@@ -12387,12 +12774,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               child: SizedBox(
                 width: zoomWidth,
                 child: _VncZoomBar(
-                  stops: _zoomStops,
-                  index: _zoomIndex,
+                  value: _zoom,
+                  min: _zoomMin,
+                  max: _zoomMax,
                   enabled: isInteractive,
                   glassStyle: isLandscape,
-                  onIndexChanged: _updateZoomIndex,
-                  onIndexCommitted: _commitZoomIndex,
+                  onValueChanged: _updateZoomValue,
+                  onValueCommitted: _commitZoomValue,
                   onReset: _resetZoom,
                 ),
               ),
@@ -12601,12 +12989,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     width: 52,
                     height: zoomHeight,
                     child: _VncZoomBar(
-                      stops: _zoomStops,
-                      index: _zoomIndex,
+                      value: _zoom,
+                      min: _zoomMin,
+                      max: _zoomMax,
                       enabled: isInteractive,
                       glassStyle: true,
-                      onIndexChanged: _updateZoomIndex,
-                      onIndexCommitted: _commitZoomIndex,
+                      onValueChanged: _updateZoomValue,
+                      onValueCommitted: _commitZoomValue,
                       onReset: _resetZoom,
                     ),
                   ),
@@ -12705,12 +13094,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               SizedBox(
                 width: 52,
                 child: _VncZoomBar(
-                  stops: _zoomStops,
-                  index: _zoomIndex,
+                  value: _zoom,
+                  min: _zoomMin,
+                  max: _zoomMax,
                   enabled: isInteractive,
                   glassStyle: glassStyle,
-                  onIndexChanged: _updateZoomIndex,
-                  onIndexCommitted: _commitZoomIndex,
+                  onValueChanged: _updateZoomValue,
+                  onValueCommitted: _commitZoomValue,
                   onReset: _resetZoom,
                 ),
               ),
@@ -12860,128 +13250,188 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Text(
-          '编码与质量',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
+        Theme(
+          data: Theme.of(context).copyWith(
+            dividerColor: Colors.transparent,
+          ),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: EdgeInsets.zero,
+            initiallyExpanded: false,
+            title: Text(
+              '高级选项',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            subtitle: Text(
+              '编码与质量 / 压缩',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: glassStyle ? Colors.white54 : const Color(0xFF94A3B8),
+                  ),
+            ),
+            children: [
+              const SizedBox(height: 6),
+              Text(
+                '编码与质量',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color:
+                          glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
-        ),
-        const SizedBox(height: 6),
-        SwitchListTile.adaptive(
-          title: const Text('低延迟模式'),
-          subtitle: const Text('优先响应，可能降低画质'),
-          value: _lowLatencyEnabled,
-          onChanged: isInteractive ? _setLowLatencyMode : null,
-        ),
-        SwitchListTile.adaptive(
-          title: const Text('省流模式'),
-          subtitle: const Text('空闲时降低同步频率'),
-          value: _dataSaverEnabled,
-          onChanged: isInteractive ? _setDataSaverMode : null,
-        ),
-        SwitchListTile.adaptive(
-          title: const Text('16-bit 色深'),
-          subtitle: const Text('减少带宽，颜色更少'),
-          value: _colorDepth == VncColorDepth.depth16,
-          onChanged: isInteractive
-              ? (value) {
-                  setState(() {
-                    _colorDepth = value
-                        ? VncColorDepth.depth16
-                        : VncColorDepth.full;
-                    if (value) {
-                      _tightJpegEnabled = false;
-                      _encodingPreference = VncEncodingPreference.zlib;
-                    }
-                  });
-                  _applyEncodingPreferences();
-                  _applyPixelFormatPreference();
-                  _requestStreamRefresh(resetAutoResize: true);
-                }
-              : null,
-        ),
-        DropdownButtonFormField<VncEncodingPreference>(
-          value: _encodingPreference,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-          items: const [
-            DropdownMenuItem(
-              value: VncEncodingPreference.zrle,
-              child: Text('ZRLE（默认）'),
-            ),
-            DropdownMenuItem(
-              value: VncEncodingPreference.tight,
-              child: Text('Tight（可调压缩）'),
-            ),
-            DropdownMenuItem(
-              value: VncEncodingPreference.zlib,
-              child: Text('Zlib（兼容）'),
-            ),
-            DropdownMenuItem(
-              value: VncEncodingPreference.raw,
-              child: Text('Raw（无压缩）'),
-            ),
-          ],
-          onChanged: isInteractive && !_lowLatencyEnabled
-              ? (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() {
-                    _encodingPreference = value;
-                  });
-                  _applyEncodingPreferences();
-                }
-              : null,
-        ),
-        const SizedBox(height: 8),
-        _CalibrationSlider(
-          label: '压缩级别 (${_tightCompressionLevel})',
-          value: _tightCompressionLevel.toDouble(),
-          min: 0,
-          max: 9,
-          enabled: isInteractive && !_lowLatencyEnabled,
-          labelColor: glassStyle ? Colors.white70 : null,
-          onChanged: (value) {
-            setState(() {
-              _tightCompressionLevel = value.round().clamp(0, 9);
-            });
-            _applyEncodingPreferences();
-          },
-        ),
-        if (_encodingPreference == VncEncodingPreference.tight) ...[
-          SwitchListTile.adaptive(
-            title: const Text('JPEG 低带宽'),
-            subtitle: const Text('开启后画质会有损'),
-            value: _tightJpegEnabled,
-            onChanged: isInteractive
-                ? (value) {
+              const SizedBox(height: 6),
+              SwitchListTile.adaptive(
+                title: const Text('低延迟模式'),
+                subtitle: const Text('优先响应，可能降低画质'),
+                value: _lowLatencyEnabled,
+                onChanged: isInteractive ? _setLowLatencyMode : null,
+              ),
+              SwitchListTile.adaptive(
+                title: const Text('高性能模式'),
+                subtitle: Text('空闲时也每 ${_highPerfIntervalMs}ms 推送一帧'),
+                value: _highPerfEnabled,
+                onChanged: isInteractive ? _setHighPerfMode : null,
+              ),
+              if (_highPerfEnabled)
+                _CalibrationSlider(
+                  label: '高性能采样间隔 (${_highPerfIntervalMs}ms)',
+                  value: _highPerfIntervalMs.toDouble(),
+                  min: 10,
+                  max: 100,
+                  divisions: 9,
+                  enabled: isInteractive,
+                  labelColor: glassStyle ? Colors.white70 : null,
+                  onChanged: (value) {
                     setState(() {
-                      _tightJpegEnabled = value;
+                      _highPerfIntervalMs = value.round().clamp(10, 100);
                     });
-                    _applyEncodingPreferences();
-                  }
-                : null,
+                  },
+                  onChangeEnd: (value) {
+                    if (!isInteractive || !_highPerfEnabled) {
+                      return;
+                    }
+                    final next = value.round().clamp(10, 100);
+                    if (next != _highPerfIntervalMs) {
+                      setState(() {
+                        _highPerfIntervalMs = next;
+                      });
+                    }
+                    unawaited(_startStream(preserveExisting: true));
+                  },
+                ),
+              SwitchListTile.adaptive(
+                title: const Text('省流模式'),
+                subtitle: const Text('空闲时降低同步频率'),
+                value: _dataSaverEnabled,
+                onChanged: isInteractive ? _setDataSaverMode : null,
+              ),
+              SwitchListTile.adaptive(
+                title: const Text('16-bit 色深'),
+                subtitle: const Text('减少带宽，颜色更少'),
+                value: _colorDepth == VncColorDepth.depth16,
+                onChanged: isInteractive
+                    ? (value) {
+                        setState(() {
+                          _colorDepth = value
+                              ? VncColorDepth.depth16
+                              : VncColorDepth.full;
+                          if (value) {
+                            _tightJpegEnabled = false;
+                            _encodingPreference = VncEncodingPreference.zlib;
+                          }
+                        });
+                        _applyEncodingPreferences();
+                        _applyPixelFormatPreference();
+                        _requestStreamRefresh(resetAutoResize: true);
+                      }
+                    : null,
+              ),
+              DropdownButtonFormField<VncEncodingPreference>(
+                value: _encodingPreference,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: VncEncodingPreference.zrle,
+                    child: Text('ZRLE（默认）'),
+                  ),
+                  DropdownMenuItem(
+                    value: VncEncodingPreference.tight,
+                    child: Text('Tight（可调压缩）'),
+                  ),
+                  DropdownMenuItem(
+                    value: VncEncodingPreference.zlib,
+                    child: Text('Zlib（兼容）'),
+                  ),
+                  DropdownMenuItem(
+                    value: VncEncodingPreference.raw,
+                    child: Text('Raw（无压缩）'),
+                  ),
+                ],
+                onChanged: isInteractive && !_lowLatencyEnabled
+                    ? (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() {
+                          _encodingPreference = value;
+                        });
+                        _applyEncodingPreferences();
+                      }
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              _CalibrationSlider(
+                label: '压缩级别 (${_tightCompressionLevel})',
+                value: _tightCompressionLevel.toDouble(),
+                min: 0,
+                max: 9,
+                enabled: isInteractive && !_lowLatencyEnabled,
+                labelColor: glassStyle ? Colors.white70 : null,
+                onChanged: (value) {
+                  setState(() {
+                    _tightCompressionLevel = value.round().clamp(0, 9);
+                  });
+                  _applyEncodingPreferences();
+                },
+              ),
+              if (_encodingPreference == VncEncodingPreference.tight) ...[
+                SwitchListTile.adaptive(
+                  title: const Text('JPEG 低带宽'),
+                  subtitle: const Text('开启后画质会有损'),
+                  value: _tightJpegEnabled,
+                  onChanged: isInteractive
+                      ? (value) {
+                          setState(() {
+                            _tightJpegEnabled = value;
+                          });
+                          _applyEncodingPreferences();
+                        }
+                      : null,
+                ),
+                if (_tightJpegEnabled)
+                  _CalibrationSlider(
+                    label: 'JPEG 质量 (${_tightQualityLevel})',
+                    value: _tightQualityLevel.toDouble(),
+                    min: 0,
+                    max: 9,
+                    enabled: isInteractive,
+                    labelColor: glassStyle ? Colors.white70 : null,
+                    onChanged: (value) {
+                      setState(() {
+                        _tightQualityLevel = value.round().clamp(0, 9);
+                      });
+                      _applyEncodingPreferences();
+                    },
+                  ),
+              ],
+            ],
           ),
-          if (_tightJpegEnabled)
-            _CalibrationSlider(
-              label: 'JPEG 质量 (${_tightQualityLevel})',
-              value: _tightQualityLevel.toDouble(),
-              min: 0,
-              max: 9,
-              enabled: isInteractive,
-              labelColor: glassStyle ? Colors.white70 : null,
-              onChanged: (value) {
-                setState(() {
-                  _tightQualityLevel = value.round().clamp(0, 9);
-                });
-                _applyEncodingPreferences();
-              },
-            ),
-        ],
+        ),
         if (showCalibrationAction) ...[
           const SizedBox(height: 12),
           Align(
@@ -14030,6 +14480,8 @@ class _CalibrationSlider extends StatelessWidget {
     required this.enabled,
     required this.onChanged,
     this.labelColor,
+    this.divisions,
+    this.onChangeEnd,
   });
 
   final String label;
@@ -14039,6 +14491,8 @@ class _CalibrationSlider extends StatelessWidget {
   final bool enabled;
   final ValueChanged<double> onChanged;
   final Color? labelColor;
+  final int? divisions;
+  final ValueChanged<double>? onChangeEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -14064,7 +14518,9 @@ class _CalibrationSlider extends StatelessWidget {
               value: value.clamp(min, max),
               min: min,
               max: max,
+              divisions: divisions,
               onChanged: enabled ? onChanged : null,
+              onChangeEnd: enabled ? onChangeEnd : null,
             ),
           ),
         ],
@@ -14073,35 +14529,65 @@ class _CalibrationSlider extends StatelessWidget {
   }
 }
 
-class _VncZoomBar extends StatelessWidget {
+class _VncZoomBar extends StatefulWidget {
   const _VncZoomBar({
-    required this.stops,
-    required this.index,
+    required this.value,
+    required this.min,
+    required this.max,
     required this.enabled,
     this.glassStyle = false,
-    required this.onIndexChanged,
-    required this.onIndexCommitted,
+    required this.onValueChanged,
+    required this.onValueCommitted,
     required this.onReset,
   });
 
-  final List<double> stops;
-  final int index;
+  final double value;
+  final double min;
+  final double max;
   final bool enabled;
   final bool glassStyle;
-  final ValueChanged<int> onIndexChanged;
-  final ValueChanged<int> onIndexCommitted;
+  final ValueChanged<double> onValueChanged;
+  final ValueChanged<double> onValueCommitted;
   final VoidCallback onReset;
 
-  int _indexForPosition(double localY, double height) {
+  @override
+  State<_VncZoomBar> createState() => _VncZoomBarState();
+}
+
+class _VncZoomBarState extends State<_VncZoomBar> {
+  late double _lastValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastValue = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(covariant _VncZoomBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _lastValue = widget.value;
+  }
+
+  double _valueForPosition(double localY, double height) {
     if (height <= 0) {
-      return index;
+      return widget.value;
     }
     final trackTop = 20.0;
     final trackBottom = height - 20.0;
     final clamped = localY.clamp(trackTop, trackBottom);
     final t = 1 - ((clamped - trackTop) / (trackBottom - trackTop));
-    final raw = (t * (stops.length - 1)).round();
-    return raw.clamp(0, stops.length - 1);
+    final next = widget.min + (widget.max - widget.min) * t;
+    return next.clamp(widget.min, widget.max);
+  }
+
+  void _setValue(double value) {
+    _lastValue = value;
+    widget.onValueChanged(value);
+  }
+
+  void _commitValue([double? value]) {
+    widget.onValueCommitted(value ?? _lastValue);
   }
 
   @override
@@ -14111,33 +14597,37 @@ class _VncZoomBar extends StatelessWidget {
         final height = constraints.maxHeight;
         final trackTop = 20.0;
         final trackBottom = height - 20.0;
-        final t = stops.length == 1 ? 0.5 : index / (stops.length - 1);
+        final clamped = widget.value.clamp(widget.min, widget.max);
+        final range = (widget.max - widget.min).abs();
+        final t = range <= 0
+            ? 0.5
+            : ((clamped - widget.min) / range).clamp(0.0, 1.0);
         final knobY = trackBottom - (trackBottom - trackTop) * t;
         return GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onDoubleTap: enabled ? onReset : null,
-          onTapDown: enabled
+          onDoubleTap: widget.enabled ? widget.onReset : null,
+          onTapDown: widget.enabled
               ? (details) {
-                  final nextIndex =
-                      _indexForPosition(details.localPosition.dy, height);
-                  onIndexChanged(nextIndex);
-                  onIndexCommitted(nextIndex);
+                  final nextValue =
+                      _valueForPosition(details.localPosition.dy, height);
+                  _setValue(nextValue);
+                  _commitValue(nextValue);
                 }
               : null,
-          onVerticalDragUpdate: enabled
+          onVerticalDragUpdate: widget.enabled
               ? (details) =>
-                  onIndexChanged(_indexForPosition(details.localPosition.dy, height))
+                  _setValue(_valueForPosition(details.localPosition.dy, height))
               : null,
-          onVerticalDragEnd: enabled ? (_) => onIndexCommitted(index) : null,
+          onVerticalDragEnd: widget.enabled ? (_) => _commitValue() : null,
           child: Container(
             width: 44,
             decoration: BoxDecoration(
-              color: glassStyle
+              color: widget.glassStyle
                   ? Colors.white.withAlpha(40)
                   : Colors.black.withAlpha(120),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: glassStyle
+                color: widget.glassStyle
                     ? Colors.white.withAlpha(80)
                     : Colors.white.withAlpha(40),
               ),
@@ -14149,10 +14639,12 @@ class _VncZoomBar extends StatelessWidget {
                   right: 0,
                   top: 6,
                   child: Text(
-                    '${stops.last}x',
+                    '${widget.max.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: glassStyle ? Colors.white : Colors.white70,
+                          color: widget.glassStyle
+                              ? Colors.white
+                              : Colors.white70,
                           fontWeight: FontWeight.w600,
                         ),
                   ),
@@ -14162,10 +14654,12 @@ class _VncZoomBar extends StatelessWidget {
                   right: 0,
                   bottom: 6,
                   child: Text(
-                    '${stops.first}x',
+                    '${widget.min.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: glassStyle ? Colors.white : Colors.white70,
+                          color: widget.glassStyle
+                              ? Colors.white
+                              : Colors.white70,
                           fontWeight: FontWeight.w600,
                         ),
                   ),
@@ -14179,7 +14673,9 @@ class _VncZoomBar extends StatelessWidget {
                     child: Container(
                       width: 2,
                       decoration: BoxDecoration(
-                        color: Colors.white.withAlpha(glassStyle ? 160 : 90),
+                        color: Colors.white.withAlpha(
+                          widget.glassStyle ? 160 : 90,
+                        ),
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -14192,8 +14688,8 @@ class _VncZoomBar extends StatelessWidget {
                   child: Container(
                     height: 32,
                     decoration: BoxDecoration(
-                      color: enabled
-                          ? (glassStyle
+                      color: widget.enabled
+                          ? (widget.glassStyle
                               ? Colors.white.withAlpha(160)
                               : const Color(0xFF38BDF8))
                           : Colors.white24,
@@ -14208,9 +14704,9 @@ class _VncZoomBar extends StatelessWidget {
                     ),
                     child: Center(
                       child: Text(
-                        '${(stops[index] * 100).round()}%',
+                        '${(clamped * 100).round()}%',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: glassStyle
+                              color: widget.glassStyle
                                   ? const Color(0xFF0F172A)
                                   : Colors.white,
                               fontWeight: FontWeight.w700,
@@ -14922,6 +15418,50 @@ class VncDisplayInfo {
   }
 }
 
+class RemoteTerminalSession {
+  const RemoteTerminalSession({
+    required this.id,
+    required this.status,
+    required this.createdAt,
+    required this.lastActivity,
+    this.exitCode,
+    this.lastOutput,
+  });
+
+  final String id;
+  final String status;
+  final DateTime createdAt;
+  final DateTime lastActivity;
+  final int? exitCode;
+  final String? lastOutput;
+
+  factory RemoteTerminalSession.fromPayload(Map<String, dynamic> payload) {
+    final id = payload['id']?.toString() ?? '';
+    final status = payload['status']?.toString() ?? 'unknown';
+    final createdRaw = int.tryParse(payload['created_at']?.toString() ?? '');
+    final lastRaw = int.tryParse(payload['last_activity']?.toString() ?? '');
+    final createdAt = createdRaw == null || createdRaw == 0
+        ? DateTime.now()
+        : DateTime.fromMillisecondsSinceEpoch(createdRaw * 1000);
+    final lastActivity = lastRaw == null || lastRaw == 0
+        ? createdAt
+        : DateTime.fromMillisecondsSinceEpoch(lastRaw * 1000);
+    final exitCode = int.tryParse(payload['exit_code']?.toString() ?? '');
+    final lastOutput = payload['last_output']?.toString();
+    if (id.isEmpty) {
+      throw const AgentCommandFailure('Terminal session missing id.');
+    }
+    return RemoteTerminalSession(
+      id: id,
+      status: status,
+      createdAt: createdAt,
+      lastActivity: lastActivity,
+      exitCode: exitCode,
+      lastOutput: lastOutput,
+    );
+  }
+}
+
 class AgentCommandClient {
   AgentCommandClient({
     required this.baseUrl,
@@ -14985,6 +15525,27 @@ class AgentCommandClient {
     return payload;
   }
 
+  Future<List<RemoteTerminalSession>> fetchTerminalSessions() async {
+    final response = await sendTerminalAction(action: 'list');
+    final sessions = response['sessions'];
+    if (sessions is! List) {
+      return const [];
+    }
+    final results = <RemoteTerminalSession>[];
+    for (final entry in sessions) {
+      if (entry is Map) {
+        try {
+          results.add(RemoteTerminalSession.fromPayload(
+            Map<String, dynamic>.from(entry),
+          ));
+        } catch (_) {
+          // Ignore malformed session entries.
+        }
+      }
+    }
+    return results;
+  }
+
   Future<Map<String, dynamic>> sendTerminalAction({
     required String action,
     String? sessionId,
@@ -15040,6 +15601,7 @@ class AgentCommandClient {
     int? width,
     int? height,
     int? displayIndex,
+    int? highPerfIntervalMs,
   }) async {
     final payload = <String, dynamic>{
       'action': action,
@@ -15056,6 +15618,9 @@ class AgentCommandClient {
     if (displayIndex != null) {
       payload['display_index'] = displayIndex;
     }
+    if (highPerfIntervalMs != null) {
+      payload['high_perf_interval_ms'] = highPerfIntervalMs;
+    }
     final response = await _sendCommand(
       command: 'vnc',
       payload: payload,
@@ -15065,6 +15630,53 @@ class AgentCommandClient {
       throw const AgentCommandFailure('VNC response missing payload.');
     }
     return VncSessionInfo.fromPayload(
+      Map<String, dynamic>.from(payloadData),
+    );
+  }
+
+  Future<RoiSessionInfo> sendRoiCommand({
+    required String action,
+    String? sessionId,
+    String? vncSessionId,
+    int? framebufferWidth,
+    int? framebufferHeight,
+    int? screenWidth,
+    int? screenHeight,
+    int? displayIndex,
+  }) async {
+    final payload = <String, dynamic>{
+      'action': action,
+    };
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      payload['session_id'] = sessionId;
+    }
+    if (vncSessionId != null && vncSessionId.trim().isNotEmpty) {
+      payload['vnc_session_id'] = vncSessionId;
+    }
+    if (framebufferWidth != null) {
+      payload['framebuffer_width'] = framebufferWidth;
+    }
+    if (framebufferHeight != null) {
+      payload['framebuffer_height'] = framebufferHeight;
+    }
+    if (screenWidth != null) {
+      payload['screen_width'] = screenWidth;
+    }
+    if (screenHeight != null) {
+      payload['screen_height'] = screenHeight;
+    }
+    if (displayIndex != null) {
+      payload['display_index'] = displayIndex;
+    }
+    final response = await _sendCommand(
+      command: 'roi',
+      payload: payload,
+    );
+    final payloadData = response.payload;
+    if (payloadData == null) {
+      throw const AgentCommandFailure('ROI response missing payload.');
+    }
+    return RoiSessionInfo.fromPayload(
       Map<String, dynamic>.from(payloadData),
     );
   }

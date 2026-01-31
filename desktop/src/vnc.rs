@@ -22,6 +22,9 @@ const VNC_NAME: &str = "Vibe Inspect Agent";
 const MAX_FRAME_RATE_MS: u64 = 33;
 const DEFAULT_IDLE_FRAME_RATE_MS: u64 = 120;
 const DEFAULT_KEEPALIVE_MS: u64 = 250;
+const DEFAULT_HIGH_PERF_FRAME_INTERVAL_MS: u64 = 100;
+const HIGH_PERF_INTERVAL_MIN_MS: u64 = 10;
+const HIGH_PERF_INTERVAL_MAX_MS: u64 = 100;
 const ACTIVE_INPUT_WINDOW_MS: u64 = 250;
 const VNC_IDLE_POLL_MS: u64 = 5;
 const ENCODING_RAW: i32 = 0;
@@ -30,11 +33,15 @@ const ENCODING_ZLIB: i32 = 6;
 const ENCODING_TIGHT: i32 = 7;
 const ENCODING_ZRLE: i32 = 16;
 const DIFF_FULL_THRESHOLD: f32 = 0.85;
+const LARGE_UPDATE_THRESHOLD: f32 = 0.6;
+const FAST_TIGHT_COMPRESSION: u8 = 2;
+const FAST_ZRLE_COMPRESSION: u8 = 1;
 const COPYRECT_MATCH_THRESHOLD: f32 = 0.92;
 const ENCODING_COMPRESS_LEVEL_BASE: i32 = -256;
 const ENCODING_QUALITY_LEVEL_BASE: i32 = -32;
 const ENCODING_CURSOR: i32 = -239;
 const ENCODING_DATA_SAVER: i32 = -312;
+const ENCODING_HIGH_PERF: i32 = -313;
 const TIGHT_JPEG_MIN_AREA: usize = 20000;
 
 static CAPTURE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -145,6 +152,7 @@ struct VncSession {
     input_scale_x: f64,
     input_scale_y: f64,
     display_index: usize,
+    high_perf_interval_ms: u64,
     generation: u64,
     guard: Arc<AtomicU64>,
 }
@@ -167,6 +175,12 @@ enum RectUpdate {
 }
 
 type FrameUpdate = Vec<RectUpdate>;
+
+enum DiffOutcome {
+    None,
+    Full,
+    Rect(Rect),
+}
 
 #[derive(Clone, Copy, Debug)]
 struct EncodingPreferences {
@@ -220,6 +234,7 @@ impl VncManager {
         width: Option<u32>,
         height: Option<u32>,
         display_index: Option<usize>,
+        high_perf_interval_ms: Option<u64>,
     ) -> Result<VncSessionInfo, String> {
         let (display, display_index) = resolve_display(display_index)?;
         let screen_width = display.width() as u32;
@@ -239,6 +254,8 @@ impl VncManager {
             width,
             height,
         );
+        let high_perf_interval_ms =
+            resolve_high_perf_interval_ms(high_perf_interval_ms);
         let token = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(24)
@@ -263,6 +280,7 @@ impl VncManager {
             input_scale_x,
             input_scale_y,
             display_index,
+            high_perf_interval_ms,
             generation,
             guard: guard.clone(),
         };
@@ -457,6 +475,7 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
     let last_input_at = Arc::new(AtomicU64::new(current_millis()));
     let data_saver_enabled = Arc::new(AtomicBool::new(false));
+    let high_perf_enabled = Arc::new(AtomicBool::new(false));
     let _capture_handle = spawn_capture_thread(
         session.clone(),
         ready_for_updates.clone(),
@@ -468,6 +487,7 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
         cursor_supported.clone(),
         last_input_at.clone(),
         data_saver_enabled.clone(),
+        high_perf_enabled.clone(),
         frame_tx,
     );
     let _input_handle =
@@ -486,7 +506,13 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     loop {
         tokio::select! {
             Some(update) = frame_rx.recv() => {
-                let message = build_framebuffer_update(update, &encoding_prefs, &pixel_format)?;
+                let message = build_framebuffer_update(
+                    update,
+                    &encoding_prefs,
+                    &pixel_format,
+                    session.width,
+                    session.height,
+                )?;
                 if sender.send(Message::Binary(message.into())).await.is_err() {
                     break;
                 }
@@ -528,6 +554,10 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
                                     );
                                     data_saver_enabled.store(
                                         parse_data_saver(&encodings),
+                                        Ordering::Relaxed,
+                                    );
+                                    high_perf_enabled.store(
+                                        parse_high_perf(&encodings),
                                         Ordering::Relaxed,
                                     );
                                     copyrect_supported.store(
@@ -796,6 +826,17 @@ fn resolve_keepalive_interval() -> Duration {
     Duration::from_millis(millis)
 }
 
+fn resolve_high_perf_interval_ms(override_ms: Option<u64>) -> u64 {
+    let env_value = env::var("VNC_HIGH_PERF_FRAME_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let millis = override_ms
+        .or(env_value)
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_HIGH_PERF_FRAME_INTERVAL_MS);
+    millis.clamp(HIGH_PERF_INTERVAL_MIN_MS, HIGH_PERF_INTERVAL_MAX_MS)
+}
+
 fn guess_capture_dimensions(
     frame_len: usize,
     logical_width: usize,
@@ -898,56 +939,108 @@ fn build_diff_update(
     if expected == 0 || current.len() < expected || previous.len() < expected {
         return None;
     }
-    let rect = diff_rect(current, previous, width, height)?;
+    let diff = diff_rect_with_threshold(current, previous, width, height, DIFF_FULL_THRESHOLD);
     let full_area = width * height;
-    let rect_area = rect.width as usize * rect.height as usize;
     if full_area == 0 {
         return None;
     }
-    if allow_copyrect && rect_area > 0 && (rect_area as f32) / (full_area as f32) >= 0.5 {
-        if let Some(dy) = detect_vertical_scroll(current, previous, width, height) {
-            let abs_dy = dy.abs() as usize;
-            if abs_dy > 0 && abs_dy < height {
-                let overlap_height = height - abs_dy;
-                let overlap_rect = Rect {
-                    x: 0,
-                    y: if dy > 0 { abs_dy as u16 } else { 0 },
-                    width: width as u16,
-                    height: overlap_height as u16,
-                };
-                let src_y = if dy > 0 { 0 } else { abs_dy as u16 };
-                let mut updates = Vec::with_capacity(2);
-                updates.push(RectUpdate::CopyRect {
-                    rect: overlap_rect,
-                    src_x: 0,
-                    src_y,
-                });
-                let exposed_rect = Rect {
-                    x: 0,
-                    y: if dy > 0 { 0 } else { overlap_height as u16 },
-                    width: width as u16,
-                    height: abs_dy as u16,
-                };
-                let data = extract_rect(current, width, exposed_rect);
-                updates.push(RectUpdate::Pixels {
-                    rect: exposed_rect,
-                    data,
-                });
-                return Some(updates);
+    match diff {
+        DiffOutcome::None => None,
+        DiffOutcome::Full => {
+            if allow_copyrect {
+                if let Some(dy) = detect_vertical_scroll(current, previous, width, height) {
+                    let abs_dy = dy.abs() as usize;
+                    if abs_dy > 0 && abs_dy < height {
+                        let overlap_height = height - abs_dy;
+                        let overlap_rect = Rect {
+                            x: 0,
+                            y: if dy > 0 { abs_dy as u16 } else { 0 },
+                            width: width as u16,
+                            height: overlap_height as u16,
+                        };
+                        let src_y = if dy > 0 { 0 } else { abs_dy as u16 };
+                        let mut updates = Vec::with_capacity(2);
+                        updates.push(RectUpdate::CopyRect {
+                            rect: overlap_rect,
+                            src_x: 0,
+                            src_y,
+                        });
+                        let exposed_rect = Rect {
+                            x: 0,
+                            y: if dy > 0 { 0 } else { overlap_height as u16 },
+                            width: width as u16,
+                            height: abs_dy as u16,
+                        };
+                        let data = extract_rect(current, width, exposed_rect);
+                        updates.push(RectUpdate::Pixels {
+                            rect: exposed_rect,
+                            data,
+                        });
+                        return Some(updates);
+                    }
+                }
             }
+            Some(build_full_update(current, width, height))
+        }
+        DiffOutcome::Rect(rect) => {
+            let rect_area = rect.width as usize * rect.height as usize;
+            if allow_copyrect && rect_area > 0 && (rect_area as f32) / (full_area as f32) >= 0.5 {
+                if let Some(dy) = detect_vertical_scroll(current, previous, width, height) {
+                    let abs_dy = dy.abs() as usize;
+                    if abs_dy > 0 && abs_dy < height {
+                        let overlap_height = height - abs_dy;
+                        let overlap_rect = Rect {
+                            x: 0,
+                            y: if dy > 0 { abs_dy as u16 } else { 0 },
+                            width: width as u16,
+                            height: overlap_height as u16,
+                        };
+                        let src_y = if dy > 0 { 0 } else { abs_dy as u16 };
+                        let mut updates = Vec::with_capacity(2);
+                        updates.push(RectUpdate::CopyRect {
+                            rect: overlap_rect,
+                            src_x: 0,
+                            src_y,
+                        });
+                        let exposed_rect = Rect {
+                            x: 0,
+                            y: if dy > 0 { 0 } else { overlap_height as u16 },
+                            width: width as u16,
+                            height: abs_dy as u16,
+                        };
+                        let data = extract_rect(current, width, exposed_rect);
+                        updates.push(RectUpdate::Pixels {
+                            rect: exposed_rect,
+                            data,
+                        });
+                        return Some(updates);
+                    }
+                }
+            }
+            if (rect_area as f32) / (full_area as f32) >= DIFF_FULL_THRESHOLD {
+                return Some(build_full_update(current, width, height));
+            }
+            let data = extract_rect(current, width, rect);
+            Some(vec![RectUpdate::Pixels { rect, data }])
         }
     }
-    if full_area > 0 && (rect_area as f32) / (full_area as f32) >= DIFF_FULL_THRESHOLD {
-        return Some(build_full_update(current, width, height));
-    }
-    let data = extract_rect(current, width, rect);
-    Some(vec![RectUpdate::Pixels { rect, data }])
 }
 
-fn diff_rect(current: &[u8], previous: &[u8], width: usize, height: usize) -> Option<Rect> {
+fn diff_rect_with_threshold(
+    current: &[u8],
+    previous: &[u8],
+    width: usize,
+    height: usize,
+    threshold: f32,
+) -> DiffOutcome {
     if width == 0 || height == 0 {
-        return None;
+        return DiffOutcome::None;
     }
+    let full_area = width.saturating_mul(height);
+    if full_area == 0 {
+        return DiffOutcome::None;
+    }
+    let threshold_area = ((full_area as f32) * threshold).ceil() as usize;
     let mut min_x = width;
     let mut min_y = height;
     let mut max_x = 0usize;
@@ -962,13 +1055,17 @@ fn diff_rect(current: &[u8], previous: &[u8], width: usize, height: usize) -> Op
                 min_y = min_y.min(y);
                 max_x = max_x.max(x);
                 max_y = max_y.max(y);
+                let rect_area = (max_x - min_x + 1) * (max_y - min_y + 1);
+                if rect_area >= threshold_area {
+                    return DiffOutcome::Full;
+                }
             }
         }
     }
     if !changed {
-        return None;
+        return DiffOutcome::None;
     }
-    Some(Rect {
+    DiffOutcome::Rect(Rect {
         x: min_x as u16,
         y: min_y as u16,
         width: (max_x - min_x + 1) as u16,
@@ -1240,16 +1337,25 @@ fn parse_data_saver(encodings: &[i32]) -> bool {
     encodings.iter().any(|encoding| *encoding == ENCODING_DATA_SAVER)
 }
 
+fn parse_high_perf(encodings: &[i32]) -> bool {
+    encodings
+        .iter()
+        .any(|encoding| *encoding == ENCODING_HIGH_PERF)
+}
+
 fn build_framebuffer_update(
     updates: FrameUpdate,
     prefs: &EncodingPreferences,
     pixel_format: &PixelFormatSpec,
+    frame_width: u32,
+    frame_height: u32,
 ) -> Result<Vec<u8>, String> {
     let rect_count = updates.len().min(u16::MAX as usize) as u16;
     let mut buffer = Vec::new();
     buffer.push(0);
     buffer.push(0);
     buffer.extend_from_slice(&rect_count.to_be_bytes());
+    let frame_area = frame_width.saturating_mul(frame_height) as usize;
     for update in updates.into_iter().take(rect_count as usize) {
         match update {
             RectUpdate::CopyRect { rect, src_x, src_y } => {
@@ -1268,6 +1374,9 @@ fn build_framebuffer_update(
                 }
                 let data = &data[..expected_len];
                 let mut encoding = prefs.encoding;
+                let is_large = frame_area > 0
+                    && (rect.width as usize * rect.height as usize) as f32
+                        >= (frame_area as f32) * LARGE_UPDATE_THRESHOLD;
                 if pixel_format.bits_per_pixel == 16
                     && matches!(encoding, ENCODING_TIGHT | ENCODING_ZRLE)
                 {
@@ -1292,23 +1401,29 @@ fn build_framebuffer_update(
                         buffer.extend_from_slice(&compressed);
                     }
                     ENCODING_ZRLE => {
+                        let compression = if is_large { FAST_ZRLE_COMPRESSION } else { 6 };
                         let pf = zrle_pixel_format();
                         let encoded = encode_zrle(
                             data,
                             rect.width,
                             rect.height,
                             &pf,
-                            6,
+                            compression,
                         )
                         .map_err(|error| format!("Failed to encode ZRLE: {error}"))?;
                         buffer.extend_from_slice(&encoded);
                     }
                     ENCODING_TIGHT => {
+                        let compression = if is_large {
+                            prefs.tight_compression.min(FAST_TIGHT_COMPRESSION)
+                        } else {
+                            prefs.tight_compression
+                        };
                         let encoded = encode_tight_rect(
                             data,
                             rect.width,
                             rect.height,
-                            prefs.tight_compression,
+                            compression,
                             prefs.tight_quality,
                             prefs.allow_jpeg,
                         )?;
@@ -1582,6 +1697,7 @@ fn spawn_capture_thread(
     cursor_supported: Arc<AtomicBool>,
     last_input_at: Arc<AtomicU64>,
     data_saver_enabled: Arc<AtomicBool>,
+    high_perf_enabled: Arc<AtomicBool>,
     sender: tokio::sync::mpsc::Sender<FrameUpdate>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -1634,6 +1750,7 @@ fn spawn_capture_thread(
         let mut logged_first_frame = false;
         let (active_interval, idle_interval) = resolve_frame_intervals();
         let keepalive_interval = resolve_keepalive_interval();
+        let high_perf_interval = Duration::from_millis(session.high_perf_interval_ms);
         let idle_poll = Duration::from_millis(VNC_IDLE_POLL_MS);
         let mut last_success = Instant::now();
         let mut last_capture = Instant::now()
@@ -1652,7 +1769,10 @@ fn spawn_capture_thread(
             }
             let input_age = current_millis()
                 .saturating_sub(last_input_at.load(Ordering::Relaxed));
-            let frame_interval = if input_age <= ACTIVE_INPUT_WINDOW_MS {
+            let high_perf = high_perf_enabled.load(Ordering::Relaxed);
+            let frame_interval = if high_perf {
+                high_perf_interval
+            } else if input_age <= ACTIVE_INPUT_WINDOW_MS {
                 active_interval
             } else if data_saver_enabled.load(Ordering::Relaxed) {
                 idle_interval
@@ -1665,6 +1785,7 @@ fn spawn_capture_thread(
                 continue;
             }
             last_capture = Instant::now();
+            let mut sent_update = false;
 
             #[cfg(target_os = "macos")]
             if cursor_supported.load(Ordering::Relaxed) {
@@ -1731,15 +1852,33 @@ fn spawn_capture_thread(
                 if let Some(update) = update {
                     if sender.try_send(update).is_ok() {
                         last_sent = Instant::now();
+                        sent_update = true;
                     }
-                } else if last_sent.elapsed() >= keepalive_interval {
+                } else if !high_perf && last_sent.elapsed() >= keepalive_interval {
                     if sender.try_send(Vec::new()).is_ok() {
                         last_sent = Instant::now();
+                        sent_update = true;
                     }
                 }
             } else if vnc_debug_enabled() && last_success.elapsed() > Duration::from_secs(5) {
                 last_success = Instant::now();
                 vnc_log("vnc capture stalled: no frames ready");
+            }
+
+            if !sent_update
+                && high_perf_enabled.load(Ordering::Relaxed)
+                && last_sent.elapsed() >= high_perf_interval
+            {
+                if let Some(frame) = last_frame.as_ref() {
+                    let update = build_full_update(
+                        frame,
+                        session.width as usize,
+                        session.height as usize,
+                    );
+                    if sender.try_send(update).is_ok() {
+                        last_sent = Instant::now();
+                    }
+                }
             }
         }
     })

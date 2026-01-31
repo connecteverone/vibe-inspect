@@ -34,6 +34,8 @@ void main() {
           jsonEncode({
             'status': 'connected',
             'connected_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+            'auth_token': 'LONGTOKEN123',
+            'device_id': 'device-1',
           }),
           200,
         );

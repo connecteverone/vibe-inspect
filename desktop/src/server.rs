@@ -8,6 +8,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::env;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,11 +22,31 @@ use crate::pairing::{
 };
 use crate::terminal::serve_terminal_socket;
 use crate::vnc::{serve_vnc_socket, VncManager};
+use crate::roi::{RoiManager, RoiSessionRequest};
+use crate::quic::{start_quic_server, QuicServerConfig, QuicServerHandle};
+
+pub struct LocalServerHandle {
+    pub port: u16,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    quic: Option<QuicServerHandle>,
+}
+
+impl LocalServerHandle {
+    pub fn stop(&mut self) {
+        if let Some(sender) = self.shutdown.take() {
+            let _ = sender.send(());
+        }
+        if let Some(handle) = self.quic.take() {
+            handle.stop();
+        }
+    }
+}
 
 #[derive(Clone)]
 struct LocalServerState {
     pairing: Arc<Mutex<PairingState>>,
     vnc: Arc<Mutex<VncManager>>,
+    roi: Arc<Mutex<RoiManager>>,
 }
 
 struct ClientConnectionGuard {
@@ -58,15 +79,27 @@ fn track_client_connection(
     }
 }
 
-pub fn start_local_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind("0.0.0.0:0")?;
+pub fn start_local_server(
+    state: Arc<Mutex<PairingState>>,
+    port: u16,
+) -> Result<LocalServerHandle, std::io::Error> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+    let roi_port = resolve_roi_quic_port();
+    let roi_manager = Arc::new(Mutex::new(RoiManager::new(roi_port)));
+    let quic_handle = start_quic_server(QuicServerConfig {
+        port: roi_port,
+        roi: Some(roi_manager.clone()),
+    })
+    .ok();
     let server_state = LocalServerState {
         pairing: state,
         vnc: vnc_manager,
+        roi: roi_manager,
     };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     thread::spawn(move || {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -87,13 +120,27 @@ pub fn start_local_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::i
 
             let listener = tokio::net::TcpListener::from_std(listener)
                 .expect("local server listener");
-            if let Err(error) = axum::serve(listener, app).await {
+            let server = axum::serve(listener, app).with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            });
+            if let Err(error) = server.await {
                 eprintln!("local server error: {error}");
             }
         });
     });
 
-    Ok(port)
+    Ok(LocalServerHandle {
+        port,
+        shutdown: Some(shutdown_tx),
+        quic: quic_handle,
+    })
+}
+
+fn resolve_roi_quic_port() -> u16 {
+    env::var("ROI_QUIC_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(0)
 }
 
 async fn handle_command(
@@ -109,7 +156,12 @@ async fn handle_command(
     if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
         return response;
     }
-    record_client_activity(&state.pairing, client_id, client_name, source);
+    record_client_activity(
+        &state.pairing,
+        client_id.clone(),
+        client_name.clone(),
+        source,
+    );
 
     let request: AgentCommandRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -169,6 +221,11 @@ async fn handle_command(
         return (StatusCode::OK, Json(json!(response)));
     }
 
+    if request.command == "roi" {
+        let response = handle_roi_command(&request, &state.roi, client_id, client_name);
+        return (StatusCode::OK, Json(json!(response)));
+    }
+
     let response = crate::command::handle_agent_command(request);
     (StatusCode::OK, Json(json!(response)))
 }
@@ -180,6 +237,19 @@ struct VncCommandPayload {
     width: Option<u32>,
     height: Option<u32>,
     display_index: Option<usize>,
+    high_perf_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RoiCommandPayload {
+    action: String,
+    session_id: Option<String>,
+    vnc_session_id: Option<String>,
+    display_index: Option<usize>,
+    framebuffer_width: Option<u32>,
+    framebuffer_height: Option<u32>,
+    screen_width: Option<u32>,
+    screen_height: Option<u32>,
 }
 
 fn handle_vnc_command(
@@ -259,6 +329,7 @@ fn handle_vnc_command(
             payload.width,
             payload.height,
             payload.display_index,
+            payload.high_perf_interval_ms,
         ) {
             Ok(info) => AgentCommandResponse {
                 request_id: request.request_id.clone(),
@@ -319,6 +390,274 @@ fn handle_vnc_command(
                 details: Some(json!({ "command": "vnc" })),
             }),
         }
+    }
+}
+
+fn handle_roi_command(
+    request: &AgentCommandRequest,
+    manager: &Arc<Mutex<RoiManager>>,
+    client_id: Option<String>,
+    client_name: Option<String>,
+) -> AgentCommandResponse {
+    let payload: RoiCommandPayload = match request.payload.clone() {
+        Some(payload) => match serde_json::from_value(payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "invalid_payload".to_string(),
+                        message: format!("Invalid payload for roi command: {error}"),
+                        details: None,
+                    }),
+                };
+            }
+        },
+        None => {
+            return AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: "missing_payload".to_string(),
+                    message: "Missing payload for roi command.".to_string(),
+                    details: Some(json!({ "command": "roi" })),
+                }),
+            };
+        }
+    };
+
+    let action = payload.action.to_lowercase();
+    if action == "start" {
+        let session_id = payload
+            .session_id
+            .clone()
+            .unwrap_or_else(|| request.request_id.clone());
+        let vnc_session_id = payload
+            .vnc_session_id
+            .clone()
+            .unwrap_or_else(|| session_id.clone());
+        let framebuffer_width = match payload.framebuffer_width {
+            Some(value) => value,
+            None => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "missing_payload".to_string(),
+                        message: "Missing framebuffer_width for roi command.".to_string(),
+                        details: Some(json!({ "command": "roi" })),
+                    }),
+                };
+            }
+        };
+        let framebuffer_height = match payload.framebuffer_height {
+            Some(value) => value,
+            None => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "missing_payload".to_string(),
+                        message: "Missing framebuffer_height for roi command.".to_string(),
+                        details: Some(json!({ "command": "roi" })),
+                    }),
+                };
+            }
+        };
+        let screen_width = match payload.screen_width {
+            Some(value) => value,
+            None => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "missing_payload".to_string(),
+                        message: "Missing screen_width for roi command.".to_string(),
+                        details: Some(json!({ "command": "roi" })),
+                    }),
+                };
+            }
+        };
+        let screen_height = match payload.screen_height {
+            Some(value) => value,
+            None => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "missing_payload".to_string(),
+                        message: "Missing screen_height for roi command.".to_string(),
+                        details: Some(json!({ "command": "roi" })),
+                    }),
+                };
+            }
+        };
+
+        let request_payload = RoiSessionRequest {
+            session_id: session_id.clone(),
+            vnc_session_id,
+            client_id,
+            client_name,
+            display_index: payload.display_index,
+            framebuffer_width,
+            framebuffer_height,
+            screen_width,
+            screen_height,
+        };
+        let mut manager = manager.lock().unwrap();
+        let info = manager.start_session(request_payload);
+        return AgentCommandResponse {
+            request_id: request.request_id.clone(),
+            status: AgentCommandStatus::Ok,
+            payload: Some(json!({
+                "type": "roi",
+                "status": "ready",
+                "session_id": info.session_id,
+                "token": info.token,
+                "quic_port": info.quic_port,
+                "display_index": info.display_index,
+                "framebuffer_width": info.framebuffer_width,
+                "framebuffer_height": info.framebuffer_height,
+                "screen_width": info.screen_width,
+                "screen_height": info.screen_height,
+                "issued_at": info.issued_at,
+            })),
+            error: None,
+        };
+    }
+
+    if action == "stop" {
+        let session_id = payload.session_id.unwrap_or_default();
+        let mut manager = manager.lock().unwrap();
+        manager.stop_session(&session_id);
+        return AgentCommandResponse {
+            request_id: request.request_id.clone(),
+            status: AgentCommandStatus::Ok,
+            payload: Some(json!({
+                "type": "roi",
+                "status": "stopped",
+                "session_id": session_id,
+            })),
+            error: None,
+        };
+    }
+
+    AgentCommandResponse {
+        request_id: request.request_id.clone(),
+        status: AgentCommandStatus::Error,
+        payload: None,
+        error: Some(crate::command::AgentCommandError {
+            code: "unsupported_action".to_string(),
+            message: format!("Unsupported ROI action: {}", payload.action),
+            details: Some(json!({ "command": "roi" })),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn roi_start_returns_session_metadata() {
+        let manager = Arc::new(Mutex::new(RoiManager::new(4242)));
+        let request = AgentCommandRequest {
+            request_id: "req-1".to_string(),
+            command: "roi".to_string(),
+            payload: Some(json!({
+                "action": "start",
+                "session_id": "roi-1",
+                "vnc_session_id": "vnc-1",
+                "framebuffer_width": 1920,
+                "framebuffer_height": 1080,
+                "screen_width": 1920,
+                "screen_height": 1080
+            })),
+        };
+
+        let response = handle_roi_command(
+            &request,
+            &manager,
+            Some("client-1".to_string()),
+            Some("Test Client".to_string()),
+        );
+        assert!(matches!(response.status, AgentCommandStatus::Ok));
+        let payload = response.payload.expect("missing payload");
+        assert_eq!(payload["type"], "roi");
+        assert_eq!(payload["status"], "ready");
+        assert_eq!(payload["session_id"], "roi-1");
+        assert_eq!(payload["quic_port"], 4242);
+        assert_eq!(payload["framebuffer_width"], 1920);
+        assert_eq!(payload["framebuffer_height"], 1080);
+    }
+
+    #[test]
+    fn roi_command_http_roundtrip() {
+        let state = Arc::new(Mutex::new(PairingState::default()));
+        let token = {
+            let guard = state.lock().expect("pairing state lock");
+            guard.auth_token().to_string()
+        };
+        let mut server = start_local_server(state, 0).expect("start local server");
+        let port = server.port;
+        let health_url = format!("http://127.0.0.1:{port}/health");
+        let command_url = format!("http://127.0.0.1:{port}/command");
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .build()
+            .expect("http client");
+
+        let mut healthy = false;
+        for _ in 0..10 {
+            if let Ok(response) = client.get(&health_url).send() {
+                if response.status().is_success() {
+                    healthy = true;
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(120));
+        }
+        assert!(healthy, "local server did not become healthy");
+
+        let request = json!({
+            "request_id": "roi-http-1",
+            "command": "roi",
+            "payload": {
+                "action": "start",
+                "session_id": "roi-http-1",
+                "vnc_session_id": "vnc-http-1",
+                "framebuffer_width": 1920,
+                "framebuffer_height": 1080,
+                "screen_width": 1920,
+                "screen_height": 1080
+            }
+        });
+        let response = client
+            .post(&command_url)
+            .header("x-agent-token", token)
+            .json(&request)
+            .send()
+            .expect("roi command response");
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().expect("response json");
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["payload"]["type"], "roi");
+        assert_eq!(body["payload"]["status"], "ready");
+        assert_eq!(body["payload"]["session_id"], "roi-http-1");
+
+        server.stop();
     }
 }
 

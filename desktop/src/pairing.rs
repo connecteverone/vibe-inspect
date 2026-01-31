@@ -15,7 +15,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::State;
 
-const PAIRING_TTL_SECS: u64 = 120;
+const PAIRING_TTL_SECS: u64 = 180;
+const APPROVAL_TTL_SECS: u64 = 60;
 const TUNNEL_READY_TIMEOUT: Duration = Duration::from_secs(12);
 const LOCAL_SERVER_HEALTH_TIMEOUT: Duration = Duration::from_millis(500);
 const LOCAL_SERVER_HEALTH_RETRIES: usize = 3;
@@ -47,6 +48,7 @@ pub struct PairingSessionResponse {
     pub wifi_ssid: Option<String>,
     pub local_ips: Vec<String>,
     pub frp_url: Option<String>,
+    pub listen_port: u16,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,6 +85,7 @@ pub struct PairingSessionInfo {
 pub struct PendingConfirmationInfo {
     pub token: String,
     pub requested_at: u64,
+    pub expires_at: u64,
     pub source: Option<String>,
     pub client_id: Option<String>,
     pub client_name: Option<String>,
@@ -101,8 +104,13 @@ pub struct PairingStatusResponse {
     pub auth_token: String,
     pub auth_tokens: Vec<AuthTokenSnapshot>,
     pub wifi_ssid: Option<String>,
+    pub location_permission: Option<String>,
+    pub bundle_id: Option<String>,
+    pub bundle_path: Option<String>,
+    pub location_usage_key: Option<bool>,
     pub local_ips: Vec<String>,
     pub frp_url: Option<String>,
+    pub listen_port: u16,
     pub paired_devices: Vec<ClientSnapshot>,
     pub active_devices: Vec<ClientSnapshot>,
     pub connected_devices: Vec<ClientSnapshot>,
@@ -138,6 +146,7 @@ pub struct PairingState {
     tunnel: Option<TunnelState>,
     tunnel_error: Option<String>,
     local_port: Option<u16>,
+    local_server: Option<server::LocalServerHandle>,
     identity: AgentIdentity,
     clients: HashMap<String, ClientInfo>,
     blocked_clients: HashMap<String, Option<u64>>,
@@ -152,10 +161,11 @@ impl Default for PairingState {
             session: None,
             connected_at: None,
             pending_confirmation: None,
-            requires_approval: false,
+            requires_approval: true,
             tunnel: None,
             tunnel_error: None,
             local_port: None,
+            local_server: None,
             identity,
             clients: HashMap::new(),
             blocked_clients: HashMap::new(),
@@ -176,6 +186,10 @@ impl PairingState {
 
     pub fn frp_url(&self) -> Option<String> {
         self.identity.frp_url.clone()
+    }
+
+    pub fn listen_port(&self) -> u16 {
+        self.identity.listen_port()
     }
 
     pub fn is_auth_token_valid(&self, token: &str, client_id: Option<&str>) -> bool {
@@ -254,6 +268,7 @@ struct PairingSession {
 struct PendingConfirmation {
     token: String,
     requested_at: u64,
+    expires_at: u64,
     source: Option<String>,
     client_id: Option<String>,
     client_name: Option<String>,
@@ -366,6 +381,7 @@ pub fn create_pairing_session(
         wifi_ssid,
         local_ips,
         frp_url,
+        listen_port: pairing_state.listen_port(),
     })
 }
 
@@ -392,6 +408,12 @@ pub fn get_pairing_status(
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    let now = current_timestamp()?;
+    if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
+        if is_pending_expired(pending, now) {
+            pairing_state.pending_confirmation = None;
+        }
+    }
     refresh_local_server(state.inner(), &mut pairing_state);
     Ok(build_pairing_status(&pairing_state))
 }
@@ -404,22 +426,7 @@ pub fn set_pairing_requires_approval(
     let mut pairing_state = state
         .lock()
         .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
-    pairing_state.requires_approval = requires_approval;
-    if !requires_approval && pairing_state.pending_confirmation.is_some() {
-        let now = current_timestamp()?;
-        pairing_state.connected_at = Some(now);
-        if let Some(pending) = pairing_state.pending_confirmation.take() {
-            register_client_pairing(
-                &mut pairing_state,
-                pending.client_id,
-                pending.client_name,
-                pending.source,
-                now,
-            );
-        } else {
-            pairing_state.pending_confirmation = None;
-        }
-    }
+    pairing_state.requires_approval = requires_approval || pairing_state.requires_approval;
     refresh_local_server(state.inner(), &mut pairing_state);
     Ok(build_pairing_status(&pairing_state))
 }
@@ -446,6 +453,36 @@ pub fn set_frp_url(
 }
 
 #[tauri::command]
+pub fn set_listen_port(
+    state: State<Arc<Mutex<PairingState>>>,
+    port: u16,
+) -> Result<PairingStatusResponse, PairingError> {
+    if port == 0 {
+        return Err(PairingError::new(
+            "invalid_port",
+            "Port must be between 1 and 65535.",
+        ));
+    }
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    pairing_state
+        .identity
+        .set_listen_port(port)
+        .map_err(|_| PairingError::new("identity_error", "Failed to update listen port."))?;
+    match ensure_local_server(state.inner(), &mut pairing_state) {
+        Ok(_) => {
+            clear_local_server_error(&mut pairing_state);
+            Ok(build_pairing_status(&pairing_state))
+        }
+        Err(error) => {
+            pairing_state.tunnel_error = Some(error.message.clone());
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub fn approve_pairing_request(
     state: State<Arc<Mutex<PairingState>>>,
 ) -> Result<PairingConfirmResponse, PairingError> {
@@ -462,6 +499,15 @@ pub fn approve_pairing_request(
             "no_pending",
             "No pending pairing requests.",
         ));
+    }
+    if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
+        if is_pending_expired(pending, now) {
+            pairing_state.pending_confirmation = None;
+            return Err(PairingError::new(
+                "approval_timeout",
+                "Approval window expired. Generate a new QR token and retry.",
+            ));
+        }
     }
     if is_session_expired(session, now) {
         return Err(PairingError::new(
@@ -705,6 +751,18 @@ pub fn forget_client(
     pairing_state.clients.remove(&client_id);
     pairing_state.blocked_clients.remove(&client_id);
     pairing_state.connected_clients.remove(&client_id);
+    let clear_pending = pairing_state
+        .pending_confirmation
+        .as_ref()
+        .map(|pending| pending.client_id.as_deref() == Some(client_id.as_str()))
+        .unwrap_or(false);
+    if clear_pending {
+        pairing_state.pending_confirmation = None;
+    }
+    pairing_state
+        .identity
+        .revoke_tokens_for_client(&client_id)
+        .map_err(|_| PairingError::new("identity_error", "Failed to revoke token."))?;
     Ok(build_pairing_status(&pairing_state))
 }
 
@@ -765,48 +823,60 @@ fn confirm_pairing_locked(
             "Shared secret does not match.",
         ));
     }
-
-    if pairing_state.requires_approval {
-        if let Some(connected_at) = pairing_state.connected_at {
-            let auth_token = resolve_client_token(pairing_state, client_id.as_deref());
+    if let Some(id) = client_id.as_deref() {
+        if let Some(record) = pairing_state.identity.find_token_for_client(id) {
+            pairing_state.connected_at = Some(now);
+            register_client_pairing(
+                pairing_state,
+                client_id,
+                client_name,
+                source,
+                now,
+            );
             return Ok(PairingConfirmResponse {
                 status: "connected".to_string(),
-                connected_at: Some(connected_at),
+                connected_at: Some(now),
                 device_id: Some(pairing_state.identity.device_id.clone()),
-                auth_token: Some(auth_token),
+                auth_token: Some(record.token),
             });
         }
-        pairing_state.pending_confirmation = Some(PendingConfirmation {
-            token: session.token.clone(),
-            requested_at: now,
-            source,
-            client_id: client_id.clone(),
-            client_name: client_name.clone(),
-        });
-        return Ok(PairingConfirmResponse {
-            status: "pending".to_string(),
-            connected_at: None,
-            device_id: None,
-            auth_token: None,
-        });
     }
 
-    pairing_state.connected_at = Some(now);
-    pairing_state.pending_confirmation = None;
-    let auth_token = resolve_client_token(pairing_state, client_id.as_deref());
-    register_client_pairing(
-        pairing_state,
-        client_id,
-        client_name,
-        source,
-        now,
-    );
+    if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
+        if is_pending_expired(pending, now) {
+            pairing_state.pending_confirmation = None;
+            return Err(PairingError::new(
+                "approval_timeout",
+                "Approval window expired. Generate a new QR token and retry.",
+            ));
+        }
+        if pending.client_id.as_deref() == client_id.as_deref() {
+            return Ok(PairingConfirmResponse {
+                status: "pending".to_string(),
+                connected_at: None,
+                device_id: None,
+                auth_token: None,
+            });
+        }
+        return Err(PairingError::new(
+            "approval_pending",
+            "Another device is awaiting approval.",
+        ));
+    }
 
+    pairing_state.pending_confirmation = Some(PendingConfirmation {
+        token: session.token.clone(),
+        requested_at: now,
+        expires_at: compute_approval_expires_at(now),
+        source,
+        client_id: client_id.clone(),
+        client_name: client_name.clone(),
+    });
     Ok(PairingConfirmResponse {
-        status: "connected".to_string(),
-        connected_at: Some(now),
-        device_id: Some(pairing_state.identity.device_id.clone()),
-        auth_token: Some(auth_token),
+        status: "pending".to_string(),
+        connected_at: None,
+        device_id: None,
+        auth_token: None,
     })
 }
 
@@ -820,6 +890,7 @@ fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
         PendingConfirmationInfo {
             token: pending.token.clone(),
             requested_at: pending.requested_at,
+            expires_at: pending.expires_at,
             source: pending.source.clone(),
             client_id: pending.client_id.clone(),
             client_name: pending.client_name.clone(),
@@ -828,6 +899,8 @@ fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
     let local_urls = current_local_urls(pairing_state);
     let local_ips = current_local_ips();
     let wifi_ssid = current_wifi_ssid();
+    let location_permission = current_location_permission();
+    let (bundle_id, bundle_path, location_usage_key) = current_bundle_diagnostics();
     let frp_url = pairing_state.identity.frp_url.clone();
     let paired_devices = client_snapshots(pairing_state, false);
     let active_devices = client_snapshots(pairing_state, true);
@@ -845,8 +918,13 @@ fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
         auth_token: pairing_state.identity.auth_token.clone(),
         auth_tokens: auth_token_snapshots(pairing_state),
         wifi_ssid,
+        location_permission,
+        bundle_id,
+        bundle_path,
+        location_usage_key,
         local_ips,
         frp_url,
+        listen_port: pairing_state.listen_port(),
         paired_devices,
         active_devices,
         connected_devices,
@@ -940,17 +1018,25 @@ fn ensure_local_server(
     state: &Arc<Mutex<PairingState>>,
     pairing_state: &mut PairingState,
 ) -> Result<u16, PairingError> {
-    if let Some(port) = pairing_state.local_port {
-        if is_local_server_healthy(port) {
-            return Ok(port);
+    let desired_port = pairing_state.listen_port();
+    if let Some(handle) = pairing_state.local_server.as_ref() {
+        if handle.port == desired_port && is_local_server_healthy(handle.port) {
+            pairing_state.local_port = Some(handle.port);
+            return Ok(handle.port);
         }
-        pairing_state.local_port = None;
     }
 
-    match start_local_tunnel_server(state.clone()) {
-        Ok(port) => {
+    if let Some(mut handle) = pairing_state.local_server.take() {
+        handle.stop();
+    }
+    pairing_state.local_port = None;
+
+    match start_local_tunnel_server(state.clone(), desired_port) {
+        Ok(handle) => {
+            let port = handle.port;
+            pairing_state.local_port = Some(port);
+            pairing_state.local_server = Some(handle);
             if is_local_server_healthy(port) {
-                pairing_state.local_port = Some(port);
                 Ok(port)
             } else {
                 pairing_state.local_port = None;
@@ -960,12 +1046,14 @@ fn ensure_local_server(
                 ))
             }
         }
-        Err(_) => {
+        Err(error) => {
             pairing_state.local_port = None;
-            Err(PairingError::new(
-                "local_server_unavailable",
-                LOCAL_SERVER_ERROR_MESSAGE,
-            ))
+            Err(PairingError {
+                code: "local_server_unavailable".to_string(),
+                message: format!(
+                    "Local server unavailable. Failed to bind port {desired_port}: {error}"
+                ),
+            })
         }
     }
 }
@@ -1012,8 +1100,11 @@ fn is_local_server_healthy(port: u16) -> bool {
     false
 }
 
-fn start_local_tunnel_server(state: Arc<Mutex<PairingState>>) -> Result<u16, std::io::Error> {
-    server::start_local_server(state)
+fn start_local_tunnel_server(
+    state: Arc<Mutex<PairingState>>,
+    port: u16,
+) -> Result<server::LocalServerHandle, std::io::Error> {
+    server::start_local_server(state, port)
 }
 
 fn start_cloudflared_tunnel(port: u16) -> Result<TunnelHandle, TunnelStartError> {
@@ -1092,11 +1183,26 @@ fn compute_expires_at(now: u64) -> u64 {
     }
 }
 
+fn compute_approval_expires_at(now: u64) -> u64 {
+    if APPROVAL_TTL_SECS == 0 {
+        0
+    } else {
+        now.saturating_add(APPROVAL_TTL_SECS)
+    }
+}
+
 fn is_session_expired(session: &PairingSession, now: u64) -> bool {
     if session.expires_at == 0 {
         return false;
     }
     now > session.expires_at
+}
+
+fn is_pending_expired(pending: &PendingConfirmation, now: u64) -> bool {
+    if pending.expires_at == 0 {
+        return false;
+    }
+    now > pending.expires_at
 }
 
 fn auth_failure_key(client_id: Option<&str>) -> String {
@@ -1291,6 +1397,9 @@ pub(crate) fn current_local_urls(pairing_state: &PairingState) -> Vec<String> {
                     // Skip link-local IPv4 (APIPA) addresses.
                     continue;
                 }
+                if !is_private_ipv4(addr) {
+                    continue;
+                }
                 urls.push(format!("http://{}:{}", addr, port));
             }
         }
@@ -1312,6 +1421,9 @@ pub(crate) fn current_local_ips() -> Vec<String> {
                 if octets[0] == 169 && octets[1] == 254 {
                     continue;
                 }
+                if !is_private_ipv4(addr) {
+                    continue;
+                }
                 ips.push(addr.to_string());
             }
         }
@@ -1324,23 +1436,34 @@ pub(crate) fn current_local_ips() -> Vec<String> {
 pub(crate) fn current_wifi_ssid() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        let output = std::process::Command::new(
+        if let Some(ssid) = wifi_ssid_from_corewlan() {
+            return Some(ssid);
+        }
+        if let Ok(output) = std::process::Command::new(
             "/System/Library/PrivateFrameworks/Apple80211.framework/Resources/airport",
         )
         .arg("-I")
         .output()
-        .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("SSID:") {
-                let ssid = rest.trim();
-                if !ssid.is_empty() {
-                    return Some(ssid.to_string());
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let trimmed = line.trim();
+                    if let Some(rest) = trimmed.strip_prefix("SSID:") {
+                        let ssid = rest.trim();
+                        if !ssid.is_empty() {
+                            return Some(ssid.to_string());
+                        }
+                    }
                 }
+            }
+        }
+        if let Some(ssid) = wifi_ssid_from_networksetup() {
+            return Some(ssid);
+        }
+        for device in ["en0", "en1", "en2"] {
+            if let Some(ssid) = wifi_ssid_from_airportnetwork(device) {
+                return Some(ssid);
             }
         }
     }
@@ -1398,6 +1521,205 @@ pub(crate) fn current_wifi_ssid() -> Option<String> {
         }
     }
     None
+}
+
+pub(crate) fn current_location_permission() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some(location_permission_state());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+pub(crate) fn current_bundle_diagnostics() -> (Option<String>, Option<String>, Option<bool>) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{ns_string, NSBundle};
+        let bundle = NSBundle::mainBundle();
+        let bundle_id = bundle.bundleIdentifier().map(|value| value.to_string());
+        let bundle_path = Some(bundle.bundlePath().to_string());
+        let key = ns_string!("NSLocationWhenInUseUsageDescription");
+        let has_usage_key = bundle.objectForInfoDictionaryKey(key).is_some();
+        return (bundle_id, bundle_path, Some(has_usage_key));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        (None, None, None)
+    }
+}
+
+#[tauri::command]
+pub fn request_location_permission(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.run_on_main_thread(|| {
+            request_location_authorization();
+        });
+    }
+}
+
+#[tauri::command]
+pub fn open_location_settings() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices";
+        return std::process::Command::new("open")
+            .arg(url)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn wifi_ssid_from_corewlan() -> Option<String> {
+    use objc2::rc::autoreleasepool;
+    use objc2_core_wlan::CWWiFiClient;
+
+    autoreleasepool(|_| {
+        let client = unsafe { CWWiFiClient::sharedWiFiClient() };
+        let interface = unsafe { client.interface()? };
+        let ssid = unsafe { interface.ssid()? };
+        let value = ssid.to_string();
+        if value.trim().is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn wifi_ssid_from_networksetup() -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/networksetup")
+        .arg("-listallhardwareports")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut is_wifi = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Hardware Port:") {
+            let port = rest.trim();
+            is_wifi =
+                port.eq_ignore_ascii_case("Wi-Fi") || port.eq_ignore_ascii_case("AirPort");
+            continue;
+        }
+        if is_wifi {
+            if let Some(rest) = trimmed.strip_prefix("Device:") {
+                let device = rest.trim();
+                if device.is_empty() {
+                    continue;
+                }
+                if let Some(ssid) = wifi_ssid_from_airportnetwork(device) {
+                    return Some(ssid);
+                }
+                break;
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn wifi_ssid_from_airportnetwork(device: &str) -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/networksetup")
+        .args(["-getairportnetwork", device])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Some(pos) = stdout.find(':') {
+        let ssid = stdout[pos + 1..].trim();
+        if !ssid.is_empty()
+            && !ssid.contains("not associated")
+            && !ssid.contains("not connected")
+        {
+            return Some(ssid.to_string());
+        }
+    }
+    None
+}
+
+fn is_private_ipv4(addr: std::net::Ipv4Addr) -> bool {
+    let octets = addr.octets();
+    match octets[0] {
+        10 => true,
+        172 => (16..=31).contains(&octets[1]),
+        192 => octets[1] == 168,
+        100 => (64..=127).contains(&octets[1]),
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreLocation", kind = "framework")]
+extern "C" {}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn request_location_authorization() {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::msg_send;
+    use std::ffi::CStr;
+    use std::sync::atomic::{AtomicPtr, Ordering};
+
+    static MANAGER: AtomicPtr<AnyObject> = AtomicPtr::new(std::ptr::null_mut());
+
+    autoreleasepool(|_| unsafe {
+        let existing = MANAGER.load(Ordering::SeqCst);
+        if !existing.is_null() {
+            let _: () = msg_send![existing, requestWhenInUseAuthorization];
+            return;
+        }
+        let class_name = CStr::from_bytes_with_nul(b"CLLocationManager\0").ok();
+        let Some(class) = class_name.and_then(AnyClass::get) else {
+            return;
+        };
+        let manager: *mut AnyObject = msg_send![class, alloc];
+        let manager: *mut AnyObject = msg_send![manager, init];
+        let _: () = msg_send![manager, requestWhenInUseAuthorization];
+        MANAGER.store(manager, Ordering::SeqCst);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn location_permission_state() -> String {
+    use objc2::runtime::AnyClass;
+    use objc2::msg_send;
+    use std::ffi::CStr;
+
+    unsafe {
+        let class_name = CStr::from_bytes_with_nul(b"CLLocationManager\0").ok();
+        let Some(class) = class_name.and_then(AnyClass::get) else {
+            return "unknown".to_string();
+        };
+        let enabled: bool = msg_send![class, locationServicesEnabled];
+        if !enabled {
+            return "disabled".to_string();
+        }
+        let status: i32 = msg_send![class, authorizationStatus];
+        match status {
+            0 => "not_determined",
+            1 => "restricted",
+            2 => "denied",
+            3 | 4 => "authorized",
+            _ => "unknown",
+        }
+        .to_string()
+    }
 }
 
 fn build_qr_svg(payload: &str) -> Result<String, PairingError> {

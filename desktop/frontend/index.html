@@ -137,6 +137,30 @@
         display: none;
       }
 
+      .location-alert {
+        margin: 16px 0 0;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(251, 191, 36, 0.35);
+        background: rgba(120, 53, 15, 0.22);
+        color: #fde68a;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-weight: 600;
+      }
+
+      .location-alert .meta {
+        font-weight: 500;
+        color: rgba(253, 230, 138, 0.8);
+        font-size: 13px;
+      }
+
+      .location-alert.hidden {
+        display: none;
+      }
+
       .app-disabled .grid,
       .app-disabled .settings-view {
         opacity: 0.55;
@@ -287,21 +311,23 @@
         color: var(--ink-muted);
       }
 
-      .qr-frame {
+      .qr-stack {
         display: grid;
+        gap: 12px;
+        justify-items: center;
+        margin: 14px 0 8px;
+      }
+
+      .qr-frame {
+        display: none;
         place-items: center;
-        min-height: 240px;
-        border-radius: 16px;
-        border: 1px dashed rgba(148, 163, 184, 0.28);
-        background:
-          repeating-linear-gradient(
-            135deg,
-            rgba(34, 197, 94, 0.12),
-            rgba(34, 197, 94, 0.12) 12px,
-            transparent 12px,
-            transparent 24px
-          );
-        color: var(--ink-muted);
+        width: 214px;
+        height: 214px;
+        padding: 12px;
+        border-radius: 18px;
+        background: #ffffff;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
       }
 
       .qr-frame svg {
@@ -310,8 +336,31 @@
       }
 
       .qr-frame.loaded {
-        background: #ffffff;
-        border: 1px solid rgba(148, 163, 184, 0.2);
+        display: grid;
+      }
+
+      .qr-empty {
+        display: none;
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px dashed rgba(148, 163, 184, 0.24);
+        background: rgba(15, 23, 42, 0.45);
+        color: var(--ink-muted);
+        text-align: center;
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+
+      .qr-empty strong {
+        display: block;
+        font-size: 0.86rem;
+        color: var(--ink);
+        margin-bottom: 4px;
+      }
+
+      .qr-empty.active {
+        display: block;
       }
 
       .meta-grid {
@@ -670,7 +719,7 @@
           <div>
             <h1>Vibe Inspect Desktop Agent</h1>
             <p>
-              QR is a one-time handshake. It expires after 2 minutes and hides
+              QR is a one-time handshake. It expires after 3 minutes and hides
               automatically. Use long-lived tokens for ongoing access.
             </p>
           </div>
@@ -693,6 +742,13 @@
           </div>
         </div>
       </div>
+      <div class="location-alert hidden" id="locationAlert">
+        <div>
+          需要定位权限以读取 Wi-Fi SSID
+          <div class="meta">请在系统设置中允许 Vibe Inspect Agent 使用定位服务。</div>
+        </div>
+        <button class="secondary mini" id="openLocationSettings">打开设置</button>
+      </div>
 
       <section class="grid" id="overviewView">
         <aside class="sidebar">
@@ -700,11 +756,19 @@
             <div class="card-header">
               <div>
                 <h2 class="card-title">Pairing QR</h2>
-                <div class="hint">Generate, then scan within 2 minutes</div>
+                <div class="hint">Generate, then scan within 3 minutes</div>
               </div>
               <button class="ghost" id="copyPayload">Copy payload</button>
             </div>
-            <div class="qr-frame" id="qr">Loading QR...</div>
+            <div class="qr-stack">
+              <div class="qr-frame" id="qr" aria-hidden="true"></div>
+              <div class="qr-empty active" id="qrEmpty">
+                <strong id="qrEmptyTitle">No active QR</strong>
+                <div id="qrEmptyMessage">
+                  Click "New handshake" to generate a 3-minute QR.
+                </div>
+              </div>
+            </div>
             <div class="meta-grid">
               <div class="meta-item">
                 <span>Pairing token</span>
@@ -805,6 +869,14 @@
               <div>
                 <div class="hint">Wi-Fi SSID</div>
                 <div class="payload" id="wifiSsid">--</div>
+                <div class="hint" style="margin-top: 10px">Location permission</div>
+                <div class="payload" id="locationPermission">--</div>
+                <div class="hint" style="margin-top: 10px">Bundle ID</div>
+                <div class="payload" id="bundleId">--</div>
+                <div class="hint" style="margin-top: 10px">Bundle path</div>
+                <div class="payload" id="bundlePath">--</div>
+                <div class="hint" style="margin-top: 10px">Location usage key</div>
+                <div class="payload" id="locationUsageKey">--</div>
               </div>
               <div>
                 <div class="hint">Local IPs</div>
@@ -914,6 +986,25 @@
             <button class="primary" id="saveFrpUrl">Save URL</button>
           </div>
         </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Local server port</h2>
+              <div class="hint">Default 58888</div>
+            </div>
+          </div>
+          <div class="token-controls">
+            <input
+              type="number"
+              id="listenPortInput"
+              placeholder="58888"
+              min="1"
+              max="65535"
+              autocomplete="off"
+            />
+            <button class="primary" id="saveListenPort">Save port</button>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -922,8 +1013,15 @@
         window.__TAURI__?.core?.invoke ?? window.__TAURI__?.invoke ?? null;
       const shellEl = document.querySelector(".shell");
       const bridgeAlertEl = document.getElementById("bridgeAlert");
+      const locationAlertEl = document.getElementById("locationAlert");
+      const openLocationSettingsBtn = document.getElementById(
+        "openLocationSettings"
+      );
       const statusEl = document.getElementById("status");
       const qrEl = document.getElementById("qr");
+      const qrEmptyEl = document.getElementById("qrEmpty");
+      const qrEmptyTitleEl = document.getElementById("qrEmptyTitle");
+      const qrEmptyMessageEl = document.getElementById("qrEmptyMessage");
       const tokenEl = document.getElementById("token");
       const secretEl = document.getElementById("secret");
       const expiresEl = document.getElementById("expires");
@@ -931,6 +1029,12 @@
       const localUrlsEl = document.getElementById("localUrls");
       const localIpsEl = document.getElementById("localIps");
       const wifiSsidEl = document.getElementById("wifiSsid");
+      const locationPermissionEl = document.getElementById(
+        "locationPermission"
+      );
+      const bundleIdEl = document.getElementById("bundleId");
+      const bundlePathEl = document.getElementById("bundlePath");
+      const locationUsageKeyEl = document.getElementById("locationUsageKey");
       const tunnelUrlEl = document.getElementById("tunnelUrl");
       const frpUrlEl = document.getElementById("frpUrl");
       const tunnelErrorEl = document.getElementById("tunnelError");
@@ -962,6 +1066,8 @@
       const customTokenLabelInput = document.getElementById("customTokenLabel");
       const frpUrlInput = document.getElementById("frpUrlInput");
       const saveFrpUrlBtn = document.getElementById("saveFrpUrl");
+      const listenPortInput = document.getElementById("listenPortInput");
+      const saveListenPortBtn = document.getElementById("saveListenPort");
 
       const viewTabs = document.querySelectorAll(".view-tabs .tab");
       const overviewView = document.getElementById("overviewView");
@@ -971,6 +1077,8 @@
       let syncingToggle = false;
       let authTokenRaw = null;
       let authTokenVisible = false;
+      let locationSettingsOpened = false;
+      let bundleIdValue = null;
 
       function setStatus(message, tone = "ok") {
         if (!statusEl) return;
@@ -991,13 +1099,20 @@
           generateTokenBtn,
           addTokenBtn,
           saveFrpUrlBtn,
+          saveListenPortBtn,
         ];
         controls.forEach((btn) => {
           if (!btn) return;
-          btn.disabled = !enabled;
-          btn.classList.toggle("button-disabled", !enabled);
+          const shouldEnable = enabled && !(btn === copyBtn && !session);
+          btn.disabled = !shouldEnable;
+          btn.classList.toggle("button-disabled", !shouldEnable);
         });
-        const inputs = [customTokenInput, customTokenLabelInput, frpUrlInput];
+        const inputs = [
+          customTokenInput,
+          customTokenLabelInput,
+          frpUrlInput,
+          listenPortInput,
+        ];
         inputs.forEach((input) => {
           if (!input) return;
           input.disabled = !enabled;
@@ -1087,11 +1202,17 @@
           qrEl.innerHTML = data.qr_svg;
           qrEl.classList.add("loaded");
         }
+        if (qrEmptyEl) qrEmptyEl.classList.remove("active");
+        if (copyBtn) {
+          copyBtn.disabled = false;
+          copyBtn.classList.remove("button-disabled");
+        }
         if (expiresEl) expiresEl.textContent = formatExpiry(data.expires_at);
         if (deviceIdEl) deviceIdEl.textContent = data.device_id || "--";
         setAuthToken(data.auth_token);
         renderWifiSsid(data.wifi_ssid);
         renderLocalIps(data.local_ips);
+        renderListenPort(data.listen_port);
         updateConnectionMode(data);
       }
 
@@ -1099,8 +1220,22 @@
         session = null;
         if (qrEl) {
           qrEl.classList.remove("loaded");
-          qrEl.textContent =
-            message || 'QR expired. Click "New handshake" to generate a new one.';
+          qrEl.innerHTML = "";
+        }
+        if (qrEmptyEl) qrEmptyEl.classList.add("active");
+        if (qrEmptyTitleEl) {
+          qrEmptyTitleEl.textContent =
+            message && message.toLowerCase().includes("expired")
+              ? "QR expired"
+              : "No active QR";
+        }
+        if (qrEmptyMessageEl) {
+          qrEmptyMessageEl.textContent =
+            message || 'Click "New handshake" to generate a 3-minute QR.';
+        }
+        if (copyBtn) {
+          copyBtn.disabled = true;
+          copyBtn.classList.add("button-disabled");
         }
         if (tokenEl) tokenEl.textContent = "--";
         if (secretEl) secretEl.textContent = "--";
@@ -1149,6 +1284,89 @@
         wifiSsidEl.textContent = ssid && ssid.trim().length ? ssid : "--";
       }
 
+      function renderLocationPermission(permission) {
+        if (!locationAlertEl) return;
+        if (locationPermissionEl) {
+          locationPermissionEl.textContent = permission
+            ? formatLocationPermission(permission)
+            : "--";
+        }
+        if (!permission || permission === "authorized") {
+          locationAlertEl.classList.add("hidden");
+          return;
+        }
+        locationAlertEl.classList.remove("hidden");
+        const metaEl = locationAlertEl.querySelector(".meta");
+        if (metaEl) {
+          if (permission === "disabled") {
+            metaEl.textContent = "定位服务已关闭，请先开启系统定位服务。";
+          } else if (permission === "restricted") {
+            metaEl.textContent = "定位服务受限，请检查系统限制或家长控制。";
+          } else if (permission === "not_determined") {
+            if (!bundleIdValue) {
+              metaEl.textContent =
+                "当前不是从 .app 启动，系统不会弹窗。请用 .app 启动。";
+            } else {
+              metaEl.textContent = "需要你在弹窗中允许定位权限。";
+            }
+          } else if (permission === "denied") {
+            metaEl.textContent =
+              "请在系统设置中允许 Vibe Inspect Agent 使用定位服务。";
+          } else {
+            metaEl.textContent = "请检查定位权限设置。";
+          }
+        }
+        if (permission === "not_determined" && invoke && bundleIdValue) {
+          invoke("request_location_permission").catch(() => {});
+        }
+        if (
+          (permission === "denied" ||
+            permission === "restricted" ||
+            permission === "disabled") &&
+          invoke &&
+          !locationSettingsOpened
+        ) {
+          locationSettingsOpened = true;
+          invoke("open_location_settings").catch(() => {});
+        }
+      }
+
+      function formatLocationPermission(permission) {
+        switch (permission) {
+          case "authorized":
+            return "已授权";
+          case "not_determined":
+            return "未请求";
+          case "denied":
+            return "已拒绝";
+          case "restricted":
+            return "受限";
+          case "disabled":
+            return "系统关闭";
+          default:
+            return permission || "未知";
+        }
+      }
+
+      function renderBundleDiagnostics(data) {
+        bundleIdValue = data?.bundle_id || null;
+        if (bundleIdEl) {
+          bundleIdEl.textContent = bundleIdValue || "--";
+        }
+        if (bundlePathEl) {
+          bundlePathEl.textContent = data?.bundle_path || "--";
+        }
+        if (locationUsageKeyEl) {
+          if (data?.location_usage_key === true) {
+            locationUsageKeyEl.textContent = "已配置";
+          } else if (data?.location_usage_key === false) {
+            locationUsageKeyEl.textContent = "缺失";
+          } else {
+            locationUsageKeyEl.textContent = "--";
+          }
+        }
+      }
+
       function renderTunnel(tunnelUrl, tunnelError) {
         if (tunnelUrlEl) tunnelUrlEl.textContent = tunnelUrl || "--";
         if (!tunnelErrorEl) return;
@@ -1166,6 +1384,14 @@
         frpUrlEl.textContent = url && url.trim().length ? url : "--";
         if (frpUrlInput && document.activeElement !== frpUrlInput) {
           frpUrlInput.value = url || "";
+        }
+      }
+
+      function renderListenPort(port) {
+        if (!listenPortInput) return;
+        const value = port ? String(port) : "";
+        if (document.activeElement !== listenPortInput) {
+          listenPortInput.value = value;
         }
       }
 
@@ -1542,7 +1768,9 @@
           const when = new Date(pending.requested_at * 1000).toLocaleTimeString();
           const source = pending.source ? ` from ${pending.source}` : "";
           const name = pending.client_name ? ` (${pending.client_name})` : "";
-          pendingMetaEl.textContent = `Token ${pending.token}${name} requested ${when}${source}.`;
+          const expiry = pending.expires_at ? formatExpiry(pending.expires_at) : null;
+          const expiryText = expiry ? ` Approval window: ${expiry}.` : "";
+          pendingMetaEl.textContent = `Token ${pending.token}${name} requested ${when}${source}.${expiryText}`;
         } else {
           approvalCard.classList.add("hidden");
           pendingMetaEl.textContent = "No pending requests.";
@@ -1565,6 +1793,8 @@
           setAuthToken(data.auth_token);
         }
         renderWifiSsid(data.wifi_ssid);
+        renderBundleDiagnostics(data);
+        renderLocationPermission(data.location_permission);
         renderLocalIps(data.local_ips);
         if (data.connected_at) {
           setStatus("Paired and connected.");
@@ -1579,6 +1809,7 @@
         renderLocalUrls(data.local_urls);
         renderTunnel(data.tunnel_url, data.tunnel_error);
         renderFrpUrl(data.frp_url);
+        renderListenPort(data.listen_port);
         renderPending(data.pending);
         updateConnectionMode(data);
         updateCounts(data);
@@ -1675,6 +1906,17 @@
         });
       }
 
+      if (openLocationSettingsBtn) {
+        openLocationSettingsBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          try {
+            await invoke("open_location_settings");
+          } catch (error) {
+            console.error(error);
+          }
+        });
+      }
+
       if (generateTokenBtn) {
         generateTokenBtn.addEventListener("click", async () => {
           if (!invoke) return;
@@ -1725,6 +1967,26 @@
             setStatus("FRP URL updated.");
           } catch (error) {
             setStatus("Failed to update FRP URL.", "error");
+            console.error(error);
+          }
+        });
+      }
+
+      if (saveListenPortBtn) {
+        saveListenPortBtn.addEventListener("click", async () => {
+          if (!invoke) return;
+          const raw = listenPortInput?.value?.trim() || "";
+          const port = Number.parseInt(raw, 10);
+          if (!Number.isFinite(port) || port < 1 || port > 65535) {
+            setStatus("Port must be between 1 and 65535.", "error");
+            return;
+          }
+          try {
+            const status = await invoke("set_listen_port", { port });
+            renderStatus(status);
+            setStatus("Listen port updated.");
+          } catch (error) {
+            setStatus("Failed to update listen port.", "error");
             console.error(error);
           }
         });
@@ -1799,8 +2061,11 @@
       setInterval(refreshStatus, 2000);
 
       updateAuthTokenDisplay();
-      clearQrDisplay('Click "New handshake" to generate a 2-minute QR.');
+      clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
       setBridgeState(!!invoke);
+      if (invoke) {
+        invoke("request_location_permission").catch(() => {});
+      }
       refreshStatus();
     </script>
   </body>

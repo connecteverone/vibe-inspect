@@ -48,13 +48,14 @@
 - Static tokens are 64 chars, named, revocable.
 - Device-bound tokens are bound to `client_id` and reused on re-handshake.
 - Revoked tokens are invalid immediately.
+- New-device approvals expire after 60 seconds; request a fresh QR when expired.
 
 ---
 
 ## Connection Logic (Draft)
 
 ### Initial Pairing (QR)
-1. User generates QR in desktop UI (expires ~2 minutes).
+1. User generates QR in desktop UI (expires ~3 minutes).
 2. Mobile scans payload and validates `token`, `secret`, `expires_at`.
 3. Determine LAN eligibility via SSID match + /24 subnet match.
 4. Endpoint selection:
@@ -96,7 +97,7 @@
 - [x] Extend QR payload with `wifi_ssid` and `local_ips`
 - [x] Add `frp_url` to payload when configured
 - [x] Add explicit `pairing_token` / `pairing_secret` aliases for stability
-- [x] Implement expiry policy (default TTL = 120s, configurable later)
+- [x] Implement expiry policy (default TTL = 180s, configurable later)
 - [x] Ensure QR payload includes local URLs + device ID
 
 ### Phase 3 — Token Model & Security
@@ -122,7 +123,7 @@
 
 ## Progress Log
 - **2026-01-30**: Created detailed plan and logged initial UI fixes + token model groundwork.
-- **2026-01-30**: QR is now on-demand, auto-hidden on expiry; TTL set to 120s by default.
+- **2026-01-30**: QR is now on-demand, auto-hidden on expiry; TTL set to 180s by default.
 - **2026-01-30**: FRP URL configuration added to Settings and included in QR payload/status.
 - **2026-01-30**: Mobile LAN/FRP probing with SSID/subnet matching and offline status updates added.
 - **2026-01-30**: Identity command now returns Wi-Fi + LAN metadata; mobile refreshes cached agent info after connectivity.

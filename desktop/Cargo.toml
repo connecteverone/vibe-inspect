@@ -24,9 +24,16 @@ jpeg-encoder = { version = "0.7", default-features = true }
 directories = "5"
 sha2 = "0.10"
 vt100 = "0.16.2"
+quinn = "0.11"
+rcgen = "0.12"
+rustls = "0.23"
+bytes = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
+objc2 = "0.6"
+objc2-core-wlan = { version = "0.3", features = ["CWWiFiClient", "CWInterface"] }
+objc2-foundation = { version = "0.3", features = ["NSBundle", "NSString"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.52", features = [

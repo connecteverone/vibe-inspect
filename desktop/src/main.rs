@@ -8,6 +8,8 @@ mod pairing;
 mod terminal;
 mod server;
 mod vnc;
+mod roi;
+mod quic;
 
 fn main() {
     #[cfg(target_os = "windows")]
@@ -20,6 +22,16 @@ fn main() {
         }
     }
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle();
+                let _ = handle.run_on_main_thread(|| {
+                    pairing::request_location_authorization();
+                });
+            }
+            Ok(())
+        })
         .manage(std::sync::Arc::new(std::sync::Mutex::new(
             pairing::PairingState::default(),
         )))
@@ -31,8 +43,11 @@ fn main() {
             pairing::set_pairing_requires_approval,
             pairing::approve_pairing_request,
             pairing::deny_pairing_request,
+            pairing::request_location_permission,
+            pairing::open_location_settings,
             pairing::reset_auth_token,
             pairing::set_frp_url,
+            pairing::set_listen_port,
             pairing::create_auth_token,
             pairing::add_auth_token,
             pairing::set_primary_auth_token,

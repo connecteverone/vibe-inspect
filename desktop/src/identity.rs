@@ -17,6 +17,8 @@ pub struct AgentIdentity {
     pub created_at: u64,
     #[serde(default)]
     pub frp_url: Option<String>,
+    #[serde(default = "default_listen_port")]
+    pub listen_port: u16,
     #[serde(default)]
     pub auth_tokens: Vec<AuthTokenRecord>,
 }
@@ -52,6 +54,7 @@ pub fn load_or_create_identity() -> AgentIdentity {
                     && !identity.auth_token.trim().is_empty()
                 {
                     let mut hydrated = identity;
+                    hydrated.ensure_listen_port();
                     hydrated.ensure_primary_token();
                     let _ = save_identity(&hydrated);
                     return hydrated;
@@ -66,9 +69,11 @@ pub fn load_or_create_identity() -> AgentIdentity {
         auth_token: generate_token(LONG_TOKEN_LEN),
         created_at: now_ts(),
         frp_url: None,
+        listen_port: default_listen_port(),
         auth_tokens: Vec::new(),
     };
 
+    identity.ensure_listen_port();
     identity.ensure_primary_token();
     let _ = save_identity(&identity);
 
@@ -76,6 +81,14 @@ pub fn load_or_create_identity() -> AgentIdentity {
 }
 
 impl AgentIdentity {
+    pub fn listen_port(&self) -> u16 {
+        if self.listen_port == 0 {
+            default_listen_port()
+        } else {
+            self.listen_port
+        }
+    }
+
     pub fn rotate_auth_token(&mut self) -> Result<(), std::io::Error> {
         let previous = self.auth_token.clone();
         let token = generate_token(LONG_TOKEN_LEN);
@@ -124,6 +137,15 @@ impl AgentIdentity {
         self.auth_tokens.clone()
     }
 
+    pub fn find_token_for_client(&self, client_id: &str) -> Option<AuthTokenRecord> {
+        self.auth_tokens
+            .iter()
+            .find(|record| {
+                record.is_active() && record.client_id.as_deref() == Some(client_id)
+            })
+            .cloned()
+    }
+
     pub fn set_primary_token(
         &mut self,
         token: String,
@@ -146,6 +168,15 @@ impl AgentIdentity {
 
     pub fn set_frp_url(&mut self, url: Option<String>) -> Result<(), std::io::Error> {
         self.frp_url = url;
+        save_identity(self)
+    }
+
+    pub fn set_listen_port(&mut self, port: u16) -> Result<(), std::io::Error> {
+        self.listen_port = if port == 0 {
+            default_listen_port()
+        } else {
+            port
+        };
         save_identity(self)
     }
 
@@ -237,6 +268,52 @@ impl AgentIdentity {
         save_identity(self)
     }
 
+    pub fn revoke_tokens_for_client(
+        &mut self,
+        client_id: &str,
+    ) -> Result<usize, std::io::Error> {
+        let now = now_ts();
+        let mut revoked = 0;
+        for record in &mut self.auth_tokens {
+            if record.revoked_at.is_none()
+                && record.client_id.as_deref() == Some(client_id)
+            {
+                record.revoked_at = Some(now);
+                revoked += 1;
+            }
+        }
+        if revoked == 0 {
+            return Ok(0);
+        }
+        if self
+            .auth_tokens
+            .iter()
+            .any(|record| record.token == self.auth_token && record.is_active())
+        {
+            save_identity(self)?;
+            return Ok(revoked);
+        }
+        if let Some(next) = self
+            .auth_tokens
+            .iter()
+            .find(|record| record.is_active())
+        {
+            self.auth_token = next.token.clone();
+            save_identity(self)?;
+            return Ok(revoked);
+        }
+        self.auth_token = generate_token(LONG_TOKEN_LEN);
+        self.upsert_token(AuthTokenRecord {
+            token: self.auth_token.clone(),
+            label: Some("Primary token".to_string()),
+            created_at: now_ts(),
+            revoked_at: None,
+            client_id: None,
+        });
+        save_identity(self)?;
+        Ok(revoked)
+    }
+
     pub fn token_for_client(
         &mut self,
         client_id: &str,
@@ -287,6 +364,16 @@ impl AgentIdentity {
         }
         self.auth_tokens.push(record);
     }
+
+    fn ensure_listen_port(&mut self) {
+        if self.listen_port == 0 {
+            self.listen_port = default_listen_port();
+        }
+    }
+}
+
+fn default_listen_port() -> u16 {
+    58888
 }
 
 fn identity_path() -> Option<PathBuf> {

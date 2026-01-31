@@ -255,6 +255,7 @@ pub fn handle_terminal_command(request: TerminalActionRequest) -> Result<Value, 
     match request.action.as_str() {
         "start" => start_session(request),
         "poll" => poll_session(request),
+        "list" => list_sessions(request),
         "input" => input_session(request),
         "resize" => resize_session(request),
         "stop" | "kill" => stop_session(request),
@@ -762,6 +763,15 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         session.exit_code,
         session.last_activity,
     ))
+}
+
+fn list_sessions(_request: TerminalActionRequest) -> Result<Value, TerminalError> {
+    let sessions = list_terminal_sessions();
+    Ok(json!({
+        "type": "terminal",
+        "action": "list",
+        "sessions": sessions,
+    }))
 }
 
 fn keepalive_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {

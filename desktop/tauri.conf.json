@@ -6,6 +6,11 @@
   "build": {
     "frontendDist": "frontend"
   },
+  "bundle": {
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
