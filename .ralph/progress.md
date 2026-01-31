@@ -789,3 +789,33 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
   - flutter build web emits wasm dry-run warnings for ffi-based deps; not blocking for UI validation.
 ---
+## [2026-02-01 00:02] - US-004: Add terminal session labels and rename synchronization
+Thread:
+Run: 20260131-221506-98331 (iteration 5)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-5.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-5.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 722e3b3 fix(terminal): always include label field
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/.tmp/prompt-20260131-221506-98331-5.md
+  - .ralph/.tmp/story-20260131-221506-98331-5.json
+  - .ralph/.tmp/story-20260131-221506-98331-5.md
+  - .ralph/runs/run-20260131-221506-98331-iter-4.md
+  - .ralph/runs/run-20260131-221506-98331-iter-5.log
+  - .ralph/progress.md
+  - desktop/src/terminal.rs
+- What was implemented
+  - Ensured terminal command payloads always emit a label field so list/status updates keep rename sync stable.
+- **Learnings for future iterations:**
+  - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
+---
