@@ -10019,6 +10019,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Timer? _roiRequestTimer;
   Timer? _roiReconnectTimer;
   Timer? _roiResyncTimer;
+  Size? _roiPendingResyncSize;
   double _devicePixelRatio = 1.0;
   DateTime? _roiLastTileAt;
   bool _roiConnecting = false;
@@ -10202,6 +10203,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _roiReconnectTimer = null;
     _roiResyncTimer?.cancel();
     _roiResyncTimer = null;
+    _roiPendingResyncSize = null;
     _roiSession = null;
     _roiLastTileAt = null;
     _roiConnected = false;
@@ -10443,12 +10445,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final nextHeight = newSize.height.round();
     if (roiSession.framebufferWidth == nextWidth &&
         roiSession.framebufferHeight == nextHeight) {
+      _roiPendingResyncSize = null;
       return;
     }
-    final sessionInfo = _lastVncSessionInfo;
-    if (sessionInfo == null) {
-      return;
-    }
+    _roiPendingResyncSize = Size(
+      nextWidth.toDouble(),
+      nextHeight.toDouble(),
+    );
     if (_roiResyncTimer != null) {
       return;
     }
@@ -10457,7 +10460,21 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (!mounted || _isDisposed) {
         return;
       }
-      unawaited(_resyncRoiSession(sessionInfo, nextWidth, nextHeight));
+      final sessionInfo = _lastVncSessionInfo;
+      final pendingSize = _roiPendingResyncSize;
+      _roiPendingResyncSize = null;
+      if (sessionInfo == null || pendingSize == null) {
+        return;
+      }
+      final pendingWidth = pendingSize.width.round();
+      final pendingHeight = pendingSize.height.round();
+      final activeSession = _roiSession;
+      if (activeSession == null ||
+          activeSession.framebufferWidth == pendingWidth &&
+              activeSession.framebufferHeight == pendingHeight) {
+        return;
+      }
+      unawaited(_resyncRoiSession(sessionInfo, pendingWidth, pendingHeight));
     });
   }
 

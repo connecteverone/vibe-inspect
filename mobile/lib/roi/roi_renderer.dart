@@ -32,7 +32,10 @@ class RoiRenderer {
       rect.width * scale,
       rect.height * scale,
     );
-    final paint = scale > 1.01 ? _nearestPaint : _linearPaint;
+    final needsNearest = scale > 1.01 ||
+        image.width != tile.width ||
+        image.height != tile.height;
+    final paint = needsNearest ? _nearestPaint : _linearPaint;
     canvas.drawImageRect(
       image,
       ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
