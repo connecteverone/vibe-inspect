@@ -2892,4 +2892,161 @@ thinking
 
 I'm staging all changes and preparing to commit log updates with a descriptive message, planning a security and performance review before the final commit.
 exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect succeeded in 55ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+
+thinking
+**Committing log update**
+
+Using the message `chore(ralph): update progress logs` with a body referencing the run, then committing the changes.
+exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect commit -m "chore(ralph): update run logs
+
+Record US-001 progress details and activity log updates.
+
+Reference: US-001"' in /Users/mac/codes/vibe-inspect succeeded in 55ms:
+[main 328c333] chore(ralph): update run logs
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 513 insertions(+)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+
+thinking
+**Confirming clean status**
+exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 49ms:
+ M .ralph/runs/run-20260131-221506-98331-iter-1.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+
+
+
+
+thinking
+**Identifying run log update loop risk**
+
+The run log updates after every command, likely from the system appending automatically, which risks an endless loop if we keep committing. To keep it clean, I'll finalize by staging and committing the run log once more, then avoid further commands except possibly a non-mutating one like showing the commit hash.
+thinking
+**Clarifying run log update conflict**
+
+The run log appends every shell command, making it impossible to run commands after final commit without dirtying the tree. To resolve this, I'll do all required commands first, including `git show -s` for the final commit, then stage and commit all run log changes once more and avoid running any further commands, accepting that post-commit status checks can only be confirmed by reasoning, not by running additional commands.
+thinking
+**Recognizing clean tree impossibility with run log**
+
+Because each shell command appends to the run log after execution, including commit commands, it’s impossible to keep the working tree clean if run log remains tracked. The best practical approach is to make a final commit to include all run log changes, then avoid running further commands to prevent new modifications, acknowledging the working tree may not be perfectly clean due to this logging behavior.
+thinking
+**Committing final run log update and stopping commands**
+
+I’ll stage and commit the current run log modifications as the last command to include its log entries, then stop running further commands to keep the tree clean. I’ll capture the final commit hash from the commit output to avoid running additional commands afterward.
+exec
 /bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect
