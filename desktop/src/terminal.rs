@@ -9,13 +9,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{interval, MissedTickBehavior};
+use vt100;
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
 const MAX_BUFFER_BYTES: usize = 512 * 1024;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
 const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
-const OUTPUT_LIMIT_DEFAULT: usize = 200;
+const OUTPUT_LIMIT_DEFAULT: usize = 800;
+const SNAPSHOT_SCROLLBACK: usize = 0;
 
 #[derive(Clone)]
 struct TerminalOutputChunk {
@@ -56,6 +58,8 @@ struct TerminalSession {
     buffer: VecDeque<TerminalOutputChunk>,
     buffer_bytes: usize,
     next_seq: u64,
+    parser: vt100::Parser,
+    utf8_carry: Vec<u8>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send>,
     writer: Box<dyn Write + Send>,
@@ -84,6 +88,28 @@ impl TerminalSession {
         self.last_activity = now_ts();
     }
 
+    fn push_output_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.parser.process(bytes);
+        let text = decode_utf8_stream(&mut self.utf8_carry, bytes);
+        if !text.is_empty() {
+            self.push_output(text);
+        }
+    }
+
+    fn flush_utf8_carry(&mut self) {
+        if self.utf8_carry.is_empty() {
+            return;
+        }
+        let text = String::from_utf8_lossy(&self.utf8_carry).to_string();
+        self.utf8_carry.clear();
+        if !text.is_empty() {
+            self.push_output(text);
+        }
+    }
+
     fn output_since(&self, since: u64, limit: usize) -> Vec<TerminalOutputChunk> {
         let mut output = self
             .buffer
@@ -95,6 +121,20 @@ impl TerminalSession {
             output = output.split_off(output.len() - limit);
         }
         output
+    }
+
+    fn first_seq(&self) -> Option<u64> {
+        self.buffer.front().map(|chunk| chunk.seq)
+    }
+
+    fn snapshot_formatted(&self) -> Option<String> {
+        let screen = self.parser.screen();
+        let mut bytes = screen.state_formatted();
+        bytes.extend(screen.cursor_state_formatted());
+        if bytes.is_empty() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&bytes).to_string())
     }
 }
 
@@ -258,7 +298,14 @@ async fn run_terminal_stream(
     let mut tick = interval(Duration::from_millis(80));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    let (initial_output, initial_status, initial_next_seq, initial_exit) = {
+    let (
+        initial_output,
+        initial_status,
+        initial_next_seq,
+        initial_exit,
+        initial_first_seq,
+        initial_snapshot,
+    ) = {
         let session = session
             .lock()
             .map_err(|_| "Terminal session unavailable.".to_string())?;
@@ -267,14 +314,22 @@ async fn run_terminal_stream(
             session.status,
             session.next_seq,
             session.exit_code,
+            session.first_seq(),
+            session.snapshot_formatted(),
         )
     };
+    let initial_truncated = initial_first_seq
+        .map(|first| 1_u64 < first)
+        .unwrap_or(false);
     let initial_payload = build_session_payload(
         "stream",
         &session_id,
         initial_status,
         initial_next_seq,
         initial_output,
+        initial_first_seq,
+        initial_truncated,
+        if initial_truncated { initial_snapshot } else { None },
         initial_exit,
         now_ts(),
     );
@@ -291,7 +346,7 @@ async fn run_terminal_stream(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let (output, status, next_seq, exit_code) = {
+                let (output, status, next_seq, exit_code, first_seq, snapshot) = {
                     let session = session
                         .lock()
                         .map_err(|_| "Terminal session unavailable.".to_string())?;
@@ -300,6 +355,8 @@ async fn run_terminal_stream(
                         session.status,
                         session.next_seq,
                         session.exit_code,
+                        session.first_seq(),
+                        session.snapshot_formatted(),
                     )
                 };
 
@@ -315,12 +372,18 @@ async fn run_terminal_stream(
                 last_status = status;
                 last_exit = exit_code;
 
+                let truncated = first_seq
+                    .map(|first| last_seq.saturating_add(1) < first)
+                    .unwrap_or(false);
                 let payload = build_session_payload(
                     "stream",
                     &session_id,
                     status,
                     next_seq,
                     output,
+                    first_seq,
+                    truncated,
+                    if truncated { snapshot } else { None },
                     exit_code,
                     now_ts(),
                 );
@@ -492,6 +555,8 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         buffer: VecDeque::new(),
         buffer_bytes: 0,
         next_seq: 0,
+        parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
+        utf8_carry: Vec::new(),
         master: pair.master,
         child,
         writer,
@@ -528,6 +593,9 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         0,
         Vec::new(),
         None,
+        false,
+        None,
+        None,
         now,
     ))
 }
@@ -550,12 +618,24 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
     let since = request.since.unwrap_or(0);
     let limit = request.limit.unwrap_or(OUTPUT_LIMIT_DEFAULT);
     let output = session.output_since(since, limit);
+    let first_seq = session.first_seq();
+    let truncated = first_seq
+        .map(|first| since.saturating_add(1) < first)
+        .unwrap_or(false);
+    let snapshot = if truncated {
+        session.snapshot_formatted()
+    } else {
+        None
+    };
     Ok(build_session_payload(
         "poll",
         &session.id,
         session.status,
         session.next_seq,
         output,
+        first_seq,
+        truncated,
+        snapshot,
         session.exit_code,
         session.last_activity,
     ))
@@ -599,6 +679,9 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         session.status,
         session.next_seq,
         Vec::new(),
+        session.first_seq(),
+        false,
+        None,
         session.exit_code,
         session.last_activity,
     ))
@@ -633,6 +716,7 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
             pixel_height: 0,
         })
         .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
+    session.parser.screen_mut().set_size(rows, cols);
     session.last_activity = now_ts();
     Ok(build_session_payload(
         "resize",
@@ -640,6 +724,9 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         session.status,
         session.next_seq,
         Vec::new(),
+        session.first_seq(),
+        false,
+        None,
         session.exit_code,
         session.last_activity,
     ))
@@ -669,6 +756,9 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         session.status,
         session.next_seq,
         Vec::new(),
+        session.first_seq(),
+        false,
+        None,
         session.exit_code,
         session.last_activity,
     ))
@@ -695,6 +785,9 @@ fn keepalive_session(request: TerminalActionRequest) -> Result<Value, TerminalEr
         session.status,
         session.next_seq,
         Vec::new(),
+        session.first_seq(),
+        false,
+        None,
         session.exit_code,
         session.last_activity,
     ))
@@ -714,12 +807,16 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
     let session = session
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+    let snapshot = session.snapshot_formatted();
     Ok(build_session_payload(
         "status",
         &session.id,
         session.status,
         session.next_seq,
         Vec::new(),
+        session.first_seq(),
+        false,
+        snapshot,
         session.exit_code,
         session.last_activity,
     ))
@@ -763,6 +860,7 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                         Ok(guard) => guard,
                         Err(_) => return,
                     };
+                    session.flush_utf8_carry();
                     let exit_code = session
                         .child
                         .wait()
@@ -776,13 +874,13 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                     return;
                 }
                 Ok(count) => {
-                    let data = String::from_utf8_lossy(&buffer[..count]).to_string();
                     if let Ok(mut session) = session.lock() {
-                        session.push_output(data);
+                        session.push_output_bytes(&buffer[..count]);
                     }
                 }
                 Err(_) => {
                     if let Ok(mut session) = session.lock() {
+                        session.flush_utf8_carry();
                         session.status = TerminalSessionStatus::Error;
                         session.last_activity = now_ts();
                     }
@@ -829,6 +927,9 @@ fn build_session_payload(
     status: TerminalSessionStatus,
     next_seq: u64,
     output: Vec<TerminalOutputChunk>,
+    first_seq: Option<u64>,
+    truncated: bool,
+    snapshot: Option<String>,
     exit_code: Option<i32>,
     last_activity: u64,
 ) -> Value {
@@ -842,16 +943,24 @@ fn build_session_payload(
             })
         })
         .collect::<Vec<_>>();
-    json!({
+    let mut payload = json!({
         "type": "terminal",
         "action": action,
         "status": status.as_str(),
         "session_id": session_id,
         "output": output_json,
         "next_seq": next_seq,
+        "first_seq": first_seq,
+        "truncated": truncated,
         "exit_code": exit_code,
         "last_activity": last_activity,
-    })
+    });
+    if let Some(snapshot) = snapshot {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("snapshot".to_string(), json!(snapshot));
+        }
+    }
+    payload
 }
 
 fn now_ts() -> u64 {
@@ -859,4 +968,42 @@ fn now_ts() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn decode_utf8_stream(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
+    if bytes.is_empty() && carry.is_empty() {
+        return String::new();
+    }
+    if carry.is_empty() {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return text.to_string();
+        }
+    }
+    carry.extend_from_slice(bytes);
+    let mut output = String::new();
+    loop {
+        match std::str::from_utf8(carry) {
+            Ok(valid) => {
+                output.push_str(valid);
+                carry.clear();
+                break;
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                if valid_up_to > 0 {
+                    let valid = &carry[..valid_up_to];
+                    output.push_str(unsafe { std::str::from_utf8_unchecked(valid) });
+                    carry.drain(..valid_up_to);
+                }
+                match error.error_len() {
+                    Some(len) => {
+                        output.push('\u{FFFD}');
+                        carry.drain(..len);
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+    output
 }

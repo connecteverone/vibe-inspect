@@ -11,12 +11,14 @@ class VncFrame {
     required this.height,
     required this.pixels,
     required this.format,
+    this.latencyMs,
   });
 
   final int width;
   final int height;
   final Uint8List pixels;
   final ui.PixelFormat format;
+  final int? latencyMs;
 }
 
 class VncCursor {
@@ -83,6 +85,8 @@ class VncRfbClient {
   ui.PixelFormat _format = ui.PixelFormat.bgra8888;
   Uint8List _framebuffer = Uint8List(0);
   List<int> _preferredEncodings = const [];
+  int _lastUpdateRequestAtMs = 0;
+  static const int _outputBytesPerPixel = 4;
 
   static const int _encodingRaw = 0;
   static const int _encodingCopyRect = 1;
@@ -142,6 +146,17 @@ class VncRfbClient {
     if (_handshakeComplete && !_closed) {
       _sendFramebufferUpdateRequest(incremental: false);
     }
+  }
+
+  void requestIncrementalFrame({int minIntervalMs = 40}) {
+    if (!_handshakeComplete || _closed) {
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastUpdateRequestAtMs < minIntervalMs) {
+      return;
+    }
+    _sendFramebufferUpdateRequest(incremental: true);
   }
 
   void sendPointer({required int x, required int y, required int mask}) {
@@ -243,27 +258,23 @@ class VncRfbClient {
     _redShift = serverInit[14];
     _greenShift = serverInit[15];
     _blueShift = serverInit[16];
-    _bytesPerPixel = bitsPerPixel ~/ 8;
-    _cpixelSize = _bytesPerPixel;
-    _cpixel24A = true;
-    if (_trueColour && bitsPerPixel == 32 && _depth <= 24) {
-      final rgbLower =
-          ((_redMax << _redShift) < (1 << 24)) &&
-              ((_greenMax << _greenShift) < (1 << 24)) &&
-              ((_blueMax << _blueShift) < (1 << 24));
-      final rgbUpper =
-          _redShift > 7 && _greenShift > 7 && _blueShift > 7;
-      if (rgbLower || rgbUpper) {
-        _cpixelSize = 3;
-        _cpixel24A = (rgbLower && !_bigEndian) || (rgbUpper && _bigEndian);
-      }
-    }
-    _format = ui.PixelFormat.bgra8888;
-    final totalBytes = _width * _height * _bytesPerPixel;
+    _applyPixelFormat(
+      bitsPerPixel: bitsPerPixel,
+      depth: _depth,
+      bigEndian: _bigEndian,
+      trueColour: _trueColour,
+      redMax: _redMax,
+      greenMax: _greenMax,
+      blueMax: _blueMax,
+      redShift: _redShift,
+      greenShift: _greenShift,
+      blueShift: _blueShift,
+    );
+    final totalBytes = _width * _height * _outputBytesPerPixel;
     if (totalBytes <= 0) {
       throw Exception('Invalid VNC framebuffer size.');
     }
-    _framebuffer = Uint8List(totalBytes);
+    _rebuildFramebuffer();
     final nameLength = (serverInit[20] << 24) |
         (serverInit[21] << 16) |
         (serverInit[22] << 8) |
@@ -469,12 +480,14 @@ class VncRfbClient {
       }
       _buffer.removeRange(0, offset);
       if (updated && !hasAsyncUpdate) {
+        final latencyMs = _computeLatencyMs();
         onFrame(
           VncFrame(
             width: _width,
             height: _height,
-            pixels: Uint8List.fromList(_framebuffer),
+            pixels: _framebuffer,
             format: _format,
+            latencyMs: latencyMs,
           ),
         );
       }
@@ -503,25 +516,47 @@ class VncRfbClient {
     return true;
   }
 
-  void _blitRect(Uint8List rectPixels, int x, int y, int width, int height) {
-    final sourceStride = width * _bytesPerPixel;
+  void _blitRect(
+    Uint8List rectPixels,
+    int x,
+    int y,
+    int width,
+    int height, {
+    int? inputBytesPerPixel,
+  }) {
+    final inputBpp = inputBytesPerPixel ?? _bytesPerPixel;
+    final sourceStride = width * inputBpp;
+    final outputStride = _width * _outputBytesPerPixel;
+    if (inputBpp == _outputBytesPerPixel) {
+      for (var row = 0; row < height; row += 1) {
+        final srcStart = row * sourceStride;
+        final dstStart = ((y + row) * _width + x) * _outputBytesPerPixel;
+        _framebuffer.setRange(
+          dstStart,
+          dstStart + sourceStride,
+          rectPixels,
+          srcStart,
+        );
+      }
+      return;
+    }
     for (var row = 0; row < height; row += 1) {
-      final srcStart = row * sourceStride;
-      final dstStart = ((y + row) * _width + x) * _bytesPerPixel;
-      _framebuffer.setRange(
-        dstStart,
-        dstStart + sourceStride,
-        rectPixels,
-        srcStart,
-      );
+      final srcRowStart = row * sourceStride;
+      final dstRowStart = (y + row) * outputStride + x * _outputBytesPerPixel;
+      for (var col = 0; col < width; col += 1) {
+        final srcStart = srcRowStart + col * inputBpp;
+        final packed = _readPackedPixelFromBytes(rectPixels, srcStart, inputBpp);
+        final dstStart = dstRowStart + col * _outputBytesPerPixel;
+        _writePackedPixel(_framebuffer, dstStart, packed);
+      }
     }
   }
 
   void _copyRect(int srcX, int srcY, int dstX, int dstY, int width, int height) {
-    final rowStride = width * _bytesPerPixel;
+    final rowStride = width * _outputBytesPerPixel;
     for (var row = 0; row < height; row += 1) {
-      final srcStart = ((srcY + row) * _width + srcX) * _bytesPerPixel;
-      final dstStart = ((dstY + row) * _width + dstX) * _bytesPerPixel;
+      final srcStart = ((srcY + row) * _width + srcX) * _outputBytesPerPixel;
+      final dstStart = ((dstY + row) * _width + dstX) * _outputBytesPerPixel;
       final slice = _framebuffer.sublist(srcStart, srcStart + rowStride);
       _framebuffer.setRange(dstStart, dstStart + rowStride, slice);
     }
@@ -725,36 +760,7 @@ class VncRfbClient {
   }
 
   int _readPackedCpixelFromBuffer(int offset) {
-    if (_cpixelSize == 4) {
-      if (_bigEndian) {
-        final a = _buffer[offset];
-        final r = _buffer[offset + 1];
-        final g = _buffer[offset + 2];
-        final b = _buffer[offset + 3];
-        return (a << 24) | (r << 16) | (g << 8) | b;
-      }
-      final b = _buffer[offset];
-      final g = _buffer[offset + 1];
-      final r = _buffer[offset + 2];
-      final a = _buffer[offset + 3];
-      return (a << 24) | (r << 16) | (g << 8) | b;
-    }
-    if (_bigEndian) {
-      final r = _buffer[offset];
-      final g = _buffer[offset + 1];
-      final b = _buffer[offset + 2];
-      return (0xff << 24) | (r << 16) | (g << 8) | b;
-    }
-    if (_cpixel24A) {
-      final b = _buffer[offset];
-      final g = _buffer[offset + 1];
-      final r = _buffer[offset + 2];
-      return (0xff << 24) | (r << 16) | (g << 8) | b;
-    }
-    final b = _buffer[offset];
-    final g = _buffer[offset + 1];
-    final r = _buffer[offset + 2];
-    return (0xff << 24) | (r << 16) | (g << 8) | b;
+    return _readPackedPixelFromList(_buffer, offset, _cpixelSize);
   }
 
   void _decodeTightJpegRect(
@@ -767,6 +773,7 @@ class VncRfbClient {
     if (_closed) {
       return;
     }
+    final requestLatency = _computeLatencyMs();
     ui.decodeImageFromList(jpegData, (image) async {
       if (_closed) {
         image.dispose();
@@ -780,7 +787,7 @@ class VncRfbClient {
         return;
       }
       final rgba = byteData.buffer.asUint8List();
-      final rectPixels = Uint8List(width * height * _bytesPerPixel);
+      final rectPixels = Uint8List(width * height * _outputBytesPerPixel);
       var src = 0;
       var dst = 0;
       final totalPixels = width * height;
@@ -796,13 +803,21 @@ class VncRfbClient {
         src += 4;
         dst += 4;
       }
-      _blitRect(rectPixels, x, y, width, height);
+      _blitRect(
+        rectPixels,
+        x,
+        y,
+        width,
+        height,
+        inputBytesPerPixel: _outputBytesPerPixel,
+      );
       onFrame(
         VncFrame(
           width: _width,
           height: _height,
-          pixels: Uint8List.fromList(_framebuffer),
+          pixels: _framebuffer,
           format: _format,
+          latencyMs: requestLatency,
         ),
       );
       image.dispose();
@@ -972,40 +987,15 @@ class VncRfbClient {
   }
 
   int _readPackedCpixel(Uint8List data, int offset) {
-    if (_cpixelSize == 4) {
-      if (_bigEndian) {
-        final a = data[offset];
-        final r = data[offset + 1];
-        final g = data[offset + 2];
-        final b = data[offset + 3];
-        return (a << 24) | (r << 16) | (g << 8) | b;
-      }
-      final b = data[offset];
-      final g = data[offset + 1];
-      final r = data[offset + 2];
-      final a = data[offset + 3];
-      return (a << 24) | (r << 16) | (g << 8) | b;
-    }
-    if (_bigEndian) {
-      final r = data[offset];
-      final g = data[offset + 1];
-      final b = data[offset + 2];
-      return (0xff << 24) | (r << 16) | (g << 8) | b;
-    }
-    if (_cpixel24A) {
-      final b = data[offset];
-      final g = data[offset + 1];
-      final r = data[offset + 2];
-      return (0xff << 24) | (r << 16) | (g << 8) | b;
-    }
-    final b = data[offset];
-    final g = data[offset + 1];
-    final r = data[offset + 2];
-    return (0xff << 24) | (r << 16) | (g << 8) | b;
+    return _readPackedPixelFromBytes(data, offset, _cpixelSize);
   }
 
   int _readPackedPixel(Uint8List data, int offset) {
-    if (_bytesPerPixel == 4) {
+    return _readPackedPixelFromBytes(data, offset, _bytesPerPixel);
+  }
+
+  int _readPackedPixelFromList(List<int> data, int offset, int bytesPerPixel) {
+    if (bytesPerPixel == 4) {
       if (_bigEndian) {
         final a = data[offset];
         final r = data[offset + 1];
@@ -1019,7 +1009,7 @@ class VncRfbClient {
       final a = data[offset + 3];
       return (a << 24) | (r << 16) | (g << 8) | b;
     }
-    if (_bytesPerPixel == 3) {
+    if (bytesPerPixel == 3) {
       if (_bigEndian) {
         final r = data[offset];
         final g = data[offset + 1];
@@ -1031,7 +1021,70 @@ class VncRfbClient {
       final r = data[offset + 2];
       return (0xff << 24) | (r << 16) | (g << 8) | b;
     }
+    if (bytesPerPixel == 2) {
+      final value = _bigEndian
+          ? ((data[offset] << 8) | data[offset + 1])
+          : ((data[offset + 1] << 8) | data[offset]);
+      return _decodePackedValue(value);
+    }
     return 0;
+  }
+
+  int _readPackedPixelFromBytes(
+    Uint8List data,
+    int offset,
+    int bytesPerPixel,
+  ) {
+    if (bytesPerPixel == 4) {
+      if (_bigEndian) {
+        final a = data[offset];
+        final r = data[offset + 1];
+        final g = data[offset + 2];
+        final b = data[offset + 3];
+        return (a << 24) | (r << 16) | (g << 8) | b;
+      }
+      final b = data[offset];
+      final g = data[offset + 1];
+      final r = data[offset + 2];
+      final a = data[offset + 3];
+      return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+    if (bytesPerPixel == 3) {
+      if (_bigEndian) {
+        final r = data[offset];
+        final g = data[offset + 1];
+        final b = data[offset + 2];
+        return (0xff << 24) | (r << 16) | (g << 8) | b;
+      }
+      final b = data[offset];
+      final g = data[offset + 1];
+      final r = data[offset + 2];
+      return (0xff << 24) | (r << 16) | (g << 8) | b;
+    }
+    if (bytesPerPixel == 2) {
+      final value = _bigEndian
+          ? ((data[offset] << 8) | data[offset + 1])
+          : ((data[offset + 1] << 8) | data[offset]);
+      return _decodePackedValue(value);
+    }
+    return 0;
+  }
+
+  int _decodePackedValue(int value) {
+    if (!_trueColour) {
+      return 0;
+    }
+    final r = _scaleComponent((value >> _redShift) & _redMax, _redMax);
+    final g = _scaleComponent((value >> _greenShift) & _greenMax, _greenMax);
+    final b = _scaleComponent((value >> _blueShift) & _blueMax, _blueMax);
+    return (0xff << 24) | (r << 16) | (g << 8) | b;
+  }
+
+  int _scaleComponent(int value, int max) {
+    if (max <= 0) {
+      return 0;
+    }
+    return ((value * 255) / max).round().clamp(0, 255);
   }
 
   Uint8List _decodeCursorPixels(
@@ -1065,6 +1118,118 @@ class VncRfbClient {
     buffer[index + 1] = (packed >> 8) & 0xff;
     buffer[index + 2] = (packed >> 16) & 0xff;
     buffer[index + 3] = (packed >> 24) & 0xff;
+  }
+
+  void setPixelFormat({required bool use16Bit}) {
+    if (!_handshakeComplete || _closed) {
+      return;
+    }
+    final format = use16Bit
+        ? const _PixelFormatSpec(
+            bitsPerPixel: 16,
+            depth: 16,
+            bigEndian: false,
+            trueColour: true,
+            redMax: 31,
+            greenMax: 63,
+            blueMax: 31,
+            redShift: 11,
+            greenShift: 5,
+            blueShift: 0,
+          )
+        : const _PixelFormatSpec(
+            bitsPerPixel: 32,
+            depth: 24,
+            bigEndian: false,
+            trueColour: true,
+            redMax: 255,
+            greenMax: 255,
+            blueMax: 255,
+            redShift: 16,
+            greenShift: 8,
+            blueShift: 0,
+          );
+    _applyPixelFormat(
+      bitsPerPixel: format.bitsPerPixel,
+      depth: format.depth,
+      bigEndian: format.bigEndian,
+      trueColour: format.trueColour,
+      redMax: format.redMax,
+      greenMax: format.greenMax,
+      blueMax: format.blueMax,
+      redShift: format.redShift,
+      greenShift: format.greenShift,
+      blueShift: format.blueShift,
+    );
+    _sendSetPixelFormat(format);
+  }
+
+  void _applyPixelFormat({
+    required int bitsPerPixel,
+    required int depth,
+    required bool bigEndian,
+    required bool trueColour,
+    required int redMax,
+    required int greenMax,
+    required int blueMax,
+    required int redShift,
+    required int greenShift,
+    required int blueShift,
+  }) {
+    _bytesPerPixel = bitsPerPixel ~/ 8;
+    _depth = depth;
+    _bigEndian = bigEndian;
+    _trueColour = trueColour;
+    _redMax = redMax;
+    _greenMax = greenMax;
+    _blueMax = blueMax;
+    _redShift = redShift;
+    _greenShift = greenShift;
+    _blueShift = blueShift;
+    _cpixelSize = _bytesPerPixel;
+    _cpixel24A = false;
+    if (_trueColour && bitsPerPixel == 32 && _depth <= 24) {
+      final rgbLower =
+          ((_redMax << _redShift) < (1 << 24)) &&
+              ((_greenMax << _greenShift) < (1 << 24)) &&
+              ((_blueMax << _blueShift) < (1 << 24));
+      final rgbUpper =
+          _redShift > 7 && _greenShift > 7 && _blueShift > 7;
+      if (rgbLower || rgbUpper) {
+        _cpixelSize = 3;
+        _cpixel24A = (rgbLower && !_bigEndian) || (rgbUpper && _bigEndian);
+      }
+    }
+    _format = ui.PixelFormat.bgra8888;
+    if (_width > 0 && _height > 0) {
+      _rebuildFramebuffer();
+    }
+  }
+
+  void _rebuildFramebuffer() {
+    final totalBytes = _width * _height * _outputBytesPerPixel;
+    if (totalBytes > 0) {
+      _framebuffer = Uint8List(totalBytes);
+    }
+  }
+
+  void _sendSetPixelFormat(_PixelFormatSpec format) {
+    final payload = Uint8List(20);
+    payload[0] = 0;
+    payload[4] = format.bitsPerPixel;
+    payload[5] = format.depth;
+    payload[6] = format.bigEndian ? 1 : 0;
+    payload[7] = format.trueColour ? 1 : 0;
+    payload[8] = (format.redMax >> 8) & 0xff;
+    payload[9] = format.redMax & 0xff;
+    payload[10] = (format.greenMax >> 8) & 0xff;
+    payload[11] = format.greenMax & 0xff;
+    payload[12] = (format.blueMax >> 8) & 0xff;
+    payload[13] = format.blueMax & 0xff;
+    payload[14] = format.redShift;
+    payload[15] = format.greenShift;
+    payload[16] = format.blueShift;
+    _sendBinary(payload);
   }
 
   Future<List<int>> _readExact(int length) async {
@@ -1110,6 +1275,7 @@ class VncRfbClient {
   }
 
   void _sendFramebufferUpdateRequest({required bool incremental}) {
+    _lastUpdateRequestAtMs = DateTime.now().millisecondsSinceEpoch;
     final payload = Uint8List(10);
     payload[0] = 3;
     payload[1] = incremental ? 1 : 0;
@@ -1118,6 +1284,18 @@ class VncRfbClient {
     payload[8] = (_height >> 8) & 0xff;
     payload[9] = _height & 0xff;
     _sendBinary(payload);
+  }
+
+  int? _computeLatencyMs() {
+    if (_lastUpdateRequestAtMs <= 0) {
+      return null;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final delta = now - _lastUpdateRequestAtMs;
+    if (delta < 0) {
+      return null;
+    }
+    return delta;
   }
 
   void _sendBinary(Uint8List payload) {
@@ -1140,4 +1318,30 @@ class _TightDecodeResult {
 
   final int nextOffset;
   final bool asyncFrame;
+}
+
+class _PixelFormatSpec {
+  const _PixelFormatSpec({
+    required this.bitsPerPixel,
+    required this.depth,
+    required this.bigEndian,
+    required this.trueColour,
+    required this.redMax,
+    required this.greenMax,
+    required this.blueMax,
+    required this.redShift,
+    required this.greenShift,
+    required this.blueShift,
+  });
+
+  final int bitsPerPixel;
+  final int depth;
+  final bool bigEndian;
+  final bool trueColour;
+  final int redMax;
+  final int greenMax;
+  final int blueMax;
+  final int redShift;
+  final int greenShift;
+  final int blueShift;
 }

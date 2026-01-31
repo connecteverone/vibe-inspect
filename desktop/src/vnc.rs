@@ -19,7 +19,11 @@ use crate::cursor_macos::{capture_cursor, cursor_changed, SystemCursor};
 
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 const VNC_NAME: &str = "Vibe Inspect Agent";
-const MAX_FRAME_RATE_MS: u64 = 120;
+const MAX_FRAME_RATE_MS: u64 = 33;
+const DEFAULT_IDLE_FRAME_RATE_MS: u64 = 120;
+const DEFAULT_KEEPALIVE_MS: u64 = 250;
+const ACTIVE_INPUT_WINDOW_MS: u64 = 250;
+const VNC_IDLE_POLL_MS: u64 = 5;
 const ENCODING_RAW: i32 = 0;
 const ENCODING_COPYRECT: i32 = 1;
 const ENCODING_ZLIB: i32 = 6;
@@ -30,6 +34,7 @@ const COPYRECT_MATCH_THRESHOLD: f32 = 0.92;
 const ENCODING_COMPRESS_LEVEL_BASE: i32 = -256;
 const ENCODING_QUALITY_LEVEL_BASE: i32 = -32;
 const ENCODING_CURSOR: i32 = -239;
+const ENCODING_DATA_SAVER: i32 = -312;
 const TIGHT_JPEG_MIN_AREA: usize = 20000;
 
 static CAPTURE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -84,16 +89,20 @@ fn capture_log_throttled(message: &str) {
     if !capture_debug_enabled() {
         return;
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0))
-        .as_millis() as u64;
+    let now = current_millis();
     let last = LAST_CAPTURE_LOG.load(Ordering::Relaxed);
     if now.saturating_sub(last) < 1000 {
         return;
     }
     LAST_CAPTURE_LOG.store(now, Ordering::Relaxed);
     eprintln!("{message}");
+}
+
+fn current_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_millis() as u64
 }
 
 #[derive(Clone)]
@@ -167,6 +176,20 @@ struct EncodingPreferences {
     allow_jpeg: bool,
     copyrect_supported: bool,
     cursor_supported: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PixelFormatSpec {
+    bits_per_pixel: u8,
+    depth: u8,
+    big_endian: bool,
+    true_color: bool,
+    red_max: u16,
+    green_max: u16,
+    blue_max: u16,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -432,6 +455,8 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     let cursor_supported = Arc::new(AtomicBool::new(false));
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(2);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
+    let last_input_at = Arc::new(AtomicU64::new(current_millis()));
+    let data_saver_enabled = Arc::new(AtomicBool::new(false));
     let _capture_handle = spawn_capture_thread(
         session.clone(),
         ready_for_updates.clone(),
@@ -441,6 +466,8 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
         session.generation,
         copyrect_supported.clone(),
         cursor_supported.clone(),
+        last_input_at.clone(),
+        data_saver_enabled.clone(),
         frame_tx,
     );
     let _input_handle =
@@ -453,12 +480,13 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
         copyrect_supported: false,
         cursor_supported: false,
     };
+    let mut pixel_format = default_pixel_format_spec();
     let mut update_request_seen = false;
 
     loop {
         tokio::select! {
             Some(update) = frame_rx.recv() => {
-                let message = build_framebuffer_update(update, &encoding_prefs)?;
+                let message = build_framebuffer_update(update, &encoding_prefs, &pixel_format)?;
                 if sender.send(Message::Binary(message.into())).await.is_err() {
                     break;
                 }
@@ -486,13 +514,22 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
                                     }
                                 }
                                 ClientMessage::PointerEvent { mask, x, y } => {
+                                    last_input_at.store(current_millis(), Ordering::Relaxed);
                                     let _ = input_tx.send(InputEvent::Pointer { mask, x, y });
                                 }
                                 ClientMessage::KeyEvent { down, keysym } => {
+                                    last_input_at.store(current_millis(), Ordering::Relaxed);
                                     let _ = input_tx.send(InputEvent::Key { down, keysym });
                                 }
                                 ClientMessage::SetEncodings { encodings } => {
-                                    encoding_prefs = parse_encoding_preferences(&encodings);
+                                    encoding_prefs = apply_pixel_format_constraints(
+                                        parse_encoding_preferences(&encodings),
+                                        &pixel_format,
+                                    );
+                                    data_saver_enabled.store(
+                                        parse_data_saver(&encodings),
+                                        Ordering::Relaxed,
+                                    );
                                     copyrect_supported.store(
                                         encoding_prefs.copyrect_supported,
                                         Ordering::Relaxed,
@@ -502,7 +539,12 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
                                         Ordering::Relaxed,
                                     );
                                 }
-                                ClientMessage::SetPixelFormat | ClientMessage::ClientCutText => {}
+                                ClientMessage::SetPixelFormat { format } => {
+                                    pixel_format = sanitize_pixel_format(format);
+                                    encoding_prefs =
+                                        apply_pixel_format_constraints(encoding_prefs, &pixel_format);
+                                }
+                                ClientMessage::ClientCutText => {}
                             }
                         }
                     }
@@ -531,18 +573,103 @@ fn build_server_init(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn default_pixel_format() -> [u8; 16] {
-    let mut format = [0u8; 16];
-    format[0] = 32;
-    format[1] = 24;
-    format[2] = 0;
-    format[3] = 1;
-    format[4..6].copy_from_slice(&255u16.to_be_bytes());
-    format[6..8].copy_from_slice(&255u16.to_be_bytes());
-    format[8..10].copy_from_slice(&255u16.to_be_bytes());
-    format[10] = 16;
-    format[11] = 8;
-    format[12] = 0;
-    format
+    pixel_format_to_bytes(&default_pixel_format_spec())
+}
+
+fn default_pixel_format_spec() -> PixelFormatSpec {
+    PixelFormatSpec {
+        bits_per_pixel: 32,
+        depth: 24,
+        big_endian: false,
+        true_color: true,
+        red_max: 255,
+        green_max: 255,
+        blue_max: 255,
+        red_shift: 16,
+        green_shift: 8,
+        blue_shift: 0,
+    }
+}
+
+fn pixel_format_to_bytes(format: &PixelFormatSpec) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    bytes[0] = format.bits_per_pixel;
+    bytes[1] = format.depth;
+    bytes[2] = if format.big_endian { 1 } else { 0 };
+    bytes[3] = if format.true_color { 1 } else { 0 };
+    bytes[4..6].copy_from_slice(&format.red_max.to_be_bytes());
+    bytes[6..8].copy_from_slice(&format.green_max.to_be_bytes());
+    bytes[8..10].copy_from_slice(&format.blue_max.to_be_bytes());
+    bytes[10] = format.red_shift;
+    bytes[11] = format.green_shift;
+    bytes[12] = format.blue_shift;
+    bytes
+}
+
+fn sanitize_pixel_format(format: PixelFormatSpec) -> PixelFormatSpec {
+    if is_rgb565(&format) || is_bgra8888(&format) {
+        format
+    } else {
+        default_pixel_format_spec()
+    }
+}
+
+fn is_bgra8888(format: &PixelFormatSpec) -> bool {
+    format.bits_per_pixel == 32
+        && format.depth <= 24
+        && format.true_color
+        && !format.big_endian
+        && format.red_max == 255
+        && format.green_max == 255
+        && format.blue_max == 255
+        && format.red_shift == 16
+        && format.green_shift == 8
+        && format.blue_shift == 0
+}
+
+fn is_rgb565(format: &PixelFormatSpec) -> bool {
+    format.bits_per_pixel == 16
+        && format.depth == 16
+        && format.true_color
+        && format.red_max == 31
+        && format.green_max == 63
+        && format.blue_max == 31
+        && format.red_shift == 11
+        && format.green_shift == 5
+        && format.blue_shift == 0
+}
+
+fn apply_pixel_format_constraints(
+    mut prefs: EncodingPreferences,
+    format: &PixelFormatSpec,
+) -> EncodingPreferences {
+    if format.bits_per_pixel == 16 {
+        if matches!(prefs.encoding, ENCODING_ZRLE | ENCODING_TIGHT) {
+            prefs.encoding = ENCODING_ZLIB;
+        }
+    }
+    prefs
+}
+
+fn bgra_to_rgb565(data: &[u8], big_endian: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() / 4 * 2);
+    for chunk in data.chunks_exact(4) {
+        let b = chunk[0] as u16;
+        let g = chunk[1] as u16;
+        let r = chunk[2] as u16;
+        let r5 = (r >> 3) & 0x1f;
+        let g6 = (g >> 2) & 0x3f;
+        let b5 = (b >> 3) & 0x1f;
+        let value = (r5 << 11) | (g6 << 5) | b5;
+        if big_endian {
+            out.push((value >> 8) as u8);
+            out.push((value & 0xff) as u8);
+        } else {
+            out.push((value & 0xff) as u8);
+            out.push((value >> 8) as u8);
+        }
+    }
+    out
 }
 
 fn capture_frame(
@@ -637,6 +764,36 @@ fn capture_frame(
         Err(error) if error.kind() == ErrorKind::WouldBlock => None,
         Err(_) => None,
     }
+}
+
+fn resolve_frame_intervals() -> (Duration, Duration) {
+    let active_env = env::var("VNC_ACTIVE_FRAME_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let legacy_env = env::var("VNC_FRAME_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let active_ms = active_env
+        .or(legacy_env)
+        .filter(|value| *value > 0)
+        .unwrap_or(MAX_FRAME_RATE_MS);
+    let idle_env = env::var("VNC_IDLE_FRAME_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let idle_ms = idle_env
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_IDLE_FRAME_RATE_MS);
+    (Duration::from_millis(active_ms), Duration::from_millis(idle_ms))
+}
+
+fn resolve_keepalive_interval() -> Duration {
+    let env_value = env::var("VNC_KEEPALIVE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let millis = env_value
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_KEEPALIVE_MS);
+    Duration::from_millis(millis)
 }
 
 fn guess_capture_dimensions(
@@ -1079,9 +1236,14 @@ fn parse_encoding_preferences(encodings: &[i32]) -> EncodingPreferences {
     }
 }
 
+fn parse_data_saver(encodings: &[i32]) -> bool {
+    encodings.iter().any(|encoding| *encoding == ENCODING_DATA_SAVER)
+}
+
 fn build_framebuffer_update(
     updates: FrameUpdate,
     prefs: &EncodingPreferences,
+    pixel_format: &PixelFormatSpec,
 ) -> Result<Vec<u8>, String> {
     let rect_count = updates.len().min(u16::MAX as usize) as u16;
     let mut buffer = Vec::new();
@@ -1105,7 +1267,12 @@ fn build_framebuffer_update(
                     continue;
                 }
                 let data = &data[..expected_len];
-                let encoding = prefs.encoding;
+                let mut encoding = prefs.encoding;
+                if pixel_format.bits_per_pixel == 16
+                    && matches!(encoding, ENCODING_TIGHT | ENCODING_ZRLE)
+                {
+                    encoding = ENCODING_ZLIB;
+                }
                 buffer.extend_from_slice(&rect.x.to_be_bytes());
                 buffer.extend_from_slice(&rect.y.to_be_bytes());
                 buffer.extend_from_slice(&rect.width.to_be_bytes());
@@ -1113,7 +1280,14 @@ fn build_framebuffer_update(
                 buffer.extend_from_slice(&(encoding as i32).to_be_bytes());
                 match encoding {
                     ENCODING_ZLIB => {
-                        let compressed = compress_zlib(data)?;
+                        let converted;
+                        let payload = if pixel_format.bits_per_pixel == 16 {
+                            converted = bgra_to_rgb565(data, pixel_format.big_endian);
+                            converted.as_slice()
+                        } else {
+                            data
+                        };
+                        let compressed = compress_zlib(payload)?;
                         buffer.extend_from_slice(&(compressed.len() as u32).to_be_bytes());
                         buffer.extend_from_slice(&compressed);
                     }
@@ -1141,7 +1315,12 @@ fn build_framebuffer_update(
                         buffer.extend_from_slice(&encoded);
                     }
                     _ => {
-                        buffer.extend_from_slice(data);
+                        if pixel_format.bits_per_pixel == 16 {
+                            let converted = bgra_to_rgb565(data, pixel_format.big_endian);
+                            buffer.extend_from_slice(&converted);
+                        } else {
+                            buffer.extend_from_slice(data);
+                        }
                     }
                 }
             }
@@ -1151,7 +1330,12 @@ fn build_framebuffer_update(
                 buffer.extend_from_slice(&cursor.width.to_be_bytes());
                 buffer.extend_from_slice(&cursor.height.to_be_bytes());
                 buffer.extend_from_slice(&ENCODING_CURSOR.to_be_bytes());
-                buffer.extend_from_slice(&cursor.pixels);
+                if pixel_format.bits_per_pixel == 16 {
+                    let converted = bgra_to_rgb565(&cursor.pixels, pixel_format.big_endian);
+                    buffer.extend_from_slice(&converted);
+                } else {
+                    buffer.extend_from_slice(&cursor.pixels);
+                }
                 buffer.extend_from_slice(&cursor.mask);
             }
         }
@@ -1396,6 +1580,8 @@ fn spawn_capture_thread(
     generation: u64,
     copyrect_supported: Arc<AtomicBool>,
     cursor_supported: Arc<AtomicBool>,
+    last_input_at: Arc<AtomicU64>,
+    data_saver_enabled: Arc<AtomicBool>,
     sender: tokio::sync::mpsc::Sender<FrameUpdate>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -1446,17 +1632,39 @@ fn spawn_capture_thread(
         #[cfg(target_os = "macos")]
         let mut last_cursor: Option<SystemCursor> = None;
         let mut logged_first_frame = false;
+        let (active_interval, idle_interval) = resolve_frame_intervals();
+        let keepalive_interval = resolve_keepalive_interval();
+        let idle_poll = Duration::from_millis(VNC_IDLE_POLL_MS);
         let mut last_success = Instant::now();
+        let mut last_capture = Instant::now()
+            .checked_sub(active_interval)
+            .unwrap_or_else(Instant::now);
+        let mut last_sent = Instant::now();
         loop {
             if !running.load(Ordering::SeqCst)
                 || guard.load(Ordering::SeqCst) != generation
             {
                 break;
             }
-            thread::sleep(Duration::from_millis(MAX_FRAME_RATE_MS));
             if !ready.load(Ordering::SeqCst) {
+                thread::sleep(idle_poll);
                 continue;
             }
+            let input_age = current_millis()
+                .saturating_sub(last_input_at.load(Ordering::Relaxed));
+            let frame_interval = if input_age <= ACTIVE_INPUT_WINDOW_MS {
+                active_interval
+            } else if data_saver_enabled.load(Ordering::Relaxed) {
+                idle_interval
+            } else {
+                active_interval
+            };
+            let elapsed = last_capture.elapsed();
+            if elapsed < frame_interval {
+                thread::sleep(frame_interval - elapsed);
+                continue;
+            }
+            last_capture = Instant::now();
 
             #[cfg(target_os = "macos")]
             if cursor_supported.load(Ordering::Relaxed) {
@@ -1521,7 +1729,13 @@ fn spawn_capture_thread(
                 };
                 last_frame = Some(frame);
                 if let Some(update) = update {
-                    let _ = sender.try_send(update);
+                    if sender.try_send(update).is_ok() {
+                        last_sent = Instant::now();
+                    }
+                } else if last_sent.elapsed() >= keepalive_interval {
+                    if sender.try_send(Vec::new()).is_ok() {
+                        last_sent = Instant::now();
+                    }
                 }
             } else if vnc_debug_enabled() && last_success.elapsed() > Duration::from_secs(5) {
                 last_success = Instant::now();
@@ -1559,7 +1773,7 @@ fn spawn_input_thread(
 
 #[derive(Debug)]
 enum ClientMessage {
-    SetPixelFormat,
+    SetPixelFormat { format: PixelFormatSpec },
     SetEncodings { encodings: Vec<i32> },
     FramebufferUpdateRequest {
         incremental: bool,
@@ -1580,8 +1794,20 @@ fn parse_client_message(buffer: &mut Vec<u8>) -> Option<ClientMessage> {
             if buffer.len() < 20 {
                 return None;
             }
+            let format = PixelFormatSpec {
+                bits_per_pixel: buffer[4],
+                depth: buffer[5],
+                big_endian: buffer[6] != 0,
+                true_color: buffer[7] != 0,
+                red_max: u16::from_be_bytes([buffer[8], buffer[9]]),
+                green_max: u16::from_be_bytes([buffer[10], buffer[11]]),
+                blue_max: u16::from_be_bytes([buffer[12], buffer[13]]),
+                red_shift: buffer[14],
+                green_shift: buffer[15],
+                blue_shift: buffer[16],
+            };
             buffer.drain(0..20);
-            Some(ClientMessage::SetPixelFormat)
+            Some(ClientMessage::SetPixelFormat { format })
         }
         2 => {
             if buffer.len() < 4 {

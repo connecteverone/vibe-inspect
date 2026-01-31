@@ -5964,6 +5964,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   bool _mouseInputEnabled = false;
   bool _hardwareKeyboardOnly = false;
   bool _isTerminalAtBottom = true;
+  final Set<String> _terminalGapWarned = {};
+  final Set<String> _terminalTruncateWarned = {};
   SelectionMode _selectionMode = SelectionMode.line;
   double _terminalFontSize = 13;
   int _terminalThemeIndex = 0;
@@ -8240,15 +8242,33 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return;
     }
     final status = payload['status']?.toString() ?? view.session.status;
+    final action = payload['action']?.toString() ?? '';
     final nextSeq = _parseNextSeq(payload, fallback: view.nextSeq);
+    final firstSeq =
+        _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+    final expectedNext = view.nextSeq + 1;
+    final truncated = payload['truncated'] == true;
+    final hasGap = truncated ||
+        (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+    final missingHistory = (truncated && view.nextSeq == 0) ||
+        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
+    final shouldReset =
+        action == 'start' || nextSeq < view.nextSeq || hasGap;
     final parsedExitCode = _parseExitCode(payload);
     final exitCode = parsedExitCode ??
         (status.toLowerCase() == 'running' ? null : view.exitCode);
+    final snapshotRaw = payload['snapshot']?.toString();
+    final snapshot = snapshotRaw != null && snapshotRaw.isNotEmpty
+        ? snapshotRaw
+        : null;
     final outputEntries = _parseTerminalChunks(
       payload['output'],
       DateTime.now(),
+      minSeq: shouldReset ? 0 : view.nextSeq,
     );
-    final mergedOutput = _mergeOutputEntries(view.output, outputEntries);
+    final mergedOutput = shouldReset
+        ? outputEntries
+        : _mergeOutputEntries(view.output, outputEntries);
     final updatedSession = _sessionWithStatus(view.session, status);
     final updatedView = view.copyWith(
       session: updatedSession,
@@ -8257,8 +8277,36 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       exitCode: exitCode,
     );
     _replaceSession(sessionId, updatedView);
+    if (action == 'start' || nextSeq < view.nextSeq) {
+      _terminalGapWarned.remove(sessionId);
+      _terminalTruncateWarned.remove(sessionId);
+    }
+    if (sessionId == _activeSessionId) {
+      if (hasGap && !_terminalGapWarned.contains(sessionId)) {
+        _terminalGapWarned.add(sessionId);
+        _setTerminalStatusMessage(
+          'Terminal output dropped; screen re-synced.',
+        );
+      } else if (missingHistory &&
+          !_terminalTruncateWarned.contains(sessionId)) {
+        _terminalTruncateWarned.add(sessionId);
+        _setTerminalStatusMessage(
+          'Terminal history truncated; screen may be incomplete.',
+        );
+      }
+    }
     await _persistSession(updatedSession);
-    _appendTerminalOutput(sessionId, outputEntries);
+    final shouldApplySnapshot =
+        snapshot != null && (shouldReset || action == 'status');
+    if (shouldApplySnapshot) {
+      _resetTerminalSession(sessionId);
+      _writeTerminalSnapshot(sessionId, snapshot);
+    } else {
+      if (shouldReset) {
+        _resetTerminalSession(sessionId);
+      }
+      _appendTerminalOutput(sessionId, outputEntries);
+    }
 
     final resolvedCommand =
         command ?? event?.payload['command']?.toString() ?? '';
@@ -8330,6 +8378,17 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     terminal.write(buffer.toString());
   }
 
+  void _writeTerminalSnapshot(String sessionId, String? snapshot) {
+    if (snapshot == null || snapshot.isEmpty) {
+      return;
+    }
+    final terminal = _terminals[sessionId];
+    if (terminal == null) {
+      return;
+    }
+    terminal.write(snapshot);
+  }
+
   bool _shouldPersistTerminalEvent(String sessionId, String status) {
     final lowered = status.toLowerCase();
     if (lowered == 'exited' ||
@@ -8352,8 +8411,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
 
   List<TerminalOutputEntry> _parseTerminalChunks(
     dynamic raw,
-    DateTime fallbackTimestamp,
-  ) {
+    DateTime fallbackTimestamp, {
+    int minSeq = 0,
+  }) {
     if (raw == null) {
       return [];
     }
@@ -8361,6 +8421,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     if (raw is List) {
       for (final item in raw) {
         if (item is Map) {
+          final seq = _parseChunkSeq(item['seq']);
+          if (seq != null && seq <= minSeq) {
+            continue;
+          }
           final text = item['data']?.toString() ?? '';
           if (text.isEmpty) {
             continue;
@@ -8402,6 +8466,42 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       ),
     );
     return entries;
+  }
+
+  int? _parseChunkSeq(dynamic raw) {
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    if (raw is String) {
+      return int.tryParse(raw);
+    }
+    return null;
+  }
+
+  int? _extractFirstSeq(dynamic raw) {
+    if (raw is! List) {
+      return null;
+    }
+    for (final item in raw) {
+      if (item is Map) {
+        final seq = _parseChunkSeq(item['seq']);
+        if (seq != null) {
+          return seq;
+        }
+      }
+    }
+    return null;
+  }
+
+  void _resetTerminalSession(String sessionId) {
+    final terminal = _terminals[sessionId];
+    if (terminal == null) {
+      return;
+    }
+    terminal.write('\x1bc');
   }
 
   DateTime? _parseEpochSeconds(dynamic raw) {
@@ -9729,6 +9829,11 @@ enum VncViewMode {
   original,
 }
 
+enum VncColorDepth {
+  full,
+  depth16,
+}
+
 class _VncSessionScreenState extends State<VncSessionScreen> {
   static const List<double> _zoomStops = [0.5, 0.75, 1, 1.5, 2, 3];
   static const double _swipeThreshold = 120;
@@ -9745,7 +9850,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const int _encodingCursor = -239;
   static const int _encodingCompressLevelBase = -256;
   static const int _encodingQualityLevelBase = -32;
+  static const int _encodingDataSaver = -312;
   static const Duration _noFrameTimeout = Duration(seconds: 8);
+  static const Duration _fpsWindow = Duration(milliseconds: 1000);
   static const double _trackpadMoreButtonSize = 40;
   static const double _trackpadMoreButtonMargin = 10;
   static const Offset _trackpadMoreAnchorDefault = Offset(0.88, 0.1);
@@ -9759,6 +9866,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   int _tightCompressionLevel = 6;
   int _tightQualityLevel = 6;
   bool _tightJpegEnabled = false;
+  bool _lowLatencyEnabled = true;
+  VncColorDepth _colorDepth = VncColorDepth.full;
+  bool _dataSaverEnabled = false;
   VncViewMode _viewMode = VncViewMode.fit;
   bool _isConnecting = false;
   bool _isResizing = false;
@@ -9783,6 +9893,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   DateTime? _streamStartedAt;
   DateTime? _lastFrameAt;
   Timer? _noFrameTimer;
+  final List<int> _frameTimestamps = [];
+  double _streamFps = 0;
+  int? _streamLatencyMs;
+  DateTime? _lastInputAt;
   bool _controlsSheetOpen = false;
   int _buttonMask = 0;
   bool _isDragging = false;
@@ -9896,6 +10010,53 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _cursorImage = null;
     _cursorSize = Size.zero;
     _cursorHotspot = Offset.zero;
+  }
+
+  void _resetStreamStats() {
+    _frameTimestamps.clear();
+    _streamFps = 0;
+    _streamLatencyMs = null;
+    _lastInputAt = null;
+  }
+
+  void _markInputActivity() {
+    _lastInputAt = DateTime.now();
+  }
+
+  double _recordFrameFps(int nowMs) {
+    _frameTimestamps.add(nowMs);
+    final cutoff = nowMs - _fpsWindow.inMilliseconds;
+    while (_frameTimestamps.length > 1 && _frameTimestamps.first < cutoff) {
+      _frameTimestamps.removeAt(0);
+    }
+    final spanMs = _frameTimestamps.length > 1
+        ? nowMs - _frameTimestamps.first
+        : _fpsWindow.inMilliseconds;
+    if (spanMs <= 0) {
+      return _frameTimestamps.length.toDouble();
+    }
+    final fps = _frameTimestamps.length * 1000 / spanMs;
+    return fps.clamp(0, 120).toDouble();
+  }
+
+  int? _resolveLatencyMs(VncFrame frame, int nowMs) {
+    final lastInputAt = _lastInputAt;
+    if (lastInputAt == null) {
+      final requestLatency = frame.latencyMs;
+      if (requestLatency == null || requestLatency > 1000) {
+        return null;
+      }
+      return requestLatency;
+    }
+    final delta = nowMs - lastInputAt.millisecondsSinceEpoch;
+    if (delta < 0 || delta > 5000) {
+      final requestLatency = frame.latencyMs;
+      if (requestLatency == null || requestLatency > 1000) {
+        return null;
+      }
+      return requestLatency;
+    }
+    return delta;
   }
 
   void _hydrateFromPayload() {
@@ -10285,9 +10446,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _pendingFrame = null;
     final pixels = frame.pixels;
     final expectedLength = frame.width * frame.height * 4;
-    final safePixels = pixels.length >= expectedLength
-        ? pixels.sublist(0, expectedLength)
-        : Uint8List.fromList(pixels);
+    final safePixels = Uint8List(expectedLength);
+    if (pixels.length >= expectedLength) {
+      safePixels.setRange(0, expectedLength, pixels);
+    } else {
+      safePixels.setRange(0, pixels.length, pixels);
+    }
     ui.decodeImageFromPixels(
       safePixels,
       frame.width,
@@ -10299,6 +10463,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _isDecoding = false;
           return;
         }
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final fps = _recordFrameFps(nowMs);
+        final latencyMs = _resolveLatencyMs(frame, nowMs);
         final newSize = Size(
           frame.width.toDouble(),
           frame.height.toDouble(),
@@ -10307,6 +10474,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         setState(() {
           _frameImage?.dispose();
           _frameImage = image;
+          _streamFps = fps;
+          _streamLatencyMs = latencyMs;
           if (sizeChanged) {
             // Scale pointer position proportionally when frame size changes.
             // This ensures the cursor stays at the same relative position.
@@ -10405,6 +10574,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _isConnecting = true;
         _connectionError = null;
         _resetCursorState();
+        _resetStreamStats();
       });
       await _updateSession(status: 'connecting');
     }
@@ -10504,6 +10674,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       }
       _maybeInvalidateCalibrationForFrameSize();
       _vncClient = candidate;
+      _applyEncodingPreferences();
+      _applyPixelFormatPreference();
       // Sync the cursor position to the desktop after session creation.
       // This ensures mobile and desktop cursors are aligned after zoom changes.
       _sendPointerEvent();
@@ -10904,6 +11076,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (client == null || _connectionError != null || _isConnecting) {
       return;
     }
+    _markInputActivity();
     final adjusted = _applyInputCalibration(_pointerPosition);
     final maxX = _maxPointerX();
     final maxY = _maxPointerY();
@@ -10922,23 +11095,28 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       });
     }
     client.sendPointer(x: x, y: y, mask: _buttonMask);
+    client.requestIncrementalFrame();
   }
 
   List<int> _buildEncodingList() {
     final ordered = <int>[];
-    switch (_encodingPreference) {
-      case VncEncodingPreference.zrle:
-        ordered.add(_encodingZrle);
-        break;
-      case VncEncodingPreference.tight:
-        ordered.add(_encodingTight);
-        break;
-      case VncEncodingPreference.zlib:
-        ordered.add(_encodingZlib);
-        break;
-      case VncEncodingPreference.raw:
-        ordered.add(_encodingRaw);
-        break;
+    if (_lowLatencyEnabled) {
+      ordered.add(_encodingZlib);
+    } else {
+      switch (_encodingPreference) {
+        case VncEncodingPreference.zrle:
+          ordered.add(_encodingZrle);
+          break;
+        case VncEncodingPreference.tight:
+          ordered.add(_encodingTight);
+          break;
+        case VncEncodingPreference.zlib:
+          ordered.add(_encodingZlib);
+          break;
+        case VncEncodingPreference.raw:
+          ordered.add(_encodingRaw);
+          break;
+      }
     }
     const fallback = [
       _encodingZrle,
@@ -10950,6 +11128,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (!ordered.contains(encoding)) {
         ordered.add(encoding);
       }
+    }
+    if (_dataSaverEnabled) {
+      ordered.add(_encodingDataSaver);
+    }
+    if (_colorDepth == VncColorDepth.depth16) {
+      ordered.removeWhere(
+        (encoding) => encoding == _encodingZrle || encoding == _encodingTight,
+      );
     }
     if (!ordered.contains(_encodingCopyRect)) {
       ordered.add(_encodingCopyRect);
@@ -10972,6 +11158,36 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     client.setEncodings(_buildEncodingList());
+  }
+
+  void _applyPixelFormatPreference() {
+    final client = _vncClient;
+    if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    client.setPixelFormat(use16Bit: _colorDepth == VncColorDepth.depth16);
+  }
+
+  void _setLowLatencyMode(bool enabled) {
+    setState(() {
+      _lowLatencyEnabled = enabled;
+      if (enabled) {
+        _encodingPreference = VncEncodingPreference.zlib;
+        _tightCompressionLevel = 1;
+        _tightJpegEnabled = false;
+      }
+    });
+    _applyEncodingPreferences();
+    _applyPixelFormatPreference();
+    _requestStreamRefresh(resetAutoResize: true);
+  }
+
+  void _setDataSaverMode(bool enabled) {
+    setState(() {
+      _dataSaverEnabled = enabled;
+    });
+    _applyEncodingPreferences();
+    _requestStreamRefresh(resetAutoResize: true);
   }
 
   double _viewAspectRatio(Size screenSize) {
@@ -11082,12 +11298,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (client == null || _connectionError != null || _isConnecting) {
       return;
     }
+    _markInputActivity();
     final adjusted = _applyInputCalibration(_pointerPosition);
     final maxX = _maxPointerX();
     final maxY = _maxPointerY();
     final x = adjusted.dx.round().clamp(0, maxX).toInt();
     final y = adjusted.dy.round().clamp(0, maxY).toInt();
     client.sendScroll(x: x, y: y, delta: direction.isNegative ? -1 : 1);
+    client.requestIncrementalFrame();
   }
 
   int _maxPointerX() {
@@ -11267,8 +11485,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (client == null || _connectionError != null || _isConnecting) {
       return;
     }
+    _markInputActivity();
     client.sendKey(down: true, keysym: keysym);
     client.sendKey(down: false, keysym: keysym);
+    client.requestIncrementalFrame();
   }
 
   Future<void> _showKeyboardInput() async {
@@ -12016,7 +12236,17 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 Positioned(
                   right: 12,
                   top: 12,
-                  child: _VncZoomBadge(value: _zoom),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _VncStatsBadge(
+                        latencyMs: _streamLatencyMs,
+                        fps: _streamFps,
+                      ),
+                      const SizedBox(height: 6),
+                      _VncZoomBadge(value: _zoom),
+                    ],
+                  ),
                 ),
               if (!isInteractive)
                 Positioned.fill(
@@ -12638,6 +12868,39 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               ),
         ),
         const SizedBox(height: 6),
+        SwitchListTile.adaptive(
+          title: const Text('低延迟模式'),
+          subtitle: const Text('优先响应，可能降低画质'),
+          value: _lowLatencyEnabled,
+          onChanged: isInteractive ? _setLowLatencyMode : null,
+        ),
+        SwitchListTile.adaptive(
+          title: const Text('省流模式'),
+          subtitle: const Text('空闲时降低同步频率'),
+          value: _dataSaverEnabled,
+          onChanged: isInteractive ? _setDataSaverMode : null,
+        ),
+        SwitchListTile.adaptive(
+          title: const Text('16-bit 色深'),
+          subtitle: const Text('减少带宽，颜色更少'),
+          value: _colorDepth == VncColorDepth.depth16,
+          onChanged: isInteractive
+              ? (value) {
+                  setState(() {
+                    _colorDepth = value
+                        ? VncColorDepth.depth16
+                        : VncColorDepth.full;
+                    if (value) {
+                      _tightJpegEnabled = false;
+                      _encodingPreference = VncEncodingPreference.zlib;
+                    }
+                  });
+                  _applyEncodingPreferences();
+                  _applyPixelFormatPreference();
+                  _requestStreamRefresh(resetAutoResize: true);
+                }
+              : null,
+        ),
         DropdownButtonFormField<VncEncodingPreference>(
           value: _encodingPreference,
           decoration: const InputDecoration(
@@ -12662,7 +12925,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               child: Text('Raw（无压缩）'),
             ),
           ],
-          onChanged: isInteractive
+          onChanged: isInteractive && !_lowLatencyEnabled
               ? (value) {
                   if (value == null) {
                     return;
@@ -12680,7 +12943,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           value: _tightCompressionLevel.toDouble(),
           min: 0,
           max: 9,
-          enabled: isInteractive,
+          enabled: isInteractive && !_lowLatencyEnabled,
           labelColor: glassStyle ? Colors.white70 : null,
           onChanged: (value) {
             setState(() {
@@ -13588,6 +13851,81 @@ class _VncZoomBadge extends StatelessWidget {
               color: Colors.white,
               fontWeight: FontWeight.w700,
             ),
+      ),
+    );
+  }
+}
+
+class _VncStatsBadge extends StatelessWidget {
+  const _VncStatsBadge({
+    required this.latencyMs,
+    required this.fps,
+  });
+
+  final int? latencyMs;
+  final double fps;
+
+  Color _latencyColor() {
+    final value = latencyMs;
+    if (value == null) {
+      return Colors.white70;
+    }
+    if (value > 50) {
+      return Colors.redAccent;
+    }
+    if (value > 20) {
+      return const Color(0xFFFBBF24);
+    }
+    return Colors.white;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fpsValue = fps.isFinite ? fps : 0;
+    final fpsLabel = fpsValue <= 0
+        ? '--'
+        : fpsValue >= 10
+            ? fpsValue.toStringAsFixed(0)
+            : fpsValue.toStringAsFixed(1);
+    final latencyLabel =
+        latencyMs == null ? '--' : '${latencyMs!.clamp(0, 9999)}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(140),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Latency ',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              Text(
+                '$latencyLabel ms',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _latencyColor(),
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '$fpsLabel fps',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
       ),
     );
   }
