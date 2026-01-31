@@ -14,8 +14,21 @@ This plan is designed for correctness of input mapping, high perceived responsiv
 
 ## 0.1 Implementation Status (as of 2026-01-31)
 - Desktop agent: QUIC server is live, ROI sessions are validated, tiles are captured from the native display, chunked, and sent via QUIC DATAGRAM (`ROI1` header).
-- Mobile app: ROI rendering pipeline, tile decoder/assembler, and overlay painter are in place, but the **actual QUIC client transport is still pending**.
+- Desktop agent: QUIC endpoint is created inside the Tokio runtime, logs ROI start/ready/request/close, and reports the actual bound port (including ephemeral fallback). Auto-restart is disabled while sessions are active to avoid ROI drops.
+- Mobile app: QUIC DATAGRAM client implemented via `flutter_quic` (FRB + Quinn). ROI control stream and datagram receive path are wired; overlay pipeline is active.
+- Mobile app: ROI send stream is retained after writes (prevents immediate QUIC close). ROI requests fire immediately after connect and when view size is unknown a frame-size fallback is used.
 - Zoom UX: continuous zoom slider is enabled; when zoom > 1.01 the base layer uses `FilterQuality.none` to reduce blur.
+- iOS: `flutter_quic` is vendored and uses a global Tokio runtime for stability.
+
+### Dev/Test Notes
+- `ROI_FAKE_CAPTURE=1` forces the agent to use a synthetic frame (no screen-capture permission required). Used by `quic::tests::quic_roi_handshake_and_datagram`.
+- Use ROI logs to validate lifecycle: `ROI start`, `ROI QUIC accepted/hello/ready`, `ROI request`, `ROI QUIC closed`.
+
+## 0.2 Recent Stability Fixes (2026-01-31)
+- Fixed ROI QUIC send stream lifetime on mobile so the server does not close immediately after handshake.
+- Added ROI lifecycle logs on desktop for diagnosis and verification.
+- Removed server auto-restart during active sessions to prevent VNC/ROI disconnect loops.
+- Ensured QUIC port updates propagate when the server binds to an ephemeral port.
 
 ## 1. Context From Current Code (Local Inspection)
 ### Desktop Agent (Rust)
@@ -88,6 +101,7 @@ Use QUIC stream within the same connection for handshake and requests.
 - framebuffer_size (logical)
 - screen_size (physical)
 - max_datagram_size
+- quic_port
 
 **ROI_REQUEST (client -> agent)**
 - center_x, center_y (logical framebuffer coords)
