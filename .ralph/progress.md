@@ -819,3 +819,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
 - **Learnings for future iterations:**
   - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
 ---
+## [2026-02-01 00:38:14] - US-005: Fix terminal session list reconciliation and persistence
+Thread: 
+Run: 20260131-221506-98331 (iteration 6)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-6.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-6.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 7985add fix(terminal): reconcile persisted session lists
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260131-221506-98331-iter-5.log
+  - .ralph/runs/run-20260131-221506-98331-iter-6.log
+  - .ralph/.tmp/prompt-20260131-221506-98331-6.md
+  - .ralph/.tmp/story-20260131-221506-98331-6.json
+  - .ralph/.tmp/story-20260131-221506-98331-6.md
+  - .ralph/runs/run-20260131-221506-98331-iter-5.md
+  - desktop/src/terminal.rs
+  - mobile/lib/main.dart
+- What was implemented
+  - Persisted desktop terminal session summaries to disk and close missing sessions after restart with a clear reason.
+  - Reconciled mobile terminal sessions against the remote list, marking missing sessions closed and surfacing fetch/empty states and reasons.
+  - Seeded web UI state via import bundle to validate the terminal closed-reason UI.
+- **Learnings for future iterations:**
+  - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
+  - Import bundle is useful for seeding sessions during web UI checks.
+---
