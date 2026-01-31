@@ -51866,4 +51866,2296 @@ thinking
 
 I'm staging all changes and preparing to commit with the message `chore(progress): log US-006 run` following conventional commit style.
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 72ms:
+
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 9d253d606ebdf87c93b58e019087478766cd69e5..b6d7d66fa24d121553c54541c7f3f4f3e8bf72d5
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -585,6 +585,128 @@
+         justify-content: flex-end;
+       }
+ 
++      .device-item.active {
++        border-color: rgba(56, 189, 248, 0.6);
++        box-shadow: 0 12px 24px rgba(56, 189, 248, 0.18);
++      }
++
++      .terminal-detail {
++        gap: 16px;
++      }
++
++      .terminal-header {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 14px;
++      }
++
++      .terminal-meta {
++        font-size: 0.78rem;
++        color: var(--ink-muted);
++      }
++
++      .terminal-status {
++        border-radius: 12px;
++        border: 1px solid rgba(248, 113, 113, 0.35);
++        background: rgba(248, 113, 113, 0.12);
++        color: var(--rose-ink);
++        padding: 10px 12px;
++        font-size: 0.82rem;
++      }
++
++      .terminal-status.notice {
++        border-color: rgba(56, 189, 248, 0.4);
++        background: rgba(56, 189, 248, 0.14);
++        color: #bae6fd;
++      }
++
++      .terminal-screen {
++        position: relative;
++        min-height: 240px;
++        max-height: 320px;
++        padding: 14px 16px;
++        border-radius: 16px;
++        border: 1px solid rgba(148, 163, 184, 0.2);
++        background: rgba(2, 6, 23, 0.7);
++        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
++        font-size: 0.78rem;
++        color: var(--ink-soft);
++        white-space: pre-wrap;
++        overflow-y: auto;
++      }
++
++      .terminal-controls {
++        display: grid;
++        grid-template-columns: 1fr auto;
++        gap: 10px;
++        align-items: center;
++      }
++
++      .terminal-controls input {
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 12px;
++        padding: 10px 12px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.86rem;
++      }
++
++      .terminal-controls input::placeholder {
++        color: var(--ink-muted);
++      }
++
++      .terminal-controls input:focus-visible {
++        outline: 2px solid rgba(56, 189, 248, 0.45);
++        outline-offset: 2px;
++      }
++
++      .terminal-resize {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 12px;
++        align-items: flex-end;
++      }
++
++      .resize-field {
++        display: flex;
++        flex-direction: column;
++        gap: 6px;
++      }
++
++      .resize-field label {
++        font-size: 0.7rem;
++        text-transform: uppercase;
++        letter-spacing: 0.08em;
++        color: var(--ink-muted);
++      }
++
++      .resize-field input {
++        width: 88px;
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 10px;
++        padding: 8px 10px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.82rem;
++      }
++
++      .terminal-actions {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 8px;
++        justify-content: flex-end;
++      }
++
++      .terminal-measure {
++        position: absolute;
++        visibility: hidden;
++        pointer-events: none;
++        white-space: pre;
++      }
++
+       .actions {
+         display: flex;
+         flex-wrap: wrap;
+@@ -691,6 +813,9 @@
+         .token-controls {
+           grid-template-columns: 1fr;
+         }
++        .terminal-controls {
++          grid-template-columns: 1fr;
++        }
+       }
+ 
+       @keyframes rise {
+@@ -943,6 +1068,45 @@
+               <div class="device-item">--</div>
+             </div>
+           </div>
++
++          <div class="card terminal-detail" id="terminalDetail">
++            <div class="terminal-header">
++              <div>
++                <h2 class="card-title" id="terminalDetailTitle">Terminal console</h2>
++                <div class="terminal-meta" id="terminalDetailMeta">
++                  Select a session to stream output.
++                </div>
++              </div>
++              <div class="terminal-actions">
++                <button class="secondary mini" id="terminalStop">Disconnect</button>
++              </div>
++            </div>
++            <div class="terminal-status hidden" id="terminalDetailStatus"></div>
++            <div class="terminal-screen" id="terminalOutput">
++              Select a terminal session to stream output.
++            </div>
++            <div class="terminal-controls">
++              <input
++                type="text"
++                id="terminalInput"
++                placeholder="Type a command and press Enter"
++                autocomplete="off"
++              />
++              <button class="primary" id="terminalSend">Send</button>
++            </div>
++            <div class="terminal-resize">
++              <div class="resize-field">
++                <label for="terminalCols">Cols</label>
++                <input type="number" id="terminalCols" min="20" max="300" />
++              </div>
++              <div class="resize-field">
++                <label for="terminalRows">Rows</label>
++                <input type="number" id="terminalRows" min="4" max="120" />
++              </div>
++              <button class="secondary mini" id="terminalFit">Fit to panel</button>
++              <button class="secondary mini" id="terminalResize">Resize</button>
++            </div>
++          </div>
+         </div>
+       </section>
+ 
+@@ -1071,6 +1235,17 @@
+       const pairedDevicesEl = document.getElementById("pairedDevices");
+       const activeDevicesEl = document.getElementById("activeDevices");
+       const terminalSessionsEl = document.getElementById("terminalSessions");
++      const terminalDetailTitleEl = document.getElementById("terminalDetailTitle");
++      const terminalDetailMetaEl = document.getElementById("terminalDetailMeta");
++      const terminalDetailStatusEl = document.getElementById("terminalDetailStatus");
++      const terminalOutputEl = document.getElementById("terminalOutput");
++      const terminalInputEl = document.getElementById("terminalInput");
++      const terminalSendBtn = document.getElementById("terminalSend");
++      const terminalStopBtn = document.getElementById("terminalStop");
++      const terminalColsInput = document.getElementById("terminalCols");
++      const terminalRowsInput = document.getElementById("terminalRows");
++      const terminalFitBtn = document.getElementById("terminalFit");
++      const terminalResizeBtn = document.getElementById("terminalResize");
+       const generateBtn = document.getElementById("generate");
+       const copyBtn = document.getElementById("copyPayload");
+       const authTokenEl = document.getElementById("authToken");
+@@ -1106,6 +1281,13 @@
+       let authTokenVisible = false;
+       let locationSettingsOpened = false;
+       let bundleIdValue = null;
++      let activeTerminalSessionId = null;
++      let terminalSessionInfo = null;
++      let terminalOutputText = "";
++      let terminalNextSeq = 0;
++      let terminalPollTimer = null;
++      let terminalPollInFlight = false;
++      let terminalSessionsById = {};
+ 
+       function ensureInvoke() {
+         if (!invoke) {
+@@ -1165,6 +1347,10 @@
+           saveFrpUrlBtn,
+           saveListenPortBtn,
+           saveRoiQuicPortBtn,
++          terminalSendBtn,
++          terminalStopBtn,
++          terminalFitBtn,
++          terminalResizeBtn,
+         ];
+         controls.forEach((btn) => {
+           if (!btn) return;
+@@ -1178,6 +1364,9 @@
+           frpUrlInput,
+           listenPortInput,
+           roiQuicPortInput,
++          terminalInputEl,
++          terminalColsInput,
++          terminalRowsInput,
+         ];
+         inputs.forEach((input) => {
+           if (!input) return;
+@@ -1561,6 +1750,313 @@
+         return tag;
+       }
+ 
++      const DEFAULT_TERMINAL_COLS = 120;
++      const DEFAULT_TERMINAL_ROWS = 32;
++      const TERMINAL_OUTPUT_LIMIT = 24000;
++
++      function titleCase(value) {
++        if (!value) return "";
++        return value.charAt(0).toUpperCase() + value.slice(1);
++      }
++
++      function renderTerminalHeader() {
++        if (!terminalDetailTitleEl || !terminalDetailMetaEl) return;
++        if (!terminalSessionInfo) {
++          terminalDetailTitleEl.textContent = "Terminal console";
++          terminalDetailMetaEl.textContent = "Select a session to stream output.";
++          return;
++        }
++        const label =
++          terminalSessionInfo.label || terminalSessionInfo.id || "Terminal console";
++        terminalDetailTitleEl.textContent = label;
++        const parts = [];
++        if (terminalSessionInfo.status) {
++          parts.push(titleCase(terminalSessionInfo.status));
++        }
++        if (terminalSessionInfo.last_activity) {
++          parts.push(`last ${formatTime(terminalSessionInfo.last_activity)}`);
++        }
++        if (terminalSessionInfo.created_at) {
++          parts.push(`started ${formatTime(terminalSessionInfo.created_at)}`);
++        }
++        if (terminalSessionInfo.id) {
++          parts.push(`id ${terminalSessionInfo.id}`);
++        }
++        terminalDetailMetaEl.textContent =
++          parts.length > 0 ? parts.join(" · ") : "Terminal session";
++      }
++
++      function setTerminalDetailStatus(message, tone = "error") {
++        if (!terminalDetailStatusEl) return;
++        if (!message) {
++          terminalDetailStatusEl.textContent = "";
++          terminalDetailStatusEl.classList.add("hidden");
++          terminalDetailStatusEl.classList.remove("notice");
++          return;
++        }
++        terminalDetailStatusEl.textContent = message;
++        terminalDetailStatusEl.classList.remove("hidden");
++        terminalDetailStatusEl.classList.toggle("notice", tone === "notice");
++      }
++
++      function setTerminalInputEnabled(enabled) {
++        if (terminalInputEl) terminalInputEl.disabled = !enabled;
++        if (terminalSendBtn) {
++          terminalSendBtn.disabled = !enabled;
++          terminalSendBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalColsInput) terminalColsInput.disabled = !enabled;
++        if (terminalRowsInput) terminalRowsInput.disabled = !enabled;
++        if (terminalFitBtn) {
++          terminalFitBtn.disabled = !enabled;
++          terminalFitBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalResizeBtn) {
++          terminalResizeBtn.disabled = !enabled;
++          terminalResizeBtn.classList.toggle("button-disabled", !enabled);
++        }
++      }
++
++      function setTerminalStopEnabled(enabled) {
++        if (!terminalStopBtn) return;
++        terminalStopBtn.disabled = !enabled;
++        terminalStopBtn.classList.toggle("button-disabled", !enabled);
++      }
++
++      function renderTerminalOutput() {
++        if (!terminalOutputEl) return;
++        if (!activeTerminalSessionId) {
++          terminalOutputEl.textContent = "Select a terminal session to stream output.";
++          return;
++        }
++        terminalOutputEl.textContent =
++          terminalOutputText || "Waiting for output...";
++        terminalOutputEl.scrollTop = terminalOutputEl.scrollHeight;
++      }
++
++      function appendTerminalOutput(text) {
++        if (!text) return;
++        terminalOutputText += text;
++        if (terminalOutputText.length > TERMINAL_OUTPUT_LIMIT) {
++          terminalOutputText = terminalOutputText.slice(-TERMINAL_OUTPUT_LIMIT);
++        }
++      }
++
++      function applyTerminalPayload(payload, options = {}) {
++        if (!payload) return;
++        if (!terminalSessionInfo) {
++          terminalSessionInfo = { id: activeTerminalSessionId };
++        }
++        if (payload.label && payload.label.trim().length) {
++          terminalSessionInfo.label = payload.label.trim();
++        }
++        if (payload.status) {
++          terminalSessionInfo.status = payload.status;
++        }
++        if (payload.last_activity) {
++          terminalSessionInfo.last_activity = payload.last_activity;
++        }
++        renderTerminalHeader();
++        const hasSnapshot =
++          payload.snapshot !== undefined && payload.snapshot !== null;
++        if (hasSnapshot && (options.forceReset || payload.truncated)) {
++          terminalOutputText = payload.snapshot;
++        } else if (options.forceReset && !hasSnapshot) {
++          terminalOutputText = "";
++        }
++        const output = Array.isArray(payload.output) ? payload.output : [];
++        output.forEach((chunk) => {
++          if (chunk?.data) {
++            appendTerminalOutput(chunk.data);
++          }
++        });
++        const nextSeq = Number(payload.next_seq);
++        if (Number.isFinite(nextSeq)) {
++          terminalNextSeq = nextSeq;
++        }
++        renderTerminalOutput();
++        const status = payload.status || terminalSessionInfo?.status;
++        if (status && status !== "running") {
++          setTerminalDetailStatus(`Session ${status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++      }
++
++      function stopTerminalPolling() {
++        if (terminalPollTimer) {
++          clearInterval(terminalPollTimer);
++          terminalPollTimer = null;
++        }
++        terminalPollInFlight = false;
++      }
++
++      async function pollTerminalOutput() {
++        if (!activeTerminalSessionId || terminalPollInFlight) return;
++        terminalPollInFlight = true;
++        const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
++          since: terminalNextSeq,
++          limit: 200,
++        });
++        terminalPollInFlight = false;
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++      }
++
++      async function fetchTerminalStatus(sessionId) {
++        const payload = await sendTerminalAction("status", sessionId);
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return false;
++        }
++        applyTerminalPayload(payload, { forceReset: true });
++        return true;
++      }
++
++      function startTerminalPolling() {
++        stopTerminalPolling();
++        if (!activeTerminalSessionId) return;
++        terminalPollTimer = setInterval(pollTerminalOutput, 1000);
++      }
++
++      function resetTerminalDetail() {
++        activeTerminalSessionId = null;
++        terminalSessionInfo = null;
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        stopTerminalPolling();
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        if (terminalColsInput) terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        if (terminalRowsInput) terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++      }
++
++      async function openTerminalSession(session) {
++        if (!session || !session.id) return;
++        activeTerminalSessionId = session.id;
++        terminalSessionInfo = {
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalStopEnabled(true);
++        if (terminalColsInput && !terminalColsInput.value) {
++          terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        }
++        if (terminalRowsInput && !terminalRowsInput.value) {
++          terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++        }
++        if (terminalSessionInfo.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalInputEnabled(true);
++        const ok = await fetchTerminalStatus(session.id);
++        if (ok) {
++          startTerminalPolling();
++        }
++        terminalInputEl?.focus();
++      }
++
++      function syncActiveTerminalSession() {
++        if (!activeTerminalSessionId) {
++          resetTerminalDetail();
++          return;
++        }
++        const session = terminalSessionsById[activeTerminalSessionId];
++        if (!session) {
++          setTerminalDetailStatus(
++            "Session ended or missing. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        terminalSessionInfo = {
++          ...terminalSessionInfo,
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        renderTerminalHeader();
++        if (session.status !== "running") {
++          setTerminalDetailStatus(`Session ${session.status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++        if (!terminalPollTimer) {
++          startTerminalPolling();
++        }
++      }
++
++      function computeTerminalGrid() {
++        if (!terminalOutputEl) {
++          return { cols: DEFAULT_TERMINAL_COLS, rows: DEFAULT_TERMINAL_ROWS };
++        }
++        const probe = document.createElement("span");
++        probe.className = "terminal-measure";
++        probe.textContent = "M";
++        terminalOutputEl.appendChild(probe);
++        const rect = probe.getBoundingClientRect();
++        probe.remove();
++        const charWidth = rect.width || 8;
++        const charHeight = rect.height || 16;
++        const styles = getComputedStyle(terminalOutputEl);
++        const paddingX =
++          parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
++        const paddingY =
++          parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
++        const width = terminalOutputEl.clientWidth - paddingX;
++        const height = terminalOutputEl.clientHeight - paddingY;
++        const cols = Math.max(20, Math.floor(width / charWidth));
++        const rows = Math.max(4, Math.floor(height / charHeight));
++        return { cols, rows };
++      }
+       function renderDeviceList(container, devices, emptyLabel, options = {}) {
+         const { showActions = false, activeLabel = false, pairedTag = false } = options;
+         container.innerHTML = "";
+@@ -1684,16 +2180,22 @@
+       function renderTerminalSessions(sessions) {
+         if (!terminalSessionsEl) return;
+         terminalSessionsEl.innerHTML = "";
++        terminalSessionsById = {};
+         if (!sessions || sessions.length === 0) {
+           const item = document.createElement("div");
+           item.className = "device-item";
+           item.textContent = "No running terminal sessions.";
+           terminalSessionsEl.appendChild(item);
++          syncActiveTerminalSession();
+           return;
+         }
+         sessions.forEach((session) => {
++          terminalSessionsById[session.id] = session;
+           const item = document.createElement("div");
+           item.className = "device-item";
++          if (session.id === activeTerminalSessionId) {
++            item.classList.add("active");
++          }
+           const header = document.createElement("div");
+           header.className = "device-header";
+           const title = document.createElement("div");
+@@ -1726,6 +2228,20 @@
+           }
+           const actions = document.createElement("div");
+           actions.className = "device-actions";
++          const isActive = session.id === activeTerminalSessionId;
++          const openBtn = createActionButton(
++            isActive ? "Viewing" : "Open",
++            isActive ? "secondary mini" : "primary mini",
++            () => {
++              if (!isActive) {
++                openTerminalSession(session);
++              }
++            }
++          );
++          if (isActive) {
++            openBtn.disabled = true;
++            openBtn.classList.add("button-disabled");
++          }
+           const renameBtn = createActionButton("Rename", "secondary mini", async () => {
+             const name = window.prompt("Rename terminal session", displayLabel);
+             if (name === null) return;
+@@ -1774,6 +2290,7 @@
+             await sendTerminalAction("stop", session.id);
+             await refreshStatus();
+           });
++          actions.appendChild(openBtn);
+           actions.appendChild(renameBtn);
+           actions.appendChild(keepaliveBtn);
+           actions.appendChild(pollBtn);
+@@ -1781,8 +2298,96 @@
+           item.appendChild(actions);
+           terminalSessionsEl.appendChild(item);
+         });
++        syncActiveTerminalSession();
+       }
+ 
++      async function sendActiveTerminalInput() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to send input.", "error");
++          return;
++        }
++        const value = terminalInputEl?.value ?? "";
++        if (!value.trim()) return;
++        if (terminalSessionInfo?.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          return;
++        }
++        const payload = await sendTerminalAction("input", sessionId, {
++          input: value.endsWith("\n") ? value : `${value}\n`,
++        });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        if (terminalInputEl) terminalInputEl.value = "";
++        applyTerminalPayload(payload);
++        await pollTerminalOutput();
++      }
++
++      async function sendActiveTerminalResize() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to resize.", "error");
++          return;
++        }
++        const cols = Number.parseInt(terminalColsInput?.value ?? "", 10);
++        const rows = Number.parseInt(terminalRowsInput?.value ?? "", 10);
++        if (!Number.isFinite(cols) || cols < 10 || cols > 400) {
++          setTerminalDetailStatus("Cols must be between 10 and 400.", "error");
++          return;
++        }
++        if (!Number.isFinite(rows) || rows < 4 || rows > 200) {
++          setTerminalDetailStatus("Rows must be between 4 and 200.", "error");
++          return;
++        }
++        const payload = await sendTerminalAction("resize", sessionId, { cols, rows });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++        setTerminalDetailStatus("Terminal resized.", "notice");
++      }
++
++      async function stopActiveTerminalSession() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to disconnect.", "error");
++          return;
++        }
++        if (!confirm("Disconnect this terminal session?")) return;
++        await sendTerminalAction("stop", sessionId);
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        stopTerminalPolling();
++        await refreshStatus();
++        setTerminalDetailStatus("Terminal session disconnected.", "notice");
++      }
++
++      async function fitTerminalToPanel() {
++        const grid = computeTerminalGrid();
++        if (terminalColsInput) terminalColsInput.value = String(grid.cols);
++        if (terminalRowsInput) terminalRowsInput.value = String(grid.rows);
++        await sendActiveTerminalResize();
++      }
++
+       function renderTokenList(tokens) {
+         if (!tokenListEl) return;
+         tokenListEl.innerHTML = "";
+@@ -2127,6 +2732,31 @@
+         });
+       }
+ 
++      if (terminalSendBtn) {
++        terminalSendBtn.addEventListener("click", sendActiveTerminalInput);
++      }
++
++      if (terminalInputEl) {
++        terminalInputEl.addEventListener("keydown", (event) => {
++          if (event.key === "Enter") {
++            event.preventDefault();
++            sendActiveTerminalInput();
++          }
++        });
++      }
++
++      if (terminalResizeBtn) {
++        terminalResizeBtn.addEventListener("click", sendActiveTerminalResize);
++      }
++
++      if (terminalFitBtn) {
++        terminalFitBtn.addEventListener("click", fitTerminalToPanel);
++      }
++
++      if (terminalStopBtn) {
++        terminalStopBtn.addEventListener("click", stopActiveTerminalSession);
++      }
++
+       if (approvalToggle) {
+         approvalToggle.addEventListener("change", async () => {
+           const invokeFn = ensureInvoke();
+@@ -2201,6 +2831,7 @@
+       updateAuthTokenDisplay();
+       clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
+       setBridgeState(!!invoke);
++      resetTerminalDetail();
+       const invokeFn = ensureInvoke();
+       invokeFn?.("request_location_permission").catch(() => {});
+       refreshStatus();
+
+
+thinking
+**Committing progress update**
+
+I'm committing with the message `chore(progress): log US-006 run` without a body to keep it simple.
+exec
+/bin/zsh -lc 'git commit -m "chore(progress): log US-006 run"' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+[main ccf8e17] chore(progress): log US-006 run
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 8450 insertions(+)
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 9d253d606ebdf87c93b58e019087478766cd69e5..b6d7d66fa24d121553c54541c7f3f4f3e8bf72d5
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -585,6 +585,128 @@
+         justify-content: flex-end;
+       }
+ 
++      .device-item.active {
++        border-color: rgba(56, 189, 248, 0.6);
++        box-shadow: 0 12px 24px rgba(56, 189, 248, 0.18);
++      }
++
++      .terminal-detail {
++        gap: 16px;
++      }
++
++      .terminal-header {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 14px;
++      }
++
++      .terminal-meta {
++        font-size: 0.78rem;
++        color: var(--ink-muted);
++      }
++
++      .terminal-status {
++        border-radius: 12px;
++        border: 1px solid rgba(248, 113, 113, 0.35);
++        background: rgba(248, 113, 113, 0.12);
++        color: var(--rose-ink);
++        padding: 10px 12px;
++        font-size: 0.82rem;
++      }
++
++      .terminal-status.notice {
++        border-color: rgba(56, 189, 248, 0.4);
++        background: rgba(56, 189, 248, 0.14);
++        color: #bae6fd;
++      }
++
++      .terminal-screen {
++        position: relative;
++        min-height: 240px;
++        max-height: 320px;
++        padding: 14px 16px;
++        border-radius: 16px;
++        border: 1px solid rgba(148, 163, 184, 0.2);
++        background: rgba(2, 6, 23, 0.7);
++        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
++        font-size: 0.78rem;
++        color: var(--ink-soft);
++        white-space: pre-wrap;
++        overflow-y: auto;
++      }
++
++      .terminal-controls {
++        display: grid;
++        grid-template-columns: 1fr auto;
++        gap: 10px;
++        align-items: center;
++      }
++
++      .terminal-controls input {
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 12px;
++        padding: 10px 12px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.86rem;
++      }
++
++      .terminal-controls input::placeholder {
++        color: var(--ink-muted);
++      }
++
++      .terminal-controls input:focus-visible {
++        outline: 2px solid rgba(56, 189, 248, 0.45);
++        outline-offset: 2px;
++      }
++
++      .terminal-resize {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 12px;
++        align-items: flex-end;
++      }
++
++      .resize-field {
++        display: flex;
++        flex-direction: column;
++        gap: 6px;
++      }
++
++      .resize-field label {
++        font-size: 0.7rem;
++        text-transform: uppercase;
++        letter-spacing: 0.08em;
++        color: var(--ink-muted);
++      }
++
++      .resize-field input {
++        width: 88px;
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 10px;
++        padding: 8px 10px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.82rem;
++      }
++
++      .terminal-actions {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 8px;
++        justify-content: flex-end;
++      }
++
++      .terminal-measure {
++        position: absolute;
++        visibility: hidden;
++        pointer-events: none;
++        white-space: pre;
++      }
++
+       .actions {
+         display: flex;
+         flex-wrap: wrap;
+@@ -691,6 +813,9 @@
+         .token-controls {
+           grid-template-columns: 1fr;
+         }
++        .terminal-controls {
++          grid-template-columns: 1fr;
++        }
+       }
+ 
+       @keyframes rise {
+@@ -943,6 +1068,45 @@
+               <div class="device-item">--</div>
+             </div>
+           </div>
++
++          <div class="card terminal-detail" id="terminalDetail">
++            <div class="terminal-header">
++              <div>
++                <h2 class="card-title" id="terminalDetailTitle">Terminal console</h2>
++                <div class="terminal-meta" id="terminalDetailMeta">
++                  Select a session to stream output.
++                </div>
++              </div>
++              <div class="terminal-actions">
++                <button class="secondary mini" id="terminalStop">Disconnect</button>
++              </div>
++            </div>
++            <div class="terminal-status hidden" id="terminalDetailStatus"></div>
++            <div class="terminal-screen" id="terminalOutput">
++              Select a terminal session to stream output.
++            </div>
++            <div class="terminal-controls">
++              <input
++                type="text"
++                id="terminalInput"
++                placeholder="Type a command and press Enter"
++                autocomplete="off"
++              />
++              <button class="primary" id="terminalSend">Send</button>
++            </div>
++            <div class="terminal-resize">
++              <div class="resize-field">
++                <label for="terminalCols">Cols</label>
++                <input type="number" id="terminalCols" min="20" max="300" />
++              </div>
++              <div class="resize-field">
++                <label for="terminalRows">Rows</label>
++                <input type="number" id="terminalRows" min="4" max="120" />
++              </div>
++              <button class="secondary mini" id="terminalFit">Fit to panel</button>
++              <button class="secondary mini" id="terminalResize">Resize</button>
++            </div>
++          </div>
+         </div>
+       </section>
+ 
+@@ -1071,6 +1235,17 @@
+       const pairedDevicesEl = document.getElementById("pairedDevices");
+       const activeDevicesEl = document.getElementById("activeDevices");
+       const terminalSessionsEl = document.getElementById("terminalSessions");
++      const terminalDetailTitleEl = document.getElementById("terminalDetailTitle");
++      const terminalDetailMetaEl = document.getElementById("terminalDetailMeta");
++      const terminalDetailStatusEl = document.getElementById("terminalDetailStatus");
++      const terminalOutputEl = document.getElementById("terminalOutput");
++      const terminalInputEl = document.getElementById("terminalInput");
++      const terminalSendBtn = document.getElementById("terminalSend");
++      const terminalStopBtn = document.getElementById("terminalStop");
++      const terminalColsInput = document.getElementById("terminalCols");
++      const terminalRowsInput = document.getElementById("terminalRows");
++      const terminalFitBtn = document.getElementById("terminalFit");
++      const terminalResizeBtn = document.getElementById("terminalResize");
+       const generateBtn = document.getElementById("generate");
+       const copyBtn = document.getElementById("copyPayload");
+       const authTokenEl = document.getElementById("authToken");
+@@ -1106,6 +1281,13 @@
+       let authTokenVisible = false;
+       let locationSettingsOpened = false;
+       let bundleIdValue = null;
++      let activeTerminalSessionId = null;
++      let terminalSessionInfo = null;
++      let terminalOutputText = "";
++      let terminalNextSeq = 0;
++      let terminalPollTimer = null;
++      let terminalPollInFlight = false;
++      let terminalSessionsById = {};
+ 
+       function ensureInvoke() {
+         if (!invoke) {
+@@ -1165,6 +1347,10 @@
+           saveFrpUrlBtn,
+           saveListenPortBtn,
+           saveRoiQuicPortBtn,
++          terminalSendBtn,
++          terminalStopBtn,
++          terminalFitBtn,
++          terminalResizeBtn,
+         ];
+         controls.forEach((btn) => {
+           if (!btn) return;
+@@ -1178,6 +1364,9 @@
+           frpUrlInput,
+           listenPortInput,
+           roiQuicPortInput,
++          terminalInputEl,
++          terminalColsInput,
++          terminalRowsInput,
+         ];
+         inputs.forEach((input) => {
+           if (!input) return;
+@@ -1561,6 +1750,313 @@
+         return tag;
+       }
+ 
++      const DEFAULT_TERMINAL_COLS = 120;
++      const DEFAULT_TERMINAL_ROWS = 32;
++      const TERMINAL_OUTPUT_LIMIT = 24000;
++
++      function titleCase(value) {
++        if (!value) return "";
++        return value.charAt(0).toUpperCase() + value.slice(1);
++      }
++
++      function renderTerminalHeader() {
++        if (!terminalDetailTitleEl || !terminalDetailMetaEl) return;
++        if (!terminalSessionInfo) {
++          terminalDetailTitleEl.textContent = "Terminal console";
++          terminalDetailMetaEl.textContent = "Select a session to stream output.";
++          return;
++        }
++        const label =
++          terminalSessionInfo.label || terminalSessionInfo.id || "Terminal console";
++        terminalDetailTitleEl.textContent = label;
++        const parts = [];
++        if (terminalSessionInfo.status) {
++          parts.push(titleCase(terminalSessionInfo.status));
++        }
++        if (terminalSessionInfo.last_activity) {
++          parts.push(`last ${formatTime(terminalSessionInfo.last_activity)}`);
++        }
++        if (terminalSessionInfo.created_at) {
++          parts.push(`started ${formatTime(terminalSessionInfo.created_at)}`);
++        }
++        if (terminalSessionInfo.id) {
++          parts.push(`id ${terminalSessionInfo.id}`);
++        }
++        terminalDetailMetaEl.textContent =
++          parts.length > 0 ? parts.join(" · ") : "Terminal session";
++      }
++
++      function setTerminalDetailStatus(message, tone = "error") {
++        if (!terminalDetailStatusEl) return;
++        if (!message) {
++          terminalDetailStatusEl.textContent = "";
++          terminalDetailStatusEl.classList.add("hidden");
++          terminalDetailStatusEl.classList.remove("notice");
++          return;
++        }
++        terminalDetailStatusEl.textContent = message;
++        terminalDetailStatusEl.classList.remove("hidden");
++        terminalDetailStatusEl.classList.toggle("notice", tone === "notice");
++      }
++
++      function setTerminalInputEnabled(enabled) {
++        if (terminalInputEl) terminalInputEl.disabled = !enabled;
++        if (terminalSendBtn) {
++          terminalSendBtn.disabled = !enabled;
++          terminalSendBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalColsInput) terminalColsInput.disabled = !enabled;
++        if (terminalRowsInput) terminalRowsInput.disabled = !enabled;
++        if (terminalFitBtn) {
++          terminalFitBtn.disabled = !enabled;
++          terminalFitBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalResizeBtn) {
++          terminalResizeBtn.disabled = !enabled;
++          terminalResizeBtn.classList.toggle("button-disabled", !enabled);
++        }
++      }
++
++      function setTerminalStopEnabled(enabled) {
++        if (!terminalStopBtn) return;
++        terminalStopBtn.disabled = !enabled;
++        terminalStopBtn.classList.toggle("button-disabled", !enabled);
++      }
++
++      function renderTerminalOutput() {
++        if (!terminalOutputEl) return;
++        if (!activeTerminalSessionId) {
++          terminalOutputEl.textContent = "Select a terminal session to stream output.";
++          return;
++        }
++        terminalOutputEl.textContent =
++          terminalOutputText || "Waiting for output...";
++        terminalOutputEl.scrollTop = terminalOutputEl.scrollHeight;
++      }
++
++      function appendTerminalOutput(text) {
++        if (!text) return;
++        terminalOutputText += text;
++        if (terminalOutputText.length > TERMINAL_OUTPUT_LIMIT) {
++          terminalOutputText = terminalOutputText.slice(-TERMINAL_OUTPUT_LIMIT);
++        }
++      }
++
++      function applyTerminalPayload(payload, options = {}) {
++        if (!payload) return;
++        if (!terminalSessionInfo) {
++          terminalSessionInfo = { id: activeTerminalSessionId };
++        }
++        if (payload.label && payload.label.trim().length) {
++          terminalSessionInfo.label = payload.label.trim();
++        }
++        if (payload.status) {
++          terminalSessionInfo.status = payload.status;
++        }
++        if (payload.last_activity) {
++          terminalSessionInfo.last_activity = payload.last_activity;
++        }
++        renderTerminalHeader();
++        const hasSnapshot =
++          payload.snapshot !== undefined && payload.snapshot !== null;
++        if (hasSnapshot && (options.forceReset || payload.truncated)) {
++          terminalOutputText = payload.snapshot;
++        } else if (options.forceReset && !hasSnapshot) {
++          terminalOutputText = "";
++        }
++        const output = Array.isArray(payload.output) ? payload.output : [];
++        output.forEach((chunk) => {
++          if (chunk?.data) {
++            appendTerminalOutput(chunk.data);
++          }
++        });
++        const nextSeq = Number(payload.next_seq);
++        if (Number.isFinite(nextSeq)) {
++          terminalNextSeq = nextSeq;
++        }
++        renderTerminalOutput();
++        const status = payload.status || terminalSessionInfo?.status;
++        if (status && status !== "running") {
++          setTerminalDetailStatus(`Session ${status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++      }
++
++      function stopTerminalPolling() {
++        if (terminalPollTimer) {
++          clearInterval(terminalPollTimer);
++          terminalPollTimer = null;
++        }
++        terminalPollInFlight = false;
++      }
++
++      async function pollTerminalOutput() {
++        if (!activeTerminalSessionId || terminalPollInFlight) return;
++        terminalPollInFlight = true;
++        const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
++          since: terminalNextSeq,
++          limit: 200,
++        });
++        terminalPollInFlight = false;
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++      }
++
++      async function fetchTerminalStatus(sessionId) {
++        const payload = await sendTerminalAction("status", sessionId);
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return false;
++        }
++        applyTerminalPayload(payload, { forceReset: true });
++        return true;
++      }
++
++      function startTerminalPolling() {
++        stopTerminalPolling();
++        if (!activeTerminalSessionId) return;
++        terminalPollTimer = setInterval(pollTerminalOutput, 1000);
++      }
++
++      function resetTerminalDetail() {
++        activeTerminalSessionId = null;
++        terminalSessionInfo = null;
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        stopTerminalPolling();
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        if (terminalColsInput) terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        if (terminalRowsInput) terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++      }
++
++      async function openTerminalSession(session) {
++        if (!session || !session.id) return;
++        activeTerminalSessionId = session.id;
++        terminalSessionInfo = {
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalStopEnabled(true);
++        if (terminalColsInput && !terminalColsInput.value) {
++          terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        }
++        if (terminalRowsInput && !terminalRowsInput.value) {
++          terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++        }
++        if (terminalSessionInfo.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalInputEnabled(true);
++        const ok = await fetchTerminalStatus(session.id);
++        if (ok) {
++          startTerminalPolling();
++        }
++        terminalInputEl?.focus();
++      }
++
++      function syncActiveTerminalSession() {
++        if (!activeTerminalSessionId) {
++          resetTerminalDetail();
++          return;
++        }
++        const session = terminalSessionsById[activeTerminalSessionId];
++        if (!session) {
++          setTerminalDetailStatus(
++            "Session ended or missing. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        terminalSessionInfo = {
++          ...terminalSessionInfo,
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        renderTerminalHeader();
++        if (session.status !== "running") {
++          setTerminalDetailStatus(`Session ${session.status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++        if (!terminalPollTimer) {
++          startTerminalPolling();
++        }
++      }
++
++      function computeTerminalGrid() {
++        if (!terminalOutputEl) {
++          return { cols: DEFAULT_TERMINAL_COLS, rows: DEFAULT_TERMINAL_ROWS };
++        }
++        const probe = document.createElement("span");
++        probe.className = "terminal-measure";
++        probe.textContent = "M";
++        terminalOutputEl.appendChild(probe);
++        const rect = probe.getBoundingClientRect();
++        probe.remove();
++        const charWidth = rect.width || 8;
++        const charHeight = rect.height || 16;
++        const styles = getComputedStyle(terminalOutputEl);
++        const paddingX =
++          parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
++        const paddingY =
++          parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
++        const width = terminalOutputEl.clientWidth - paddingX;
++        const height = terminalOutputEl.clientHeight - paddingY;
++        const cols = Math.max(20, Math.floor(width / charWidth));
++        const rows = Math.max(4, Math.floor(height / charHeight));
++        return { cols, rows };
++      }
+       function renderDeviceList(container, devices, emptyLabel, options = {}) {
+         const { showActions = false, activeLabel = false, pairedTag = false } = options;
+         container.innerHTML = "";
+@@ -1684,16 +2180,22 @@
+       function renderTerminalSessions(sessions) {
+         if (!terminalSessionsEl) return;
+         terminalSessionsEl.innerHTML = "";
++        terminalSessionsById = {};
+         if (!sessions || sessions.length === 0) {
+           const item = document.createElement("div");
+           item.className = "device-item";
+           item.textContent = "No running terminal sessions.";
+           terminalSessionsEl.appendChild(item);
++          syncActiveTerminalSession();
+           return;
+         }
+         sessions.forEach((session) => {
++          terminalSessionsById[session.id] = session;
+           const item = document.createElement("div");
+           item.className = "device-item";
++          if (session.id === activeTerminalSessionId) {
++            item.classList.add("active");
++          }
+           const header = document.createElement("div");
+           header.className = "device-header";
+           const title = document.createElement("div");
+@@ -1726,6 +2228,20 @@
+           }
+           const actions = document.createElement("div");
+           actions.className = "device-actions";
++          const isActive = session.id === activeTerminalSessionId;
++          const openBtn = createActionButton(
++            isActive ? "Viewing" : "Open",
++            isActive ? "secondary mini" : "primary mini",
++            () => {
++              if (!isActive) {
++                openTerminalSession(session);
++              }
++            }
++          );
++          if (isActive) {
++            openBtn.disabled = true;
++            openBtn.classList.add("button-disabled");
++          }
+           const renameBtn = createActionButton("Rename", "secondary mini", async () => {
+             const name = window.prompt("Rename terminal session", displayLabel);
+             if (name === null) return;
+@@ -1774,6 +2290,7 @@
+             await sendTerminalAction("stop", session.id);
+             await refreshStatus();
+           });
++          actions.appendChild(openBtn);
+           actions.appendChild(renameBtn);
+           actions.appendChild(keepaliveBtn);
+           actions.appendChild(pollBtn);
+@@ -1781,8 +2298,96 @@
+           item.appendChild(actions);
+           terminalSessionsEl.appendChild(item);
+         });
++        syncActiveTerminalSession();
+       }
+ 
++      async function sendActiveTerminalInput() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to send input.", "error");
++          return;
++        }
++        const value = terminalInputEl?.value ?? "";
++        if (!value.trim()) return;
++        if (terminalSessionInfo?.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          return;
++        }
++        const payload = await sendTerminalAction("input", sessionId, {
++          input: value.endsWith("\n") ? value : `${value}\n`,
++        });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        if (terminalInputEl) terminalInputEl.value = "";
++        applyTerminalPayload(payload);
++        await pollTerminalOutput();
++      }
++
++      async function sendActiveTerminalResize() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to resize.", "error");
++          return;
++        }
++        const cols = Number.parseInt(terminalColsInput?.value ?? "", 10);
++        const rows = Number.parseInt(terminalRowsInput?.value ?? "", 10);
++        if (!Number.isFinite(cols) || cols < 10 || cols > 400) {
++          setTerminalDetailStatus("Cols must be between 10 and 400.", "error");
++          return;
++        }
++        if (!Number.isFinite(rows) || rows < 4 || rows > 200) {
++          setTerminalDetailStatus("Rows must be between 4 and 200.", "error");
++          return;
++        }
++        const payload = await sendTerminalAction("resize", sessionId, { cols, rows });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++        setTerminalDetailStatus("Terminal resized.", "notice");
++      }
++
++      async function stopActiveTerminalSession() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to disconnect.", "error");
++          return;
++        }
++        if (!confirm("Disconnect this terminal session?")) return;
++        await sendTerminalAction("stop", sessionId);
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        stopTerminalPolling();
++        await refreshStatus();
++        setTerminalDetailStatus("Terminal session disconnected.", "notice");
++      }
++
++      async function fitTerminalToPanel() {
++        const grid = computeTerminalGrid();
++        if (terminalColsInput) terminalColsInput.value = String(grid.cols);
++        if (terminalRowsInput) terminalRowsInput.value = String(grid.rows);
++        await sendActiveTerminalResize();
++      }
++
+       function renderTokenList(tokens) {
+         if (!tokenListEl) return;
+         tokenListEl.innerHTML = "";
+@@ -2127,6 +2732,31 @@
+         });
+       }
+ 
++      if (terminalSendBtn) {
++        terminalSendBtn.addEventListener("click", sendActiveTerminalInput);
++      }
++
++      if (terminalInputEl) {
++        terminalInputEl.addEventListener("keydown", (event) => {
++          if (event.key === "Enter") {
++            event.preventDefault();
++            sendActiveTerminalInput();
++          }
++        });
++      }
++
++      if (terminalResizeBtn) {
++        terminalResizeBtn.addEventListener("click", sendActiveTerminalResize);
++      }
++
++      if (terminalFitBtn) {
++        terminalFitBtn.addEventListener("click", fitTerminalToPanel);
++      }
++
++      if (terminalStopBtn) {
++        terminalStopBtn.addEventListener("click", stopActiveTerminalSession);
++      }
++
+       if (approvalToggle) {
+         approvalToggle.addEventListener("change", async () => {
+           const invokeFn = ensureInvoke();
+@@ -2201,6 +2831,7 @@
+       updateAuthTokenDisplay();
+       clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
+       setBridgeState(!!invoke);
++      resetTerminalDetail();
+       const invokeFn = ensureInvoke();
+       invokeFn?.("request_location_permission").catch(() => {});
+       refreshStatus();
+
+
+thinking
+**Checking clean working tree**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 50ms:
+ M .ralph/runs/run-20260131-221506-98331-iter-7.log
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 9d253d606ebdf87c93b58e019087478766cd69e5..b6d7d66fa24d121553c54541c7f3f4f3e8bf72d5
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -585,6 +585,128 @@
+         justify-content: flex-end;
+       }
+ 
++      .device-item.active {
++        border-color: rgba(56, 189, 248, 0.6);
++        box-shadow: 0 12px 24px rgba(56, 189, 248, 0.18);
++      }
++
++      .terminal-detail {
++        gap: 16px;
++      }
++
++      .terminal-header {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 14px;
++      }
++
++      .terminal-meta {
++        font-size: 0.78rem;
++        color: var(--ink-muted);
++      }
++
++      .terminal-status {
++        border-radius: 12px;
++        border: 1px solid rgba(248, 113, 113, 0.35);
++        background: rgba(248, 113, 113, 0.12);
++        color: var(--rose-ink);
++        padding: 10px 12px;
++        font-size: 0.82rem;
++      }
++
++      .terminal-status.notice {
++        border-color: rgba(56, 189, 248, 0.4);
++        background: rgba(56, 189, 248, 0.14);
++        color: #bae6fd;
++      }
++
++      .terminal-screen {
++        position: relative;
++        min-height: 240px;
++        max-height: 320px;
++        padding: 14px 16px;
++        border-radius: 16px;
++        border: 1px solid rgba(148, 163, 184, 0.2);
++        background: rgba(2, 6, 23, 0.7);
++        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
++        font-size: 0.78rem;
++        color: var(--ink-soft);
++        white-space: pre-wrap;
++        overflow-y: auto;
++      }
++
++      .terminal-controls {
++        display: grid;
++        grid-template-columns: 1fr auto;
++        gap: 10px;
++        align-items: center;
++      }
++
++      .terminal-controls input {
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 12px;
++        padding: 10px 12px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.86rem;
++      }
++
++      .terminal-controls input::placeholder {
++        color: var(--ink-muted);
++      }
++
++      .terminal-controls input:focus-visible {
++        outline: 2px solid rgba(56, 189, 248, 0.45);
++        outline-offset: 2px;
++      }
++
++      .terminal-resize {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 12px;
++        align-items: flex-end;
++      }
++
++      .resize-field {
++        display: flex;
++        flex-direction: column;
++        gap: 6px;
++      }
++
++      .resize-field label {
++        font-size: 0.7rem;
++        text-transform: uppercase;
++        letter-spacing: 0.08em;
++        color: var(--ink-muted);
++      }
++
++      .resize-field input {
++        width: 88px;
++        background: rgba(15, 23, 42, 0.6);
++        border: 1px solid rgba(148, 163, 184, 0.25);
++        border-radius: 10px;
++        padding: 8px 10px;
++        color: var(--ink);
++        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
++        font-size: 0.82rem;
++      }
++
++      .terminal-actions {
++        display: flex;
++        flex-wrap: wrap;
++        gap: 8px;
++        justify-content: flex-end;
++      }
++
++      .terminal-measure {
++        position: absolute;
++        visibility: hidden;
++        pointer-events: none;
++        white-space: pre;
++      }
++
+       .actions {
+         display: flex;
+         flex-wrap: wrap;
+@@ -691,6 +813,9 @@
+         .token-controls {
+           grid-template-columns: 1fr;
+         }
++        .terminal-controls {
++          grid-template-columns: 1fr;
++        }
+       }
+ 
+       @keyframes rise {
+@@ -943,6 +1068,45 @@
+               <div class="device-item">--</div>
+             </div>
+           </div>
++
++          <div class="card terminal-detail" id="terminalDetail">
++            <div class="terminal-header">
++              <div>
++                <h2 class="card-title" id="terminalDetailTitle">Terminal console</h2>
++                <div class="terminal-meta" id="terminalDetailMeta">
++                  Select a session to stream output.
++                </div>
++              </div>
++              <div class="terminal-actions">
++                <button class="secondary mini" id="terminalStop">Disconnect</button>
++              </div>
++            </div>
++            <div class="terminal-status hidden" id="terminalDetailStatus"></div>
++            <div class="terminal-screen" id="terminalOutput">
++              Select a terminal session to stream output.
++            </div>
++            <div class="terminal-controls">
++              <input
++                type="text"
++                id="terminalInput"
++                placeholder="Type a command and press Enter"
++                autocomplete="off"
++              />
++              <button class="primary" id="terminalSend">Send</button>
++            </div>
++            <div class="terminal-resize">
++              <div class="resize-field">
++                <label for="terminalCols">Cols</label>
++                <input type="number" id="terminalCols" min="20" max="300" />
++              </div>
++              <div class="resize-field">
++                <label for="terminalRows">Rows</label>
++                <input type="number" id="terminalRows" min="4" max="120" />
++              </div>
++              <button class="secondary mini" id="terminalFit">Fit to panel</button>
++              <button class="secondary mini" id="terminalResize">Resize</button>
++            </div>
++          </div>
+         </div>
+       </section>
+ 
+@@ -1071,6 +1235,17 @@
+       const pairedDevicesEl = document.getElementById("pairedDevices");
+       const activeDevicesEl = document.getElementById("activeDevices");
+       const terminalSessionsEl = document.getElementById("terminalSessions");
++      const terminalDetailTitleEl = document.getElementById("terminalDetailTitle");
++      const terminalDetailMetaEl = document.getElementById("terminalDetailMeta");
++      const terminalDetailStatusEl = document.getElementById("terminalDetailStatus");
++      const terminalOutputEl = document.getElementById("terminalOutput");
++      const terminalInputEl = document.getElementById("terminalInput");
++      const terminalSendBtn = document.getElementById("terminalSend");
++      const terminalStopBtn = document.getElementById("terminalStop");
++      const terminalColsInput = document.getElementById("terminalCols");
++      const terminalRowsInput = document.getElementById("terminalRows");
++      const terminalFitBtn = document.getElementById("terminalFit");
++      const terminalResizeBtn = document.getElementById("terminalResize");
+       const generateBtn = document.getElementById("generate");
+       const copyBtn = document.getElementById("copyPayload");
+       const authTokenEl = document.getElementById("authToken");
+@@ -1106,6 +1281,13 @@
+       let authTokenVisible = false;
+       let locationSettingsOpened = false;
+       let bundleIdValue = null;
++      let activeTerminalSessionId = null;
++      let terminalSessionInfo = null;
++      let terminalOutputText = "";
++      let terminalNextSeq = 0;
++      let terminalPollTimer = null;
++      let terminalPollInFlight = false;
++      let terminalSessionsById = {};
+ 
+       function ensureInvoke() {
+         if (!invoke) {
+@@ -1165,6 +1347,10 @@
+           saveFrpUrlBtn,
+           saveListenPortBtn,
+           saveRoiQuicPortBtn,
++          terminalSendBtn,
++          terminalStopBtn,
++          terminalFitBtn,
++          terminalResizeBtn,
+         ];
+         controls.forEach((btn) => {
+           if (!btn) return;
+@@ -1178,6 +1364,9 @@
+           frpUrlInput,
+           listenPortInput,
+           roiQuicPortInput,
++          terminalInputEl,
++          terminalColsInput,
++          terminalRowsInput,
+         ];
+         inputs.forEach((input) => {
+           if (!input) return;
+@@ -1561,6 +1750,313 @@
+         return tag;
+       }
+ 
++      const DEFAULT_TERMINAL_COLS = 120;
++      const DEFAULT_TERMINAL_ROWS = 32;
++      const TERMINAL_OUTPUT_LIMIT = 24000;
++
++      function titleCase(value) {
++        if (!value) return "";
++        return value.charAt(0).toUpperCase() + value.slice(1);
++      }
++
++      function renderTerminalHeader() {
++        if (!terminalDetailTitleEl || !terminalDetailMetaEl) return;
++        if (!terminalSessionInfo) {
++          terminalDetailTitleEl.textContent = "Terminal console";
++          terminalDetailMetaEl.textContent = "Select a session to stream output.";
++          return;
++        }
++        const label =
++          terminalSessionInfo.label || terminalSessionInfo.id || "Terminal console";
++        terminalDetailTitleEl.textContent = label;
++        const parts = [];
++        if (terminalSessionInfo.status) {
++          parts.push(titleCase(terminalSessionInfo.status));
++        }
++        if (terminalSessionInfo.last_activity) {
++          parts.push(`last ${formatTime(terminalSessionInfo.last_activity)}`);
++        }
++        if (terminalSessionInfo.created_at) {
++          parts.push(`started ${formatTime(terminalSessionInfo.created_at)}`);
++        }
++        if (terminalSessionInfo.id) {
++          parts.push(`id ${terminalSessionInfo.id}`);
++        }
++        terminalDetailMetaEl.textContent =
++          parts.length > 0 ? parts.join(" · ") : "Terminal session";
++      }
++
++      function setTerminalDetailStatus(message, tone = "error") {
++        if (!terminalDetailStatusEl) return;
++        if (!message) {
++          terminalDetailStatusEl.textContent = "";
++          terminalDetailStatusEl.classList.add("hidden");
++          terminalDetailStatusEl.classList.remove("notice");
++          return;
++        }
++        terminalDetailStatusEl.textContent = message;
++        terminalDetailStatusEl.classList.remove("hidden");
++        terminalDetailStatusEl.classList.toggle("notice", tone === "notice");
++      }
++
++      function setTerminalInputEnabled(enabled) {
++        if (terminalInputEl) terminalInputEl.disabled = !enabled;
++        if (terminalSendBtn) {
++          terminalSendBtn.disabled = !enabled;
++          terminalSendBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalColsInput) terminalColsInput.disabled = !enabled;
++        if (terminalRowsInput) terminalRowsInput.disabled = !enabled;
++        if (terminalFitBtn) {
++          terminalFitBtn.disabled = !enabled;
++          terminalFitBtn.classList.toggle("button-disabled", !enabled);
++        }
++        if (terminalResizeBtn) {
++          terminalResizeBtn.disabled = !enabled;
++          terminalResizeBtn.classList.toggle("button-disabled", !enabled);
++        }
++      }
++
++      function setTerminalStopEnabled(enabled) {
++        if (!terminalStopBtn) return;
++        terminalStopBtn.disabled = !enabled;
++        terminalStopBtn.classList.toggle("button-disabled", !enabled);
++      }
++
++      function renderTerminalOutput() {
++        if (!terminalOutputEl) return;
++        if (!activeTerminalSessionId) {
++          terminalOutputEl.textContent = "Select a terminal session to stream output.";
++          return;
++        }
++        terminalOutputEl.textContent =
++          terminalOutputText || "Waiting for output...";
++        terminalOutputEl.scrollTop = terminalOutputEl.scrollHeight;
++      }
++
++      function appendTerminalOutput(text) {
++        if (!text) return;
++        terminalOutputText += text;
++        if (terminalOutputText.length > TERMINAL_OUTPUT_LIMIT) {
++          terminalOutputText = terminalOutputText.slice(-TERMINAL_OUTPUT_LIMIT);
++        }
++      }
++
++      function applyTerminalPayload(payload, options = {}) {
++        if (!payload) return;
++        if (!terminalSessionInfo) {
++          terminalSessionInfo = { id: activeTerminalSessionId };
++        }
++        if (payload.label && payload.label.trim().length) {
++          terminalSessionInfo.label = payload.label.trim();
++        }
++        if (payload.status) {
++          terminalSessionInfo.status = payload.status;
++        }
++        if (payload.last_activity) {
++          terminalSessionInfo.last_activity = payload.last_activity;
++        }
++        renderTerminalHeader();
++        const hasSnapshot =
++          payload.snapshot !== undefined && payload.snapshot !== null;
++        if (hasSnapshot && (options.forceReset || payload.truncated)) {
++          terminalOutputText = payload.snapshot;
++        } else if (options.forceReset && !hasSnapshot) {
++          terminalOutputText = "";
++        }
++        const output = Array.isArray(payload.output) ? payload.output : [];
++        output.forEach((chunk) => {
++          if (chunk?.data) {
++            appendTerminalOutput(chunk.data);
++          }
++        });
++        const nextSeq = Number(payload.next_seq);
++        if (Number.isFinite(nextSeq)) {
++          terminalNextSeq = nextSeq;
++        }
++        renderTerminalOutput();
++        const status = payload.status || terminalSessionInfo?.status;
++        if (status && status !== "running") {
++          setTerminalDetailStatus(`Session ${status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++      }
++
++      function stopTerminalPolling() {
++        if (terminalPollTimer) {
++          clearInterval(terminalPollTimer);
++          terminalPollTimer = null;
++        }
++        terminalPollInFlight = false;
++      }
++
++      async function pollTerminalOutput() {
++        if (!activeTerminalSessionId || terminalPollInFlight) return;
++        terminalPollInFlight = true;
++        const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
++          since: terminalNextSeq,
++          limit: 200,
++        });
++        terminalPollInFlight = false;
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++      }
++
++      async function fetchTerminalStatus(sessionId) {
++        const payload = await sendTerminalAction("status", sessionId);
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return false;
++        }
++        applyTerminalPayload(payload, { forceReset: true });
++        return true;
++      }
++
++      function startTerminalPolling() {
++        stopTerminalPolling();
++        if (!activeTerminalSessionId) return;
++        terminalPollTimer = setInterval(pollTerminalOutput, 1000);
++      }
++
++      function resetTerminalDetail() {
++        activeTerminalSessionId = null;
++        terminalSessionInfo = null;
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        stopTerminalPolling();
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        if (terminalColsInput) terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        if (terminalRowsInput) terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++      }
++
++      async function openTerminalSession(session) {
++        if (!session || !session.id) return;
++        activeTerminalSessionId = session.id;
++        terminalSessionInfo = {
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        terminalOutputText = "";
++        terminalNextSeq = 0;
++        renderTerminalHeader();
++        setTerminalDetailStatus("");
++        renderTerminalOutput();
++        setTerminalStopEnabled(true);
++        if (terminalColsInput && !terminalColsInput.value) {
++          terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
++        }
++        if (terminalRowsInput && !terminalRowsInput.value) {
++          terminalRowsInput.value = String(DEFAULT_TERMINAL_ROWS);
++        }
++        if (terminalSessionInfo.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalInputEnabled(true);
++        const ok = await fetchTerminalStatus(session.id);
++        if (ok) {
++          startTerminalPolling();
++        }
++        terminalInputEl?.focus();
++      }
++
++      function syncActiveTerminalSession() {
++        if (!activeTerminalSessionId) {
++          resetTerminalDetail();
++          return;
++        }
++        const session = terminalSessionsById[activeTerminalSessionId];
++        if (!session) {
++          setTerminalDetailStatus(
++            "Session ended or missing. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        terminalSessionInfo = {
++          ...terminalSessionInfo,
++          id: session.id,
++          label: session.label || session.id,
++          status: session.status,
++          created_at: session.created_at,
++          last_activity: session.last_activity,
++        };
++        renderTerminalHeader();
++        if (session.status !== "running") {
++          setTerminalDetailStatus(`Session ${session.status}. Input disabled.`, "error");
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        setTerminalDetailStatus("");
++        setTerminalInputEnabled(true);
++        setTerminalStopEnabled(true);
++        if (!terminalPollTimer) {
++          startTerminalPolling();
++        }
++      }
++
++      function computeTerminalGrid() {
++        if (!terminalOutputEl) {
++          return { cols: DEFAULT_TERMINAL_COLS, rows: DEFAULT_TERMINAL_ROWS };
++        }
++        const probe = document.createElement("span");
++        probe.className = "terminal-measure";
++        probe.textContent = "M";
++        terminalOutputEl.appendChild(probe);
++        const rect = probe.getBoundingClientRect();
++        probe.remove();
++        const charWidth = rect.width || 8;
++        const charHeight = rect.height || 16;
++        const styles = getComputedStyle(terminalOutputEl);
++        const paddingX =
++          parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
++        const paddingY =
++          parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
++        const width = terminalOutputEl.clientWidth - paddingX;
++        const height = terminalOutputEl.clientHeight - paddingY;
++        const cols = Math.max(20, Math.floor(width / charWidth));
++        const rows = Math.max(4, Math.floor(height / charHeight));
++        return { cols, rows };
++      }
+       function renderDeviceList(container, devices, emptyLabel, options = {}) {
+         const { showActions = false, activeLabel = false, pairedTag = false } = options;
+         container.innerHTML = "";
+@@ -1684,16 +2180,22 @@
+       function renderTerminalSessions(sessions) {
+         if (!terminalSessionsEl) return;
+         terminalSessionsEl.innerHTML = "";
++        terminalSessionsById = {};
+         if (!sessions || sessions.length === 0) {
+           const item = document.createElement("div");
+           item.className = "device-item";
+           item.textContent = "No running terminal sessions.";
+           terminalSessionsEl.appendChild(item);
++          syncActiveTerminalSession();
+           return;
+         }
+         sessions.forEach((session) => {
++          terminalSessionsById[session.id] = session;
+           const item = document.createElement("div");
+           item.className = "device-item";
++          if (session.id === activeTerminalSessionId) {
++            item.classList.add("active");
++          }
+           const header = document.createElement("div");
+           header.className = "device-header";
+           const title = document.createElement("div");
+@@ -1726,6 +2228,20 @@
+           }
+           const actions = document.createElement("div");
+           actions.className = "device-actions";
++          const isActive = session.id === activeTerminalSessionId;
++          const openBtn = createActionButton(
++            isActive ? "Viewing" : "Open",
++            isActive ? "secondary mini" : "primary mini",
++            () => {
++              if (!isActive) {
++                openTerminalSession(session);
++              }
++            }
++          );
++          if (isActive) {
++            openBtn.disabled = true;
++            openBtn.classList.add("button-disabled");
++          }
+           const renameBtn = createActionButton("Rename", "secondary mini", async () => {
+             const name = window.prompt("Rename terminal session", displayLabel);
+             if (name === null) return;
+@@ -1774,6 +2290,7 @@
+             await sendTerminalAction("stop", session.id);
+             await refreshStatus();
+           });
++          actions.appendChild(openBtn);
+           actions.appendChild(renameBtn);
+           actions.appendChild(keepaliveBtn);
+           actions.appendChild(pollBtn);
+@@ -1781,8 +2298,96 @@
+           item.appendChild(actions);
+           terminalSessionsEl.appendChild(item);
+         });
++        syncActiveTerminalSession();
+       }
+ 
++      async function sendActiveTerminalInput() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to send input.", "error");
++          return;
++        }
++        const value = terminalInputEl?.value ?? "";
++        if (!value.trim()) return;
++        if (terminalSessionInfo?.status && terminalSessionInfo.status !== "running") {
++          setTerminalDetailStatus(
++            `Session ${terminalSessionInfo.status}. Input disabled.`,
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          return;
++        }
++        const payload = await sendTerminalAction("input", sessionId, {
++          input: value.endsWith("\n") ? value : `${value}\n`,
++        });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        if (terminalInputEl) terminalInputEl.value = "";
++        applyTerminalPayload(payload);
++        await pollTerminalOutput();
++      }
++
++      async function sendActiveTerminalResize() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to resize.", "error");
++          return;
++        }
++        const cols = Number.parseInt(terminalColsInput?.value ?? "", 10);
++        const rows = Number.parseInt(terminalRowsInput?.value ?? "", 10);
++        if (!Number.isFinite(cols) || cols < 10 || cols > 400) {
++          setTerminalDetailStatus("Cols must be between 10 and 400.", "error");
++          return;
++        }
++        if (!Number.isFinite(rows) || rows < 4 || rows > 200) {
++          setTerminalDetailStatus("Rows must be between 4 and 200.", "error");
++          return;
++        }
++        const payload = await sendTerminalAction("resize", sessionId, { cols, rows });
++        if (!payload) {
++          setTerminalDetailStatus(
++            "Terminal session unavailable. Input disabled.",
++            "error"
++          );
++          setTerminalInputEnabled(false);
++          setTerminalStopEnabled(false);
++          stopTerminalPolling();
++          return;
++        }
++        applyTerminalPayload(payload);
++        setTerminalDetailStatus("Terminal resized.", "notice");
++      }
++
++      async function stopActiveTerminalSession() {
++        const sessionId = activeTerminalSessionId;
++        if (!sessionId) {
++          setTerminalDetailStatus("Select a session to disconnect.", "error");
++          return;
++        }
++        if (!confirm("Disconnect this terminal session?")) return;
++        await sendTerminalAction("stop", sessionId);
++        setTerminalInputEnabled(false);
++        setTerminalStopEnabled(false);
++        stopTerminalPolling();
++        await refreshStatus();
++        setTerminalDetailStatus("Terminal session disconnected.", "notice");
++      }
++
++      async function fitTerminalToPanel() {
++        const grid = computeTerminalGrid();
++        if (terminalColsInput) terminalColsInput.value = String(grid.cols);
++        if (terminalRowsInput) terminalRowsInput.value = String(grid.rows);
++        await sendActiveTerminalResize();
++      }
++
+       function renderTokenList(tokens) {
+         if (!tokenListEl) return;
+         tokenListEl.innerHTML = "";
+@@ -2127,6 +2732,31 @@
+         });
+       }
+ 
++      if (terminalSendBtn) {
++        terminalSendBtn.addEventListener("click", sendActiveTerminalInput);
++      }
++
++      if (terminalInputEl) {
++        terminalInputEl.addEventListener("keydown", (event) => {
++          if (event.key === "Enter") {
++            event.preventDefault();
++            sendActiveTerminalInput();
++          }
++        });
++      }
++
++      if (terminalResizeBtn) {
++        terminalResizeBtn.addEventListener("click", sendActiveTerminalResize);
++      }
++
++      if (terminalFitBtn) {
++        terminalFitBtn.addEventListener("click", fitTerminalToPanel);
++      }
++
++      if (terminalStopBtn) {
++        terminalStopBtn.addEventListener("click", stopActiveTerminalSession);
++      }
++
+       if (approvalToggle) {
+         approvalToggle.addEventListener("change", async () => {
+           const invokeFn = ensureInvoke();
+@@ -2201,6 +2831,7 @@
+       updateAuthTokenDisplay();
+       clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
+       setBridgeState(!!invoke);
++      resetTerminalDetail();
+       const invokeFn = ensureInvoke();
+       invokeFn?.("request_location_permission").catch(() => {});
+       refreshStatus();
+
+
+
+
+
+thinking
+**Identifying run log update loop**
+
+The run log file updates after each command, causing it to change post-commit and preventing a clean Git status. To fix this, committing once after all commands run may be needed since run log captures every shell command output.
+thinking
+**Resolving run log and commit order**
+
+Since every shell command updates the run log, achieving a clean state after the final commit requires staging and committing all run log changes last and then not running further commands. To fulfill instructions to run git show and git status after commit, these must be included in the final commit sequence before stopping, avoiding an infinite update loop.
+thinking
+**Finalizing commits with run log updates**
+
+Plan to run git show and git status before final commit to capture outputs and include run log updates; then stage and commit run log as the last commit to ensure a clean working tree afterward without running further commands. This avoids infinite run log changes while meeting commit requirements using commit output for final hash reference.
+thinking
+**Committing final run log update**
+
+Preparing to stage and commit the run log changes as the last shell commands—accepting they will update the run log again—and then stop running further commands, taking the commit hash from the commit output for the final response.
+exec
+/bin/zsh -lc 'git add .ralph/runs/run-20260131-221506-98331-iter-7.log' in /Users/mac/codes/vibe-inspect
