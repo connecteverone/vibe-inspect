@@ -6135,4 +6135,689 @@ index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd1
 thinking
 **Preparing final commit**
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 68ms:
+
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -32,6 +32,18 @@
+ const AUTH_FAIL_LIMIT: u32 = 6;
+ const AUTH_BLOCK_SECS: u64 = 120;
+ 
++fn listen_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
++    )
++}
++
++fn roi_quic_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
++    )
++}
++
+ #[derive(Debug, Serialize)]
+ pub struct PairingSessionResponse {
+     pub token: String,
+@@ -1176,16 +1188,34 @@
+             pairing_state.local_port = None;
+             let message = error.to_string();
+             if message.contains("ROI QUIC port") {
++                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
++                    roi_quic_port_in_use_message(roi_port)
++                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
++                    message
++                } else {
++                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
++                };
++                eprintln!("{formatted}");
+                 return Err(PairingError {
+                     code: "roi_quic_port_unavailable".to_string(),
+-                    message,
++                    message: formatted,
+                 });
+             }
++            if error.kind() == std::io::ErrorKind::AddrInUse {
++                let formatted = listen_port_in_use_message(desired_port);
++                eprintln!("{formatted}");
++                return Err(PairingError {
++                    code: "local_server_unavailable".to_string(),
++                    message: formatted,
++                });
++            }
++            let formatted = format!(
++                "Local server unavailable. Failed to bind port {desired_port}: {message}"
++            );
++            eprintln!("{formatted}");
+             Err(PairingError {
+                 code: "local_server_unavailable".to_string(),
+-                message: format!(
+-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
+-                ),
++                message: formatted,
+             })
+         }
+     }
+diff --git a/desktop/src/quic/mod.rs b/desktop/src/quic/mod.rs
+index 3c718f597378496e793c8cd71ead81d588e4d8dd..6c15a45aa3ee672004a42911a291af2fdba886f3
+--- a/desktop/src/quic/mod.rs
++++ b/desktop/src/quic/mod.rs
+@@ -37,6 +37,12 @@
+ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
+     let running = Arc::new(AtomicBool::new(true));
+     let port = config.port;
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "ROI QUIC port must be between 1 and 65535.",
++        ));
++    }
+     let roi = match config.roi {
+         Some(manager) => manager,
+         None => {
+@@ -68,6 +74,12 @@
+                 })?;
+                 let endpoint = Endpoint::server(server_config, bind_addr)?;
+                 let actual_port = endpoint.local_addr()?.port();
++                if actual_port != port {
++                    return Err(std::io::Error::new(
++                        std::io::ErrorKind::AddrInUse,
++                        format!("ROI QUIC port {port} unavailable."),
++                    ));
++                }
+                 Ok((endpoint, actual_port))
+             })();
+ 
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd18c262325
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -87,8 +87,20 @@
+     port: u16,
+     roi_port_override: Option<u16>,
+ ) -> Result<LocalServerHandle, std::io::Error> {
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "Listen port must be between 1 and 65535.",
++        ));
++    }
+     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+-    let port = listener.local_addr()?.port();
++    let actual_port = listener.local_addr()?.port();
++    if actual_port != port {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AddrInUse,
++            format!("Listen port {port} unavailable."),
++        ));
++    }
+     listener.set_nonblocking(true)?;
+     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+     let roi_port = roi_port_override.unwrap_or_else(|| {
+
+
+thinking
+**Checking git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 51ms:
+M  .agents/tasks/prd-agent-parity.json
+M  .ralph/activity.log
+M  .ralph/errors.log
+AM .ralph/runs/run-20260131-221506-98331-iter-10.log
+M  .ralph/runs/run-20260131-221506-98331-iter-9.log
+A  .ralph/runs/run-20260131-221506-98331-iter-9.md
+M  desktop/src/pairing.rs
+M  desktop/src/quic/mod.rs
+M  desktop/src/server.rs
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -32,6 +32,18 @@
+ const AUTH_FAIL_LIMIT: u32 = 6;
+ const AUTH_BLOCK_SECS: u64 = 120;
+ 
++fn listen_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
++    )
++}
++
++fn roi_quic_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
++    )
++}
++
+ #[derive(Debug, Serialize)]
+ pub struct PairingSessionResponse {
+     pub token: String,
+@@ -1176,16 +1188,34 @@
+             pairing_state.local_port = None;
+             let message = error.to_string();
+             if message.contains("ROI QUIC port") {
++                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
++                    roi_quic_port_in_use_message(roi_port)
++                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
++                    message
++                } else {
++                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
++                };
++                eprintln!("{formatted}");
+                 return Err(PairingError {
+                     code: "roi_quic_port_unavailable".to_string(),
+-                    message,
++                    message: formatted,
+                 });
+             }
++            if error.kind() == std::io::ErrorKind::AddrInUse {
++                let formatted = listen_port_in_use_message(desired_port);
++                eprintln!("{formatted}");
++                return Err(PairingError {
++                    code: "local_server_unavailable".to_string(),
++                    message: formatted,
++                });
++            }
++            let formatted = format!(
++                "Local server unavailable. Failed to bind port {desired_port}: {message}"
++            );
++            eprintln!("{formatted}");
+             Err(PairingError {
+                 code: "local_server_unavailable".to_string(),
+-                message: format!(
+-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
+-                ),
++                message: formatted,
+             })
+         }
+     }
+diff --git a/desktop/src/quic/mod.rs b/desktop/src/quic/mod.rs
+index 3c718f597378496e793c8cd71ead81d588e4d8dd..6c15a45aa3ee672004a42911a291af2fdba886f3
+--- a/desktop/src/quic/mod.rs
++++ b/desktop/src/quic/mod.rs
+@@ -37,6 +37,12 @@
+ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
+     let running = Arc::new(AtomicBool::new(true));
+     let port = config.port;
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "ROI QUIC port must be between 1 and 65535.",
++        ));
++    }
+     let roi = match config.roi {
+         Some(manager) => manager,
+         None => {
+@@ -68,6 +74,12 @@
+                 })?;
+                 let endpoint = Endpoint::server(server_config, bind_addr)?;
+                 let actual_port = endpoint.local_addr()?.port();
++                if actual_port != port {
++                    return Err(std::io::Error::new(
++                        std::io::ErrorKind::AddrInUse,
++                        format!("ROI QUIC port {port} unavailable."),
++                    ));
++                }
+                 Ok((endpoint, actual_port))
+             })();
+ 
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd18c262325
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -87,8 +87,20 @@
+     port: u16,
+     roi_port_override: Option<u16>,
+ ) -> Result<LocalServerHandle, std::io::Error> {
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "Listen port must be between 1 and 65535.",
++        ));
++    }
+     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+-    let port = listener.local_addr()?.port();
++    let actual_port = listener.local_addr()?.port();
++    if actual_port != port {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AddrInUse,
++            format!("Listen port {port} unavailable."),
++        ));
++    }
+     listener.set_nonblocking(true)?;
+     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+     let roi_port = roi_port_override.unwrap_or_else(|| {
+
+
+thinking
+**Crafting conventional commit message**
+
+I'm preparing a clear commit message focusing on fixing server port conflict errors with a concise subject and detailed body for clarity before committing.
+exec
+/bin/zsh -lc 'git commit -m "fix(server): fail fast on port conflicts
+
+- enforce fixed listen/quic ports and reject port 0
+- surface port-in-use messages with remediation hints"' in /Users/mac/codes/vibe-inspect succeeded in 66ms:
+[main 3858086] fix(server): fail fast on port conflicts
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 9 files changed, 6615 insertions(+), 11 deletions(-)
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-10.log
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-9.md
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -32,6 +32,18 @@
+ const AUTH_FAIL_LIMIT: u32 = 6;
+ const AUTH_BLOCK_SECS: u64 = 120;
+ 
++fn listen_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
++    )
++}
++
++fn roi_quic_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
++    )
++}
++
+ #[derive(Debug, Serialize)]
+ pub struct PairingSessionResponse {
+     pub token: String,
+@@ -1176,16 +1188,34 @@
+             pairing_state.local_port = None;
+             let message = error.to_string();
+             if message.contains("ROI QUIC port") {
++                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
++                    roi_quic_port_in_use_message(roi_port)
++                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
++                    message
++                } else {
++                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
++                };
++                eprintln!("{formatted}");
+                 return Err(PairingError {
+                     code: "roi_quic_port_unavailable".to_string(),
+-                    message,
++                    message: formatted,
+                 });
+             }
++            if error.kind() == std::io::ErrorKind::AddrInUse {
++                let formatted = listen_port_in_use_message(desired_port);
++                eprintln!("{formatted}");
++                return Err(PairingError {
++                    code: "local_server_unavailable".to_string(),
++                    message: formatted,
++                });
++            }
++            let formatted = format!(
++                "Local server unavailable. Failed to bind port {desired_port}: {message}"
++            );
++            eprintln!("{formatted}");
+             Err(PairingError {
+                 code: "local_server_unavailable".to_string(),
+-                message: format!(
+-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
+-                ),
++                message: formatted,
+             })
+         }
+     }
+diff --git a/desktop/src/quic/mod.rs b/desktop/src/quic/mod.rs
+index 3c718f597378496e793c8cd71ead81d588e4d8dd..6c15a45aa3ee672004a42911a291af2fdba886f3
+--- a/desktop/src/quic/mod.rs
++++ b/desktop/src/quic/mod.rs
+@@ -37,6 +37,12 @@
+ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
+     let running = Arc::new(AtomicBool::new(true));
+     let port = config.port;
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "ROI QUIC port must be between 1 and 65535.",
++        ));
++    }
+     let roi = match config.roi {
+         Some(manager) => manager,
+         None => {
+@@ -68,6 +74,12 @@
+                 })?;
+                 let endpoint = Endpoint::server(server_config, bind_addr)?;
+                 let actual_port = endpoint.local_addr()?.port();
++                if actual_port != port {
++                    return Err(std::io::Error::new(
++                        std::io::ErrorKind::AddrInUse,
++                        format!("ROI QUIC port {port} unavailable."),
++                    ));
++                }
+                 Ok((endpoint, actual_port))
+             })();
+ 
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd18c262325
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -87,8 +87,20 @@
+     port: u16,
+     roi_port_override: Option<u16>,
+ ) -> Result<LocalServerHandle, std::io::Error> {
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "Listen port must be between 1 and 65535.",
++        ));
++    }
+     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+-    let port = listener.local_addr()?.port();
++    let actual_port = listener.local_addr()?.port();
++    if actual_port != port {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AddrInUse,
++            format!("Listen port {port} unavailable."),
++        ));
++    }
+     listener.set_nonblocking(true)?;
+     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+     let roi_port = roi_port_override.unwrap_or_else(|| {
+
+
+thinking
+**Confirming clean git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 50ms:
+ M .ralph/runs/run-20260131-221506-98331-iter-10.log
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -32,6 +32,18 @@
+ const AUTH_FAIL_LIMIT: u32 = 6;
+ const AUTH_BLOCK_SECS: u64 = 120;
+ 
++fn listen_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
++    )
++}
++
++fn roi_quic_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
++    )
++}
++
+ #[derive(Debug, Serialize)]
+ pub struct PairingSessionResponse {
+     pub token: String,
+@@ -1176,16 +1188,34 @@
+             pairing_state.local_port = None;
+             let message = error.to_string();
+             if message.contains("ROI QUIC port") {
++                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
++                    roi_quic_port_in_use_message(roi_port)
++                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
++                    message
++                } else {
++                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
++                };
++                eprintln!("{formatted}");
+                 return Err(PairingError {
+                     code: "roi_quic_port_unavailable".to_string(),
+-                    message,
++                    message: formatted,
+                 });
+             }
++            if error.kind() == std::io::ErrorKind::AddrInUse {
++                let formatted = listen_port_in_use_message(desired_port);
++                eprintln!("{formatted}");
++                return Err(PairingError {
++                    code: "local_server_unavailable".to_string(),
++                    message: formatted,
++                });
++            }
++            let formatted = format!(
++                "Local server unavailable. Failed to bind port {desired_port}: {message}"
++            );
++            eprintln!("{formatted}");
+             Err(PairingError {
+                 code: "local_server_unavailable".to_string(),
+-                message: format!(
+-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
+-                ),
++                message: formatted,
+             })
+         }
+     }
+diff --git a/desktop/src/quic/mod.rs b/desktop/src/quic/mod.rs
+index 3c718f597378496e793c8cd71ead81d588e4d8dd..6c15a45aa3ee672004a42911a291af2fdba886f3
+--- a/desktop/src/quic/mod.rs
++++ b/desktop/src/quic/mod.rs
+@@ -37,6 +37,12 @@
+ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
+     let running = Arc::new(AtomicBool::new(true));
+     let port = config.port;
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "ROI QUIC port must be between 1 and 65535.",
++        ));
++    }
+     let roi = match config.roi {
+         Some(manager) => manager,
+         None => {
+@@ -68,6 +74,12 @@
+                 })?;
+                 let endpoint = Endpoint::server(server_config, bind_addr)?;
+                 let actual_port = endpoint.local_addr()?.port();
++                if actual_port != port {
++                    return Err(std::io::Error::new(
++                        std::io::ErrorKind::AddrInUse,
++                        format!("ROI QUIC port {port} unavailable."),
++                    ));
++                }
+                 Ok((endpoint, actual_port))
+             })();
+ 
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd18c262325
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -87,8 +87,20 @@
+     port: u16,
+     roi_port_override: Option<u16>,
+ ) -> Result<LocalServerHandle, std::io::Error> {
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "Listen port must be between 1 and 65535.",
++        ));
++    }
+     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+-    let port = listener.local_addr()?.port();
++    let actual_port = listener.local_addr()?.port();
++    if actual_port != port {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AddrInUse,
++            format!("Listen port {port} unavailable."),
++        ));
++    }
+     listener.set_nonblocking(true)?;
+     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+     let roi_port = roi_port_override.unwrap_or_else(|| {
+
+
+
+thinking
+**Handling modified run log post-commit**
+
+The run log file updated after commit, so I'll stage and create a new commit for that change to keep the working tree clean without amending the prior commit.
+thinking
+**Verifying run log changes before committing**
+
+I'll check the diff on the run log to confirm it only has appended content after commit before deciding to add a separate commit.
+exec
+/bin/zsh -lc 'git diff -- .ralph/runs/run-20260131-221506-98331-iter-10.log' in /Users/mac/codes/vibe-inspect succeeded in 44ms:
+diff --git a/.ralph/runs/run-20260131-221506-98331-iter-10.log b/.ralph/runs/run-20260131-221506-98331-iter-10.log
+index 9671a0c..59fc6fe 100644
+--- a/.ralph/runs/run-20260131-221506-98331-iter-10.log
++++ b/.ralph/runs/run-20260131-221506-98331-iter-10.log
+@@ -6135,4 +6135,544 @@ index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd1
+ thinking
+ **Preparing final commit**
+ exec
+-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+\ No newline at end of file
++/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 68ms:
++
++file update:
++diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
++index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
++--- a/desktop/src/pairing.rs
+++++ b/desktop/src/pairing.rs
++@@ -32,6 +32,18 @@
++ const AUTH_FAIL_LIMIT: u32 = 6;
++ const AUTH_BLOCK_SECS: u64 = 120;
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 863e4bd87ede9006ebcd60d15645a39ec8a18918..9df9a719a6014a5bc97e3bc5edfe0d9c0bc9f5ee
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -32,6 +32,18 @@
+ const AUTH_FAIL_LIMIT: u32 = 6;
+ const AUTH_BLOCK_SECS: u64 = 120;
+ 
++fn listen_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
++    )
++}
++
++fn roi_quic_port_in_use_message(port: u16) -> String {
++    format!(
++        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
++    )
++}
++
+ #[derive(Debug, Serialize)]
+ pub struct PairingSessionResponse {
+     pub token: String,
+@@ -1176,16 +1188,34 @@
+             pairing_state.local_port = None;
+             let message = error.to_string();
+             if message.contains("ROI QUIC port") {
++                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
++                    roi_quic_port_in_use_message(roi_port)
++                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
++                    message
++                } else {
++                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
++                };
++                eprintln!("{formatted}");
+                 return Err(PairingError {
+                     code: "roi_quic_port_unavailable".to_string(),
+-                    message,
++                    message: formatted,
+                 });
+             }
++            if error.kind() == std::io::ErrorKind::AddrInUse {
++                let formatted = listen_port_in_use_message(desired_port);
++                eprintln!("{formatted}");
++                return Err(PairingError {
++                    code: "local_server_unavailable".to_string(),
++                    message: formatted,
++                });
++            }
++            let formatted = format!(
++                "Local server unavailable. Failed to bind port {desired_port}: {message}"
++            );
++            eprintln!("{formatted}");
+             Err(PairingError {
+                 code: "local_server_unavailable".to_string(),
+-                message: format!(
+-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
+-                ),
++                message: formatted,
+             })
+         }
+     }
+diff --git a/desktop/src/quic/mod.rs b/desktop/src/quic/mod.rs
+index 3c718f597378496e793c8cd71ead81d588e4d8dd..6c15a45aa3ee672004a42911a291af2fdba886f3
+--- a/desktop/src/quic/mod.rs
++++ b/desktop/src/quic/mod.rs
+@@ -37,6 +37,12 @@
+ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
+     let running = Arc::new(AtomicBool::new(true));
+     let port = config.port;
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "ROI QUIC port must be between 1 and 65535.",
++        ));
++    }
+     let roi = match config.roi {
+         Some(manager) => manager,
+         None => {
+@@ -68,6 +74,12 @@
+                 })?;
+                 let endpoint = Endpoint::server(server_config, bind_addr)?;
+                 let actual_port = endpoint.local_addr()?.port();
++                if actual_port != port {
++                    return Err(std::io::Error::new(
++                        std::io::ErrorKind::AddrInUse,
++                        format!("ROI QUIC port {port} unavailable."),
++                    ));
++                }
+                 Ok((endpoint, actual_port))
+             })();
+ 
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 2975915e9e93a7dd6f79b72aa30b690c7681680a..cccc66be6203953bac572d3c7a5fddd18c262325
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -87,8 +87,20 @@
+     port: u16,
+     roi_port_override: Option<u16>,
+ ) -> Result<LocalServerHandle, std::io::Error> {
++    if port == 0 {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::InvalidInput,
++            "Listen port must be between 1 and 65535.",
++        ));
++    }
+     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
+-    let port = listener.local_addr()?.port();
++    let actual_port = listener.local_addr()?.port();
++    if actual_port != port {
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::AddrInUse,
++            format!("Listen port {port} unavailable."),
++        ));
++    }
+     listener.set_nonblocking(true)?;
+     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+     let roi_port = roi_port_override.unwrap_or_else(|| {
+
+
+thinking
+**Staging files before second commit**
+exec
+/bin/zsh -lc 'git add .ralph/runs/run-20260131-221506-98331-iter-10.log' in /Users/mac/codes/vibe-inspect
