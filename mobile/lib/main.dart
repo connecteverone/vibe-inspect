@@ -532,11 +532,16 @@ class _PairingScreenState extends State<PairingScreen> {
     });
     final httpClient = http.Client();
     try {
+      final resolvedClientId = await _resolveClientId();
+      final normalizedClientId =
+          resolvedClientId != null && resolvedClientId.trim().isNotEmpty
+              ? resolvedClientId.trim()
+              : null;
       final client = AgentCommandClient(
         baseUrl: url,
         client: httpClient,
         authToken: token,
-        clientId: _clientId,
+        clientId: normalizedClientId,
         clientName: _resolveDeviceName(),
       );
       final identity = await client.fetchIdentity();
@@ -1017,6 +1022,28 @@ class _PairingScreenState extends State<PairingScreen> {
     return raw.trim();
   }
 
+  String? _extractPairingErrorMessage(String body) {
+    if (body.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is Map) {
+          final rawMessage = error['message'];
+          if (rawMessage != null) {
+            final message = rawMessage.toString().trim();
+            if (message.isNotEmpty) {
+              return message;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<_PairingAttemptResult> _confirmPairingAtUrl(
     PairingPayload payload,
     String baseUrl,
@@ -1040,16 +1067,20 @@ class _PairingScreenState extends State<PairingScreen> {
     }
     http.Response response;
     try {
+      final resolvedClientId = await _resolveClientId();
+      final requestBody = <String, dynamic>{
+        'token': payload.token,
+        'secret': payload.secret,
+        'client_name': _resolveDeviceName(),
+      };
+      if (resolvedClientId != null && resolvedClientId.trim().isNotEmpty) {
+        requestBody['client_id'] = resolvedClientId.trim();
+      }
       response = await client
           .post(
             uri,
             headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'token': payload.token,
-              'secret': payload.secret,
-              'client_id': _clientId,
-              'client_name': _resolveDeviceName(),
-            }),
+            body: jsonEncode(requestBody),
           )
           .timeout(const Duration(seconds: 4));
     } catch (error) {
@@ -1061,9 +1092,11 @@ class _PairingScreenState extends State<PairingScreen> {
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      final errorMessage = _extractPairingErrorMessage(response.body);
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: 'Desktop agent returned HTTP ${response.statusCode}.',
+        message: errorMessage ??
+            'Desktop agent returned HTTP ${response.statusCode}.',
         agentUrl: baseUrl,
       );
     }
@@ -2005,6 +2038,19 @@ class _PairingScreenState extends State<PairingScreen> {
         _clientId = generated;
       });
     }
+  }
+
+  Future<String?> _resolveClientId() async {
+    final current = _clientId;
+    if (current != null && current.trim().isNotEmpty) {
+      return current;
+    }
+    await _ensureClientId();
+    final updated = _clientId;
+    if (updated != null && updated.trim().isNotEmpty) {
+      return updated;
+    }
+    return null;
   }
 
   void _openAgentWorkspace(ConnectionRecord agent) {

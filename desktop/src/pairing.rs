@@ -932,6 +932,25 @@ fn confirm_pairing_locked(
         }
     }
 
+    if !pairing_state.requires_approval {
+        pairing_state.connected_at = Some(now);
+        pairing_state.pending_confirmation = None;
+        register_client_pairing(
+            pairing_state,
+            client_id,
+            client_name,
+            source,
+            now,
+        );
+        let bound_token = resolve_client_token(pairing_state, client_id.as_deref());
+        return Ok(PairingConfirmResponse {
+            status: "connected".to_string(),
+            connected_at: Some(now),
+            device_id: Some(pairing_state.identity.device_id.clone()),
+            auth_token: Some(bound_token),
+        });
+    }
+
     if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
         if is_pending_expired(pending, now) {
             pairing_state.pending_confirmation = None;
