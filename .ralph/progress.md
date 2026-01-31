@@ -889,3 +889,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
 - **Learnings for future iterations:**
   - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
 ---
+## [2026-02-01 01:44:25] - US-007: Forward terminal notifications from desktop to mobile
+Thread: 
+Run: 20260131-221506-98331 (iteration 8)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-8.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-8.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: d3f4b48 feat(terminal): forward notifications to mobile
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-7.log
+  - .ralph/runs/run-20260131-221506-98331-iter-7.md
+  - .ralph/runs/run-20260131-221506-98331-iter-8.log
+  - desktop/src/command.rs
+  - desktop/src/terminal.rs
+  - mobile/lib/main.dart
+- What was implemented
+  - Added desktop-side terminal notification detection, queueing, and payload fields for polling/streaming.
+  - Persisted terminal notifications as mobile timeline events with toast surfacing and notification sequence tracking.
+  - Filtered terminal session previews to ignore notification-only events.
+- **Learnings for future iterations:**
+  - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
+  - flutter build web warns about wasm incompatibilities from ffi/win32 dependencies.
+---
