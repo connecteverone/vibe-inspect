@@ -37,6 +37,12 @@ impl QuicServerHandle {
 pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
     let running = Arc::new(AtomicBool::new(true));
     let port = config.port;
+    if port == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "ROI QUIC port must be between 1 and 65535.",
+        ));
+    }
     let roi = match config.roi {
         Some(manager) => manager,
         None => {
@@ -68,6 +74,12 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
                 })?;
                 let endpoint = Endpoint::server(server_config, bind_addr)?;
                 let actual_port = endpoint.local_addr()?.port();
+                if actual_port != port {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrInUse,
+                        format!("ROI QUIC port {port} unavailable."),
+                    ));
+                }
                 Ok((endpoint, actual_port))
             })();
 

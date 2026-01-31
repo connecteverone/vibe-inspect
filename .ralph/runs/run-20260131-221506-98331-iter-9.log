@@ -8614,4 +8614,372 @@ ralph log "Updated progress log for US-008"
 git -C /Users/mac/codes/vibe-inspect add -A
 git -C /Users/mac/codes/vibe-inspect commit -m "chore(ralph): record US-008 progress"
 git -C /Users/mac/codes/vibe-inspect show -s --format="%h %s" HEAD
-git -C /Users/mac/codes/vibe-inspect status --porcelain' in /Users/mac/codes/vibe-inspect
+git -C /Users/mac/codes/vibe-inspect status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 183ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+[main 2436cf7] chore(ralph): record US-008 progress
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 881 insertions(+), 1 deletion(-)
+2436cf7 chore(ralph): record US-008 progress
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 6f62e1e39888200262a183b0d3bf85b4d7fc48ec..863e4bd87ede9006ebcd60d15645a39ec8a18918
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -932,6 +932,25 @@
+         }
+     }
+ 
++    if !pairing_state.requires_approval {
++        pairing_state.connected_at = Some(now);
++        pairing_state.pending_confirmation = None;
++        register_client_pairing(
++            pairing_state,
++            client_id,
++            client_name,
++            source,
++            now,
++        );
++        let bound_token = resolve_client_token(pairing_state, client_id.as_deref());
++        return Ok(PairingConfirmResponse {
++            status: "connected".to_string(),
++            connected_at: Some(now),
++            device_id: Some(pairing_state.identity.device_id.clone()),
++            auth_token: Some(bound_token),
++        });
++    }
++
+     if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
+         if is_pending_expired(pending, now) {
+             pairing_state.pending_confirmation = None;
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 2aa18270957c292b9549cdb04397eadd1077cbc0..eacef0f3e9cd6b7a1b1e7c7a30cf1889c081d2fd
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -532,11 +532,16 @@
+     });
+     final httpClient = http.Client();
+     try {
++      final resolvedClientId = await _resolveClientId();
++      final normalizedClientId =
++          resolvedClientId != null && resolvedClientId.trim().isNotEmpty
++              ? resolvedClientId.trim()
++              : null;
+       final client = AgentCommandClient(
+         baseUrl: url,
+         client: httpClient,
+         authToken: token,
+-        clientId: _clientId,
++        clientId: normalizedClientId,
+         clientName: _resolveDeviceName(),
+       );
+       final identity = await client.fetchIdentity();
+@@ -1017,6 +1022,28 @@
+     return raw.trim();
+   }
+ 
++  String? _extractPairingErrorMessage(String body) {
++    if (body.trim().isEmpty) {
++      return null;
++    }
++    try {
++      final decoded = jsonDecode(body);
++      if (decoded is Map) {
++        final error = decoded['error'];
++        if (error is Map) {
++          final rawMessage = error['message'];
++          if (rawMessage != null) {
++            final message = rawMessage.toString().trim();
++            if (message.isNotEmpty) {
++              return message;
++            }
++          }
++        }
++      }
++    } catch (_) {}
++    return null;
++  }
++
+   Future<_PairingAttemptResult> _confirmPairingAtUrl(
+     PairingPayload payload,
+     String baseUrl,
+@@ -1040,16 +1067,20 @@
+     }
+     http.Response response;
+     try {
++      final resolvedClientId = await _resolveClientId();
++      final requestBody = <String, dynamic>{
++        'token': payload.token,
++        'secret': payload.secret,
++        'client_name': _resolveDeviceName(),
++      };
++      if (resolvedClientId != null && resolvedClientId.trim().isNotEmpty) {
++        requestBody['client_id'] = resolvedClientId.trim();
++      }
+       response = await client
+           .post(
+             uri,
+             headers: const {'Content-Type': 'application/json'},
+-            body: jsonEncode({
+-              'token': payload.token,
+-              'secret': payload.secret,
+-              'client_id': _clientId,
+-              'client_name': _resolveDeviceName(),
+-            }),
++            body: jsonEncode(requestBody),
+           )
+           .timeout(const Duration(seconds: 4));
+     } catch (error) {
+@@ -1061,9 +1092,11 @@
+     }
+ 
+     if (response.statusCode < 200 || response.statusCode >= 300) {
++      final errorMessage = _extractPairingErrorMessage(response.body);
+       return _PairingAttemptResult(
+         status: _PairingAttemptStatus.failed,
+-        message: 'Desktop agent returned HTTP ${response.statusCode}.',
++        message: errorMessage ??
++            'Desktop agent returned HTTP ${response.statusCode}.',
+         agentUrl: baseUrl,
+       );
+     }
+@@ -2007,6 +2040,19 @@
+     }
+   }
+ 
++  Future<String?> _resolveClientId() async {
++    final current = _clientId;
++    if (current != null && current.trim().isNotEmpty) {
++      return current;
++    }
++    await _ensureClientId();
++    final updated = _clientId;
++    if (updated != null && updated.trim().isNotEmpty) {
++      return updated;
++    }
++    return null;
++  }
++
+   void _openAgentWorkspace(ConnectionRecord agent) {
+     setState(() {
+       _activeAgentId = agent.id;
+
+
+
+thinking
+**Considering git status reliability**
+
+The prior git status showed no output, indicating a clean working tree at that moment, but since running another git command may have updated the run log and made the tree dirty, I’m weighing whether to re-check status now to ensure cleanliness despite the risk of triggering a further commit cycle.
+thinking
+**Confirming commit info and final response content**
+
+I noted the final commit hash and subject from the last command output and will use these in the final response along with details on changes, verification results including analyze failure, browser verification, review summary, and next step suggestions to provide a complete and clear closing summary.
+codex
+Hardened QR pairing by short‑circuiting confirmation when approval is off and issuing the device‑bound token in `desktop/src/pairing.rs`. Improved mobile pairing/login reliability in `mobile/lib/main.dart` by resolving client IDs before requests and parsing desktop error payloads so expired QR tokens surface explicit messages instead of generic HTTP failures.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `cd mobile && flutter build web` -> PASS (wasm/ffi warnings)
+
+**Browser Check**
+- Built web and loaded pairing UI via dev-browser at `http://127.0.0.1:8030` to confirm the pairing screen renders with the updated messaging behavior.
+
+**Review**
+- Security: no new data exposure; error parsing uses existing server messages.
+- Performance: negligible overhead; client ID resolution is cached after first load.
+- Regression: pairing/approval flow unchanged when approval is required; manual token login still uses auth token headers.
+
+**Commits**
+- `b54ffa1 fix(pairing): harden QR pairing errors`
+- `2436cf7 chore(ralph): record US-008 progress`
+
+**Next steps**
+1. Manual QA: scan QR, approve on desktop, and reconnect with stored token to confirm no re‑approval.
+2. If desired, address the known `third_party/flutter_quic` analyze dependency gaps to clean the lint gate.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index 6f62e1e39888200262a183b0d3bf85b4d7fc48ec..863e4bd87ede9006ebcd60d15645a39ec8a18918
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -932,6 +932,25 @@
+         }
+     }
+ 
++    if !pairing_state.requires_approval {
++        pairing_state.connected_at = Some(now);
++        pairing_state.pending_confirmation = None;
++        register_client_pairing(
++            pairing_state,
++            client_id,
++            client_name,
++            source,
++            now,
++        );
++        let bound_token = resolve_client_token(pairing_state, client_id.as_deref());
++        return Ok(PairingConfirmResponse {
++            status: "connected".to_string(),
++            connected_at: Some(now),
++            device_id: Some(pairing_state.identity.device_id.clone()),
++            auth_token: Some(bound_token),
++        });
++    }
++
+     if let Some(pending) = pairing_state.pending_confirmation.as_ref() {
+         if is_pending_expired(pending, now) {
+             pairing_state.pending_confirmation = None;
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 2aa18270957c292b9549cdb04397eadd1077cbc0..eacef0f3e9cd6b7a1b1e7c7a30cf1889c081d2fd
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -532,11 +532,16 @@
+     });
+     final httpClient = http.Client();
+     try {
++      final resolvedClientId = await _resolveClientId();
++      final normalizedClientId =
++          resolvedClientId != null && resolvedClientId.trim().isNotEmpty
++              ? resolvedClientId.trim()
++              : null;
+       final client = AgentCommandClient(
+         baseUrl: url,
+         client: httpClient,
+         authToken: token,
+-        clientId: _clientId,
++        clientId: normalizedClientId,
+         clientName: _resolveDeviceName(),
+       );
+       final identity = await client.fetchIdentity();
+@@ -1017,6 +1022,28 @@
+     return raw.trim();
+   }
+ 
++  String? _extractPairingErrorMessage(String body) {
++    if (body.trim().isEmpty) {
++      return null;
++    }
++    try {
++      final decoded = jsonDecode(body);
++      if (decoded is Map) {
++        final error = decoded['error'];
++        if (error is Map) {
++          final rawMessage = error['message'];
++          if (rawMessage != null) {
++            final message = rawMessage.toString().trim();
++            if (message.isNotEmpty) {
++              return message;
++            }
++          }
++        }
++      }
++    } catch (_) {}
++    return null;
++  }
++
+   Future<_PairingAttemptResult> _confirmPairingAtUrl(
+     PairingPayload payload,
+     String baseUrl,
+@@ -1040,16 +1067,20 @@
+     }
+     http.Response response;
+     try {
++      final resolvedClientId = await _resolveClientId();
++      final requestBody = <String, dynamic>{
++        'token': payload.token,
++        'secret': payload.secret,
++        'client_name': _resolveDeviceName(),
++      };
++      if (resolvedClientId != null && resolvedClientId.trim().isNotEmpty) {
++        requestBody['client_id'] = resolvedClientId.trim();
++      }
+       response = await client
+           .post(
+             uri,
+             headers: const {'Content-Type': 'application/json'},
+-            body: jsonEncode({
+-              'token': payload.token,
+-              'secret': payload.secret,
+-              'client_id': _clientId,
+-              'client_name': _resolveDeviceName(),
+-            }),
++            body: jsonEncode(requestBody),
+           )
+           .timeout(const Duration(seconds: 4));
+     } catch (error) {
+@@ -1061,9 +1092,11 @@
+     }
+ 
+     if (response.statusCode < 200 || response.statusCode >= 300) {
++      final errorMessage = _extractPairingErrorMessage(response.body);
+       return _PairingAttemptResult(
+         status: _PairingAttemptStatus.failed,
+-        message: 'Desktop agent returned HTTP ${response.statusCode}.',
++        message: errorMessage ??
++            'Desktop agent returned HTTP ${response.statusCode}.',
+         agentUrl: baseUrl,
+       );
+     }
+@@ -2007,6 +2040,19 @@
+     }
+   }
+ 
++  Future<String?> _resolveClientId() async {
++    final current = _clientId;
++    if (current != null && current.trim().isNotEmpty) {
++      return current;
++    }
++    await _ensureClientId();
++    final updated = _clientId;
++    if (updated != null && updated.trim().isNotEmpty) {
++      return updated;
++    }
++    return null;
++  }
++
+   void _openAgentWorkspace(ConnectionRecord agent) {
+     setState(() {
+       _activeAgentId = agent.id;
+
+tokens used
+175,017
+Hardened QR pairing by short‑circuiting confirmation when approval is off and issuing the device‑bound token in `desktop/src/pairing.rs`. Improved mobile pairing/login reliability in `mobile/lib/main.dart` by resolving client IDs before requests and parsing desktop error payloads so expired QR tokens surface explicit messages instead of generic HTTP failures.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `cd mobile && flutter build web` -> PASS (wasm/ffi warnings)
+
+**Browser Check**
+- Built web and loaded pairing UI via dev-browser at `http://127.0.0.1:8030` to confirm the pairing screen renders with the updated messaging behavior.
+
+**Review**
+- Security: no new data exposure; error parsing uses existing server messages.
+- Performance: negligible overhead; client ID resolution is cached after first load.
+- Regression: pairing/approval flow unchanged when approval is required; manual token login still uses auth token headers.
+
+**Commits**
+- `b54ffa1 fix(pairing): harden QR pairing errors`
+- `2436cf7 chore(ralph): record US-008 progress`
+
+**Next steps**
+1. Manual QA: scan QR, approve on desktop, and reconnect with stored token to confirm no re‑approval.
+2. If desired, address the known `third_party/flutter_quic` analyze dependency gaps to clean the lint gate.
+
+<promise>COMPLETE</promise>

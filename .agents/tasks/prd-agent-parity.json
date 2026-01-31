@@ -292,7 +292,7 @@
     {
       "id": "US-008",
       "title": "Harden pairing flows for QR approval + static token + addr",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a user, I want both QR pairing (with approval) and static token + addr login to work reliably with clear errors.",
       "acceptanceCriteria": [
@@ -302,13 +302,13 @@
         "Negative case: expired QR shows an explicit error and prompts to generate a new code"
       ],
       "startedAt": "2026-01-31T17:48:59.793535+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T17:48:59.793658+00:00"
+      "completedAt": "2026-01-31T18:09:39.296811+00:00",
+      "updatedAt": "2026-01-31T18:09:39.296724+00:00"
     },
     {
       "id": "US-009",
       "title": "Enforce fixed ports for local server and ROI QUIC",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [],
       "description": "As an operator, I want the desktop agent to fail fast on port conflicts instead of switching ports.",
       "acceptanceCriteria": [
@@ -316,7 +316,10 @@
         "UI surfaces a clear error message with the conflicting port number and remediation hint",
         "Example: port 8899 in use -> startup error shown in UI and logs",
         "Negative case: the agent does not auto-select another port or start silently"
-      ]
+      ],
+      "startedAt": "2026-01-31T18:09:41.400978+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T18:09:41.401092+00:00"
     },
     {
       "id": "US-010",

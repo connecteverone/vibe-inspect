@@ -87,8 +87,20 @@ pub fn start_local_server(
     port: u16,
     roi_port_override: Option<u16>,
 ) -> Result<LocalServerHandle, std::io::Error> {
+    if port == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Listen port must be between 1 and 65535.",
+        ));
+    }
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
-    let port = listener.local_addr()?.port();
+    let actual_port = listener.local_addr()?.port();
+    if actual_port != port {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            format!("Listen port {port} unavailable."),
+        ));
+    }
     listener.set_nonblocking(true)?;
     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
     let roi_port = roi_port_override.unwrap_or_else(|| {

@@ -32,6 +32,18 @@ const AUTH_FAIL_WINDOW_SECS: u64 = 60;
 const AUTH_FAIL_LIMIT: u32 = 6;
 const AUTH_BLOCK_SECS: u64 = 120;
 
+fn listen_port_in_use_message(port: u16) -> String {
+    format!(
+        "{LOCAL_SERVER_ERROR_PREFIX} Listen port {port} is already in use. Stop the other app using port {port} or update the listen port in Settings, then restart the desktop agent."
+    )
+}
+
+fn roi_quic_port_in_use_message(port: u16) -> String {
+    format!(
+        "{LOCAL_SERVER_ERROR_PREFIX} ROI QUIC port {port} is already in use. Stop the other app using port {port} or update the ROI QUIC port in Settings, then restart the desktop agent."
+    )
+}
+
 #[derive(Debug, Serialize)]
 pub struct PairingSessionResponse {
     pub token: String,
@@ -1176,16 +1188,34 @@ fn ensure_local_server(
             pairing_state.local_port = None;
             let message = error.to_string();
             if message.contains("ROI QUIC port") {
+                let formatted = if error.kind() == std::io::ErrorKind::AddrInUse {
+                    roi_quic_port_in_use_message(roi_port)
+                } else if message.starts_with(LOCAL_SERVER_ERROR_PREFIX) {
+                    message
+                } else {
+                    format!("{LOCAL_SERVER_ERROR_PREFIX} {message}")
+                };
+                eprintln!("{formatted}");
                 return Err(PairingError {
                     code: "roi_quic_port_unavailable".to_string(),
-                    message,
+                    message: formatted,
                 });
             }
+            if error.kind() == std::io::ErrorKind::AddrInUse {
+                let formatted = listen_port_in_use_message(desired_port);
+                eprintln!("{formatted}");
+                return Err(PairingError {
+                    code: "local_server_unavailable".to_string(),
+                    message: formatted,
+                });
+            }
+            let formatted = format!(
+                "Local server unavailable. Failed to bind port {desired_port}: {message}"
+            );
+            eprintln!("{formatted}");
             Err(PairingError {
                 code: "local_server_unavailable".to_string(),
-                message: format!(
-                    "Local server unavailable. Failed to bind port {desired_port}: {message}"
-                ),
+                message: formatted,
             })
         }
     }

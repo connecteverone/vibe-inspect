@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-01 02:09:39 | run=20260131-221506-98331 | iter=9 | mode=build | story=US-008 | duration=1240s | status=success
 - 2026-02-01 01:48:57 | run=20260131-221506-98331 | iter=8 | mode=build | story=US-007 | duration=2211s | status=success
 - 2026-02-01 01:12:04 | run=20260131-221506-98331 | iter=7 | mode=build | story=US-006 | duration=1843s | status=success
 - 2026-02-01 00:41:19 | run=20260131-221506-98331 | iter=6 | mode=build | story=US-005 | duration=2116s | status=success
@@ -257,3 +258,8 @@
 [2026-02-01 01:57:17] Updated pairing confirmation and mobile error handling for US-008
 [2026-02-01 01:59:40] Ran flutter tests/analyze and web build; captured pairing UI screenshot
 [2026-02-01 02:08:45] Updated progress log for US-008
+[2026-02-01 02:09:39] ITERATION 9 end (duration=1240s)
+[2026-02-01 02:09:41] ITERATION 10 start (mode=build story=US-009)
+[2026-02-01 02:10:08] US-009 start: enforce fixed ports
+[2026-02-01 02:17:08] US-009 updated port conflict handling in local/quic servers
+[2026-02-01 02:20:19] US-009 verification complete (flutter tests/analyze/build web + browser check)
