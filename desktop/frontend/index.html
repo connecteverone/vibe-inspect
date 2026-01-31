@@ -13,23 +13,23 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg: #0b1020;
+        --bg: #0a0f1a;
         --bg-2: #0f172a;
-        --card: rgba(15, 23, 42, 0.85);
-        --card-strong: rgba(15, 23, 42, 0.95);
-        --border: rgba(148, 163, 184, 0.2);
-        --ink: #f8fafc;
-        --ink-soft: #e2e8f0;
-        --ink-muted: #94a3b8;
+        --card: rgba(17, 24, 39, 0.82);
+        --card-strong: rgba(17, 24, 39, 0.92);
+        --border: rgba(148, 163, 184, 0.14);
+        --ink: #f9fafb;
+        --ink-soft: #e5e7eb;
+        --ink-muted: #9ca3af;
         --accent: #22c55e;
         --accent-strong: #16a34a;
         --accent-wash: rgba(34, 197, 94, 0.16);
         --sky: #38bdf8;
-        --sky-wash: rgba(56, 189, 248, 0.18);
+        --sky-wash: rgba(56, 189, 248, 0.16);
         --rose: rgba(248, 113, 113, 0.18);
         --rose-ink: #fecaca;
-        --shadow: 0 30px 80px rgba(2, 6, 23, 0.5);
-        --radius-lg: 26px;
+        --shadow: 0 22px 50px rgba(2, 6, 23, 0.45);
+        --radius-lg: 24px;
         --radius-md: 16px;
       }
 
@@ -44,16 +44,9 @@
           "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
         color: var(--ink);
         background:
-          radial-gradient(900px 520px at 12% 10%, rgba(34, 197, 94, 0.14) 0%, rgba(15, 23, 42, 0) 60%),
-          radial-gradient(760px 520px at 88% 0%, rgba(56, 189, 248, 0.18) 0%, rgba(15, 23, 42, 0) 55%),
-          linear-gradient(160deg, #0b1020 0%, #0f172a 55%, #0b1220 100%),
-          repeating-linear-gradient(
-            135deg,
-            rgba(148, 163, 184, 0.06) 0,
-            rgba(148, 163, 184, 0.06) 1px,
-            transparent 1px,
-            transparent 48px
-          );
+          radial-gradient(820px 520px at 8% 6%, rgba(34, 197, 94, 0.12) 0%, rgba(10, 15, 26, 0) 55%),
+          radial-gradient(900px 520px at 92% -6%, rgba(56, 189, 248, 0.14) 0%, rgba(10, 15, 26, 0) 52%),
+          linear-gradient(160deg, #0a0f1a 0%, #0f172a 60%, #0a111c 100%);
       }
 
       main.shell {
@@ -119,7 +112,7 @@
         padding: 14px 16px;
         border-radius: 14px;
         border: 1px solid rgba(248, 113, 113, 0.35);
-        background: rgba(127, 29, 29, 0.25);
+        background: rgba(88, 28, 28, 0.28);
         color: #fecaca;
         display: flex;
         align-items: center;
@@ -142,7 +135,7 @@
         padding: 14px 16px;
         border-radius: 14px;
         border: 1px solid rgba(251, 191, 36, 0.35);
-        background: rgba(120, 53, 15, 0.22);
+        background: rgba(120, 53, 15, 0.2);
         color: #fde68a;
         display: flex;
         align-items: center;
@@ -209,8 +202,8 @@
       }
 
       .tab {
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(17, 24, 39, 0.6);
         color: var(--ink-muted);
         padding: 10px 16px;
         border-radius: 999px;
@@ -229,14 +222,14 @@
 
       .grid {
         display: grid;
-        grid-template-columns: minmax(260px, 360px) 1fr;
+        grid-template-columns: minmax(320px, 420px) 1fr;
         gap: 24px;
         padding: 24px;
         border-radius: var(--radius-lg);
         background: var(--card);
-        border: 1px solid rgba(148, 163, 184, 0.18);
+        border: 1px solid var(--border);
         box-shadow: var(--shadow);
-        backdrop-filter: blur(10px);
+        backdrop-filter: blur(8px);
         animation: floatIn 0.7s ease-out 0.05s both;
       }
 
@@ -245,9 +238,9 @@
         padding: 24px;
         border-radius: var(--radius-lg);
         background: var(--card);
-        border: 1px solid rgba(148, 163, 184, 0.18);
+        border: 1px solid var(--border);
         box-shadow: var(--shadow);
-        backdrop-filter: blur(10px);
+        backdrop-filter: blur(8px);
         animation: floatIn 0.7s ease-out 0.05s both;
       }
 
@@ -265,7 +258,7 @@
 
       .card {
         background: var(--card-strong);
-        border: 1px solid rgba(148, 163, 184, 0.16);
+        border: 1px solid var(--border);
         border-radius: var(--radius-md);
         padding: 18px;
         display: flex;
@@ -300,6 +293,11 @@
         color: var(--ink-muted);
       }
 
+      .token-controls input:focus-visible {
+        outline: 2px solid rgba(56, 189, 248, 0.45);
+        outline-offset: 2px;
+      }
+
       .card-title {
         margin: 0;
         font-size: 1.02rem;
@@ -321,18 +319,21 @@
       .qr-frame {
         display: none;
         place-items: center;
-        width: 214px;
-        height: 214px;
-        padding: 12px;
-        border-radius: 18px;
+        width: min(320px, 100%);
+        aspect-ratio: 1 / 1;
+        height: auto;
+        padding: 16px;
+        border-radius: 22px;
         background: #ffffff;
         border: 1px solid rgba(148, 163, 184, 0.2);
-        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+        box-shadow: 0 22px 40px rgba(15, 23, 42, 0.2);
       }
 
       .qr-frame svg {
-        width: 180px;
-        height: 180px;
+        width: 100%;
+        height: 100%;
+        max-width: 280px;
+        max-height: 280px;
       }
 
       .qr-frame.loaded {
@@ -342,10 +343,11 @@
       .qr-empty {
         display: none;
         width: 100%;
+        min-height: 220px;
         padding: 12px 14px;
         border-radius: 12px;
         border: 1px dashed rgba(148, 163, 184, 0.24);
-        background: rgba(15, 23, 42, 0.45);
+        background: rgba(17, 24, 39, 0.55);
         color: var(--ink-muted);
         text-align: center;
         font-size: 0.8rem;
@@ -597,8 +599,8 @@
         font-size: 0.9rem;
         font-weight: 700;
         cursor: pointer;
-        transition: transform 0.2s ease, box-shadow 0.2s ease,
-          background 0.2s ease;
+        transition: box-shadow 0.2s ease, background 0.2s ease,
+          color 0.2s ease;
         font-family: "Space Grotesk", "IBM Plex Sans", "Avenir Next", "Avenir",
           "Futura", "Gill Sans", "Trebuchet MS", sans-serif;
       }
@@ -608,32 +610,35 @@
         cursor: not-allowed;
       }
 
+      button:focus-visible {
+        outline: 2px solid rgba(34, 197, 94, 0.7);
+        outline-offset: 2px;
+      }
+
       .primary {
         background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
         color: #f0fdf4;
-        box-shadow: 0 12px 26px rgba(34, 197, 94, 0.35);
+        box-shadow: 0 12px 24px rgba(34, 197, 94, 0.28);
       }
 
       .primary:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 16px 32px rgba(34, 197, 94, 0.4);
+        box-shadow: 0 16px 32px rgba(34, 197, 94, 0.38);
       }
 
       .secondary {
-        background: rgba(15, 23, 42, 0.7);
+        background: rgba(17, 24, 39, 0.8);
         color: var(--ink);
         border: 1px solid var(--border);
       }
 
       .secondary:hover {
-        transform: translateY(-1px);
         box-shadow: 0 10px 18px rgba(2, 6, 23, 0.4);
       }
 
       .ghost {
         background: transparent;
         color: var(--ink-soft);
-        border: 1px solid rgba(148, 163, 184, 0.25);
+        border: 1px solid rgba(148, 163, 184, 0.2);
         padding: 8px 14px;
         font-size: 0.82rem;
       }
@@ -1005,12 +1010,32 @@
             <button class="primary" id="saveListenPort">Save port</button>
           </div>
         </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">ROI QUIC port</h2>
+              <div class="hint">Default 5000 (UDP)</div>
+            </div>
+          </div>
+          <div class="token-controls">
+            <input
+              type="number"
+              id="roiQuicPortInput"
+              placeholder="5000"
+              min="1"
+              max="65535"
+              autocomplete="off"
+            />
+            <button class="primary" id="saveRoiQuicPort">Save port</button>
+          </div>
+        </div>
       </section>
     </main>
 
     <script>
-      const invoke =
+      const resolveInvoke = () =>
         window.__TAURI__?.core?.invoke ?? window.__TAURI__?.invoke ?? null;
+      let invoke = resolveInvoke();
       const shellEl = document.querySelector(".shell");
       const bridgeAlertEl = document.getElementById("bridgeAlert");
       const locationAlertEl = document.getElementById("locationAlert");
@@ -1068,6 +1093,8 @@
       const saveFrpUrlBtn = document.getElementById("saveFrpUrl");
       const listenPortInput = document.getElementById("listenPortInput");
       const saveListenPortBtn = document.getElementById("saveListenPort");
+      const roiQuicPortInput = document.getElementById("roiQuicPortInput");
+      const saveRoiQuicPortBtn = document.getElementById("saveRoiQuicPort");
 
       const viewTabs = document.querySelectorAll(".view-tabs .tab");
       const overviewView = document.getElementById("overviewView");
@@ -1079,6 +1106,19 @@
       let authTokenVisible = false;
       let locationSettingsOpened = false;
       let bundleIdValue = null;
+
+      function ensureInvoke() {
+        if (!invoke) {
+          invoke = resolveInvoke();
+          if (!invoke) {
+            setBridgeState(false);
+            setStatus("Desktop bridge not available.", "error");
+            return null;
+          }
+          setBridgeState(true);
+        }
+        return invoke;
+      }
 
       function setStatus(message, tone = "ok") {
         if (!statusEl) return;
@@ -1100,6 +1140,7 @@
           addTokenBtn,
           saveFrpUrlBtn,
           saveListenPortBtn,
+          saveRoiQuicPortBtn,
         ];
         controls.forEach((btn) => {
           if (!btn) return;
@@ -1112,6 +1153,7 @@
           customTokenLabelInput,
           frpUrlInput,
           listenPortInput,
+          roiQuicPortInput,
         ];
         inputs.forEach((input) => {
           if (!input) return;
@@ -1316,18 +1358,19 @@
             metaEl.textContent = "请检查定位权限设置。";
           }
         }
-        if (permission === "not_determined" && invoke && bundleIdValue) {
-          invoke("request_location_permission").catch(() => {});
+        if (permission === "not_determined" && bundleIdValue) {
+          const invokeFn = ensureInvoke();
+          invokeFn?.("request_location_permission").catch(() => {});
         }
         if (
           (permission === "denied" ||
             permission === "restricted" ||
             permission === "disabled") &&
-          invoke &&
           !locationSettingsOpened
         ) {
           locationSettingsOpened = true;
-          invoke("open_location_settings").catch(() => {});
+          const invokeFn = ensureInvoke();
+          invokeFn?.("open_location_settings").catch(() => {});
         }
       }
 
@@ -1395,6 +1438,14 @@
         }
       }
 
+      function renderRoiQuicPort(port) {
+        if (!roiQuicPortInput) return;
+        const value = port ? String(port) : "";
+        if (document.activeElement !== roiQuicPortInput) {
+          roiQuicPortInput.value = value;
+        }
+      }
+
       function formatTime(ts) {
         if (!ts) return "--";
         return new Date(ts * 1000).toLocaleTimeString();
@@ -1429,9 +1480,10 @@
       }
 
       async function applyPairingAction(commandName, payload, message) {
-        if (!invoke) return;
+        const invokeFn = ensureInvoke();
+        if (!invokeFn) return;
         try {
-          const response = await invoke(commandName, payload);
+          const response = await invokeFn(commandName, payload);
           if (response) {
             renderStatus(response);
           }
@@ -1443,7 +1495,8 @@
       }
 
       async function sendTerminalAction(action, sessionId, extra = {}) {
-        if (!invoke) return null;
+        const invokeFn = ensureInvoke();
+        if (!invokeFn) return null;
         const request = {
           request_id: buildRequestId(),
           command: "terminal",
@@ -1454,7 +1507,7 @@
           },
         };
         try {
-          const response = await invoke("handle_agent_command", { request });
+          const response = await invokeFn("handle_agent_command", { request });
           if (response?.status === "error") {
             const message = response?.error?.message || "Terminal action failed.";
             setStatus(message, "error");
@@ -1810,6 +1863,7 @@
         renderTunnel(data.tunnel_url, data.tunnel_error);
         renderFrpUrl(data.frp_url);
         renderListenPort(data.listen_port);
+        renderRoiQuicPort(data.roi_quic_port);
         renderPending(data.pending);
         updateConnectionMode(data);
         updateCounts(data);
@@ -1826,9 +1880,10 @@
       }
 
       async function refreshStatus() {
-        if (!invoke) return;
+        const invokeFn = ensureInvoke();
+        if (!invokeFn) return;
         try {
-          const status = await invoke("get_pairing_status");
+          const status = await invokeFn("get_pairing_status");
           renderStatus(status);
         } catch (error) {
           console.error(error);
@@ -1836,13 +1891,11 @@
       }
 
       async function createSession() {
-        if (!invoke) {
-          setStatus("Tauri bridge unavailable.", "error");
-          return;
-        }
+        const invokeFn = ensureInvoke();
+        if (!invokeFn) return;
         setStatus("Generating pairing token...");
         try {
-          const data = await invoke("create_pairing_session");
+          const data = await invokeFn("create_pairing_session");
           renderSession(data);
           renderLocalUrls(data.local_urls || []);
           renderLocalIps(data.local_ips || []);
@@ -1887,12 +1940,13 @@
 
       if (resetAuthTokenBtn) {
         resetAuthTokenBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           if (!confirm("Rotate login token? Existing sessions will disconnect.")) {
             return;
           }
           try {
-            const response = await invoke("reset_auth_token");
+            const response = await invokeFn("reset_auth_token");
             if (response?.device_id && deviceIdEl) {
               deviceIdEl.textContent = response.device_id;
             }
@@ -1908,9 +1962,10 @@
 
       if (openLocationSettingsBtn) {
         openLocationSettingsBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           try {
-            await invoke("open_location_settings");
+            await invokeFn("open_location_settings");
           } catch (error) {
             console.error(error);
           }
@@ -1919,9 +1974,10 @@
 
       if (generateTokenBtn) {
         generateTokenBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           try {
-            await invoke("create_auth_token", { label: "Manual token" });
+            await invokeFn("create_auth_token", { label: "Manual token" });
             setStatus("Token generated.");
             await refreshStatus();
           } catch (error) {
@@ -1933,7 +1989,8 @@
 
       if (addTokenBtn) {
         addTokenBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           const token = customTokenInput?.value?.trim() || "";
           const label = customTokenLabelInput?.value?.trim() || undefined;
           if (!token) {
@@ -1945,7 +2002,7 @@
             return;
           }
           try {
-            await invoke("add_auth_token", { token, label });
+            await invokeFn("add_auth_token", { token, label });
             if (customTokenInput) customTokenInput.value = "";
             if (customTokenLabelInput) customTokenLabelInput.value = "";
             setStatus("Token added.");
@@ -1959,10 +2016,11 @@
 
       if (saveFrpUrlBtn) {
         saveFrpUrlBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           const url = frpUrlInput?.value?.trim() || "";
           try {
-            const status = await invoke("set_frp_url", { url });
+            const status = await invokeFn("set_frp_url", { url });
             renderStatus(status);
             setStatus("FRP URL updated.");
           } catch (error) {
@@ -1974,7 +2032,8 @@
 
       if (saveListenPortBtn) {
         saveListenPortBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           const raw = listenPortInput?.value?.trim() || "";
           const port = Number.parseInt(raw, 10);
           if (!Number.isFinite(port) || port < 1 || port > 65535) {
@@ -1982,7 +2041,7 @@
             return;
           }
           try {
-            const status = await invoke("set_listen_port", { port });
+            const status = await invokeFn("set_listen_port", { port });
             renderStatus(status);
             setStatus("Listen port updated.");
           } catch (error) {
@@ -1992,11 +2051,33 @@
         });
       }
 
+      if (saveRoiQuicPortBtn) {
+        saveRoiQuicPortBtn.addEventListener("click", async () => {
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
+          const raw = roiQuicPortInput?.value?.trim() || "";
+          const port = Number.parseInt(raw, 10);
+          if (!Number.isFinite(port) || port < 1 || port > 65535) {
+            setStatus("Port must be between 1 and 65535.", "error");
+            return;
+          }
+          try {
+            const status = await invokeFn("set_roi_quic_port", { port });
+            renderStatus(status);
+            setStatus("ROI QUIC port updated.");
+          } catch (error) {
+            setStatus("Failed to update ROI QUIC port.", "error");
+            console.error(error);
+          }
+        });
+      }
+
       if (approvalToggle) {
         approvalToggle.addEventListener("change", async () => {
-          if (!invoke || syncingToggle) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn || syncingToggle) return;
           try {
-            const status = await invoke("set_pairing_requires_approval", {
+            const status = await invokeFn("set_pairing_requires_approval", {
               requires_approval: approvalToggle.checked,
             });
             renderStatus(status);
@@ -2008,9 +2089,10 @@
 
       if (approveBtn) {
         approveBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           try {
-            const response = await invoke("approve_pairing_request");
+            const response = await invokeFn("approve_pairing_request");
             if (response?.status === "connected") {
               setStatus("Paired and connected.");
             }
@@ -2023,9 +2105,10 @@
 
       if (denyBtn) {
         denyBtn.addEventListener("click", async () => {
-          if (!invoke) return;
+          const invokeFn = ensureInvoke();
+          if (!invokeFn) return;
           try {
-            const status = await invoke("deny_pairing_request");
+            const status = await invokeFn("deny_pairing_request");
             renderStatus(status);
           } catch (error) {
             console.error(error);
@@ -2063,9 +2146,8 @@
       updateAuthTokenDisplay();
       clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
       setBridgeState(!!invoke);
-      if (invoke) {
-        invoke("request_location_permission").catch(() => {});
-      }
+      const invokeFn = ensureInvoke();
+      invokeFn?.("request_location_permission").catch(() => {});
       refreshStatus();
     </script>
   </body>

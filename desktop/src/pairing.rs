@@ -1790,7 +1790,7 @@ fn build_qr_svg(payload: &str) -> Result<String, PairingError> {
         QrCode::new(payload.as_bytes()).map_err(|_| PairingError::new("qr_error", "Invalid QR data."))?;
     Ok(code
         .render::<svg::Color>()
-        .min_dimensions(220, 220)
+        .min_dimensions(320, 320)
         .dark_color(svg::Color("#1e293b"))
         .light_color(svg::Color("#f8fafc"))
         .build())

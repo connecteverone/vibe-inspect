@@ -48,6 +48,7 @@ fn main() {
             pairing::reset_auth_token,
             pairing::set_frp_url,
             pairing::set_listen_port,
+            pairing::set_roi_quic_port,
             pairing::create_auth_token,
             pairing::add_auth_token,
             pairing::set_primary_auth_token,

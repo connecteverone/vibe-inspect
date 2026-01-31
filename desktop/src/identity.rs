@@ -19,6 +19,8 @@ pub struct AgentIdentity {
     pub frp_url: Option<String>,
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+    #[serde(default = "default_roi_quic_port")]
+    pub roi_quic_port: u16,
     #[serde(default)]
     pub auth_tokens: Vec<AuthTokenRecord>,
 }
@@ -55,6 +57,7 @@ pub fn load_or_create_identity() -> AgentIdentity {
                 {
                     let mut hydrated = identity;
                     hydrated.ensure_listen_port();
+                    hydrated.ensure_roi_quic_port();
                     hydrated.ensure_primary_token();
                     let _ = save_identity(&hydrated);
                     return hydrated;
@@ -70,10 +73,12 @@ pub fn load_or_create_identity() -> AgentIdentity {
         created_at: now_ts(),
         frp_url: None,
         listen_port: default_listen_port(),
+        roi_quic_port: default_roi_quic_port(),
         auth_tokens: Vec::new(),
     };
 
     identity.ensure_listen_port();
+    identity.ensure_roi_quic_port();
     identity.ensure_primary_token();
     let _ = save_identity(&identity);
 
@@ -86,6 +91,14 @@ impl AgentIdentity {
             default_listen_port()
         } else {
             self.listen_port
+        }
+    }
+
+    pub fn roi_quic_port(&self) -> u16 {
+        if self.roi_quic_port == 0 {
+            default_roi_quic_port()
+        } else {
+            self.roi_quic_port
         }
     }
 
@@ -174,6 +187,15 @@ impl AgentIdentity {
     pub fn set_listen_port(&mut self, port: u16) -> Result<(), std::io::Error> {
         self.listen_port = if port == 0 {
             default_listen_port()
+        } else {
+            port
+        };
+        save_identity(self)
+    }
+
+    pub fn set_roi_quic_port(&mut self, port: u16) -> Result<(), std::io::Error> {
+        self.roi_quic_port = if port == 0 {
+            default_roi_quic_port()
         } else {
             port
         };
@@ -370,10 +392,20 @@ impl AgentIdentity {
             self.listen_port = default_listen_port();
         }
     }
+
+    fn ensure_roi_quic_port(&mut self) {
+        if self.roi_quic_port == 0 {
+            self.roi_quic_port = default_roi_quic_port();
+        }
+    }
 }
 
 fn default_listen_port() -> u16 {
     58888
+}
+
+fn default_roi_quic_port() -> u16 {
+    5000
 }
 
 fn identity_path() -> Option<PathBuf> {
