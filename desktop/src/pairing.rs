@@ -49,6 +49,7 @@ pub struct PairingSessionResponse {
     pub local_ips: Vec<String>,
     pub frp_url: Option<String>,
     pub listen_port: u16,
+    pub roi_quic_port: u16,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +112,7 @@ pub struct PairingStatusResponse {
     pub local_ips: Vec<String>,
     pub frp_url: Option<String>,
     pub listen_port: u16,
+    pub roi_quic_port: u16,
     pub paired_devices: Vec<ClientSnapshot>,
     pub active_devices: Vec<ClientSnapshot>,
     pub connected_devices: Vec<ClientSnapshot>,
@@ -190,6 +192,10 @@ impl PairingState {
 
     pub fn listen_port(&self) -> u16 {
         self.identity.listen_port()
+    }
+
+    pub fn roi_quic_port(&self) -> u16 {
+        self.identity.roi_quic_port()
     }
 
     pub fn is_auth_token_valid(&self, token: &str, client_id: Option<&str>) -> bool {
@@ -382,6 +388,7 @@ pub fn create_pairing_session(
         local_ips,
         frp_url,
         listen_port: pairing_state.listen_port(),
+        roi_quic_port: pairing_state.roi_quic_port(),
     })
 }
 
@@ -470,6 +477,36 @@ pub fn set_listen_port(
         .identity
         .set_listen_port(port)
         .map_err(|_| PairingError::new("identity_error", "Failed to update listen port."))?;
+    match ensure_local_server(state.inner(), &mut pairing_state) {
+        Ok(_) => {
+            clear_local_server_error(&mut pairing_state);
+            Ok(build_pairing_status(&pairing_state))
+        }
+        Err(error) => {
+            pairing_state.tunnel_error = Some(error.message.clone());
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_roi_quic_port(
+    state: State<Arc<Mutex<PairingState>>>,
+    port: u16,
+) -> Result<PairingStatusResponse, PairingError> {
+    if port == 0 {
+        return Err(PairingError::new(
+            "invalid_port",
+            "Port must be between 1 and 65535.",
+        ));
+    }
+    let mut pairing_state = state
+        .lock()
+        .map_err(|_| PairingError::new("state_locked", "Pairing state unavailable."))?;
+    pairing_state
+        .identity
+        .set_roi_quic_port(port)
+        .map_err(|_| PairingError::new("identity_error", "Failed to update ROI QUIC port."))?;
     match ensure_local_server(state.inner(), &mut pairing_state) {
         Ok(_) => {
             clear_local_server_error(&mut pairing_state);
@@ -925,6 +962,7 @@ fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
         local_ips,
         frp_url,
         listen_port: pairing_state.listen_port(),
+        roi_quic_port: pairing_state.roi_quic_port(),
         paired_devices,
         active_devices,
         connected_devices,
@@ -1019,8 +1057,24 @@ fn ensure_local_server(
     pairing_state: &mut PairingState,
 ) -> Result<u16, PairingError> {
     let desired_port = pairing_state.listen_port();
+    let roi_port = pairing_state.roi_quic_port();
+    let has_clients = !pairing_state.connected_clients.is_empty();
     if let Some(handle) = pairing_state.local_server.as_ref() {
-        if handle.port == desired_port && is_local_server_healthy(handle.port) {
+        let active_quic_port = handle.quic_port().unwrap_or(0);
+        let port_matches = handle.port == desired_port;
+        let quic_matches = active_quic_port == roi_port;
+        if port_matches && quic_matches {
+            if has_clients || is_local_server_healthy(handle.port) {
+                pairing_state.local_port = Some(handle.port);
+                return Ok(handle.port);
+            }
+        } else if has_clients {
+            eprintln!(
+                "Local server restart deferred (active clients). listen_port={} quic_port={} active_quic_port={}",
+                desired_port,
+                roi_port,
+                active_quic_port
+            );
             pairing_state.local_port = Some(handle.port);
             return Ok(handle.port);
         }
@@ -1030,10 +1084,15 @@ fn ensure_local_server(
         handle.stop();
     }
     pairing_state.local_port = None;
-
-    match start_local_tunnel_server(state.clone(), desired_port) {
+    match start_local_tunnel_server(state.clone(), desired_port, roi_port) {
         Ok(handle) => {
             let port = handle.port;
+            let quic_port = handle.quic_port().unwrap_or(0);
+            if quic_port > 0 && quic_port != pairing_state.roi_quic_port() {
+                if let Err(error) = pairing_state.identity.set_roi_quic_port(quic_port) {
+                    eprintln!("Failed to persist ROI QUIC port {quic_port}: {error}");
+                }
+            }
             pairing_state.local_port = Some(port);
             pairing_state.local_server = Some(handle);
             if is_local_server_healthy(port) {
@@ -1058,8 +1117,11 @@ fn ensure_local_server(
     }
 }
 
-fn refresh_local_server(state: &Arc<Mutex<PairingState>>, pairing_state: &mut PairingState) {
-    if ensure_local_server(state, pairing_state).is_ok() {
+fn refresh_local_server(_state: &Arc<Mutex<PairingState>>, pairing_state: &mut PairingState) {
+    // Restarting the local server can disrupt active sessions (VNC/ROI).
+    // Only perform a health check and surface the error, without restarting.
+    let port = pairing_state.listen_port();
+    if is_local_server_healthy(port) {
         clear_local_server_error(pairing_state);
     } else {
         pairing_state.tunnel_error = Some(LOCAL_SERVER_ERROR_MESSAGE.to_string());
@@ -1103,8 +1165,9 @@ fn is_local_server_healthy(port: u16) -> bool {
 fn start_local_tunnel_server(
     state: Arc<Mutex<PairingState>>,
     port: u16,
+    roi_port: u16,
 ) -> Result<server::LocalServerHandle, std::io::Error> {
-    server::start_local_server(state, port)
+    server::start_local_server(state, port, Some(roi_port))
 }
 
 fn start_cloudflared_tunnel(port: u16) -> Result<TunnelHandle, TunnelStartError> {

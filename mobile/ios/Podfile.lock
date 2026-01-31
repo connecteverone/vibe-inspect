@@ -1,5 +1,7 @@
 PODS:
   - Flutter (1.0.0)
+  - flutter_quic (0.0.1):
+    - Flutter
   - flutter_secure_storage_darwin (10.0.0):
     - Flutter
     - FlutterMacOS
@@ -14,6 +16,7 @@ PODS:
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - flutter_quic (from `.symlinks/plugins/flutter_quic/ios`)
   - flutter_secure_storage_darwin (from `.symlinks/plugins/flutter_secure_storage_darwin/darwin`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
   - network_info_plus (from `.symlinks/plugins/network_info_plus/ios`)
@@ -22,6 +25,8 @@ DEPENDENCIES:
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_quic:
+    :path: ".symlinks/plugins/flutter_quic/ios"
   flutter_secure_storage_darwin:
     :path: ".symlinks/plugins/flutter_secure_storage_darwin/darwin"
   mobile_scanner:
@@ -33,6 +38,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_quic: 8297b572bffecea852e967739225ff8a2807009e
   flutter_secure_storage_darwin: acdb3f316ed05a3e68f856e0353b133eec373a23
   mobile_scanner: 9157936403f5a0644ca3779a38ff8404c5434a93
   network_info_plus: 16d8832ab43b7bc22b168d76fffcad9da35486d2

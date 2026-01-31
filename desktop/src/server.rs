@@ -40,6 +40,10 @@ impl LocalServerHandle {
             handle.stop();
         }
     }
+
+    pub fn quic_port(&self) -> Option<u16> {
+        self.quic.as_ref().map(|handle| handle.port)
+    }
 }
 
 #[derive(Clone)]
@@ -82,18 +86,48 @@ fn track_client_connection(
 pub fn start_local_server(
     state: Arc<Mutex<PairingState>>,
     port: u16,
+    roi_port_override: Option<u16>,
 ) -> Result<LocalServerHandle, std::io::Error> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))?;
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
-    let roi_port = resolve_roi_quic_port();
+    let roi_port = roi_port_override.unwrap_or_else(|| {
+        state
+            .lock()
+            .ok()
+            .map(|guard| resolve_roi_quic_port(&guard))
+            .unwrap_or(0)
+    });
     let roi_manager = Arc::new(Mutex::new(RoiManager::new(roi_port)));
-    let quic_handle = start_quic_server(QuicServerConfig {
+    let mut quic_handle = match start_quic_server(QuicServerConfig {
         port: roi_port,
         roi: Some(roi_manager.clone()),
-    })
-    .ok();
+    }) {
+        Ok(handle) => Some(handle),
+        Err(error) => {
+            eprintln!(
+                "ROI QUIC server failed to bind port {roi_port}: {error}. Retrying with ephemeral port."
+            );
+            None
+        }
+    };
+    if quic_handle.is_none() {
+        quic_handle = match start_quic_server(QuicServerConfig {
+            port: 0,
+            roi: Some(roi_manager.clone()),
+        }) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                eprintln!("ROI QUIC server failed to start: {error}");
+                None
+            }
+        };
+    }
+    if let Ok(mut guard) = roi_manager.lock() {
+        let quic_port = quic_handle.as_ref().map(|handle| handle.port).unwrap_or(0);
+        guard.set_quic_port(quic_port);
+    }
     let server_state = LocalServerState {
         pairing: state,
         vnc: vnc_manager,
@@ -136,11 +170,12 @@ pub fn start_local_server(
     })
 }
 
-fn resolve_roi_quic_port() -> u16 {
+fn resolve_roi_quic_port(pairing_state: &PairingState) -> u16 {
     env::var("ROI_QUIC_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(0)
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| pairing_state.roi_quic_port())
 }
 
 async fn handle_command(
@@ -502,9 +537,9 @@ fn handle_roi_command(
 
         let request_payload = RoiSessionRequest {
             session_id: session_id.clone(),
-            vnc_session_id,
-            client_id,
-            client_name,
+            vnc_session_id: vnc_session_id.clone(),
+            client_id: client_id.clone(),
+            client_name: client_name.clone(),
             display_index: payload.display_index,
             framebuffer_width,
             framebuffer_height,
@@ -513,6 +548,19 @@ fn handle_roi_command(
         };
         let mut manager = manager.lock().unwrap();
         let info = manager.start_session(request_payload);
+        eprintln!(
+            "ROI start: session_id={} vnc_session_id={} client_id={:?} client_name={:?} quic_port={} display_index={:?} framebuffer={}x{} screen={}x{}",
+            info.session_id,
+            vnc_session_id,
+            client_id,
+            client_name,
+            info.quic_port,
+            info.display_index,
+            info.framebuffer_width,
+            info.framebuffer_height,
+            info.screen_width,
+            info.screen_height,
+        );
         return AgentCommandResponse {
             request_id: request.request_id.clone(),
             status: AgentCommandStatus::Ok,
@@ -537,6 +585,12 @@ fn handle_roi_command(
         let session_id = payload.session_id.unwrap_or_default();
         let mut manager = manager.lock().unwrap();
         manager.stop_session(&session_id);
+        eprintln!(
+            "ROI stop: session_id={} client_id={:?} client_name={:?}",
+            session_id,
+            client_id,
+            client_name
+        );
         return AgentCommandResponse {
             request_id: request.request_id.clone(),
             status: AgentCommandStatus::Ok,
@@ -609,7 +663,7 @@ mod tests {
             let guard = state.lock().expect("pairing state lock");
             guard.auth_token().to_string()
         };
-        let mut server = start_local_server(state, 0).expect("start local server");
+        let mut server = start_local_server(state, 0, None).expect("start local server");
         let port = server.port;
         let health_url = format!("http://127.0.0.1:{port}/health");
         let command_url = format!("http://127.0.0.1:{port}/command");

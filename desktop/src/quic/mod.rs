@@ -1,5 +1,6 @@
 use crate::roi::{
-    build_tiles, RoiCapturer, RoiManager, RoiSessionInfo, RoiTile, RoiTileCache, RoiViewport,
+    build_tiles, RoiCapturer, RoiFrame, RoiManager, RoiSessionInfo, RoiTile, RoiTileCache,
+    RoiViewport,
 };
 use bytes::Bytes;
 use flate2::write::ZlibEncoder;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -35,36 +36,60 @@ impl QuicServerHandle {
 
 pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, std::io::Error> {
     let running = Arc::new(AtomicBool::new(true));
-    if config.port == 0 {
-        return Ok(QuicServerHandle { port: 0, running });
-    }
+    let port = config.port;
     let roi = match config.roi {
         Some(manager) => manager,
         None => {
             return Ok(QuicServerHandle {
-                port: config.port,
+                port,
                 running,
             })
         }
     };
-    let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
-    let server_config = build_server_config().map_err(|error| {
-        std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
-    })?;
-    let endpoint = Endpoint::server(server_config, bind_addr)?;
-    let actual_port = endpoint.local_addr()?.port();
+    let (tx, rx) = mpsc::channel();
     let running_handle = running.clone();
     let roi_handle = roi.clone();
     thread::spawn(move || {
-        let runtime = tokio::runtime::Runtime::new().expect("quic runtime");
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = tx.send(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error.to_string(),
+                )));
+                return;
+            }
+        };
         runtime.block_on(async move {
-            run_quic_server(endpoint, roi_handle, running_handle).await;
+            let result: Result<(Endpoint, u16), std::io::Error> = (|| {
+                let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+                let server_config = build_server_config().map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
+                })?;
+                let endpoint = Endpoint::server(server_config, bind_addr)?;
+                let actual_port = endpoint.local_addr()?.port();
+                Ok((endpoint, actual_port))
+            })();
+
+            match result {
+                Ok((endpoint, actual_port)) => {
+                    let _ = tx.send(Ok(actual_port));
+                    run_quic_server(endpoint, roi_handle, running_handle).await;
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(error));
+                }
+            }
         });
     });
-    Ok(QuicServerHandle {
-        port: actual_port,
-        running,
-    })
+    match rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(port)) => Ok(QuicServerHandle { port, running }),
+        Ok(Err(error)) => Err(error),
+        Err(error) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("ROI QUIC server start timed out: {error}"),
+        )),
+    }
 }
 
 async fn run_quic_server(
@@ -79,6 +104,8 @@ async fn run_quic_server(
         let roi = roi.clone();
         tokio::spawn(async move {
             if let Ok(connection) = connecting.await {
+                let remote = connection.remote_address();
+                eprintln!("ROI QUIC accepted: remote={remote}");
                 if let Err(error) = handle_connection(connection, roi).await {
                     eprintln!("ROI QUIC connection error: {error}");
                 }
@@ -87,17 +114,18 @@ async fn run_quic_server(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct RoiHello {
     session_id: String,
     token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RoiReady {
     status: String,
     session_id: String,
     max_datagram_size: usize,
+    quic_port: u16,
     display_index: Option<usize>,
     framebuffer_width: u32,
     framebuffer_height: u32,
@@ -105,7 +133,7 @@ struct RoiReady {
     screen_height: u32,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct RoiRequest {
     center_x: f64,
     center_y: f64,
@@ -121,6 +149,11 @@ async fn handle_connection(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut send, mut recv) = connection.accept_bi().await?;
     let hello: RoiHello = read_json_message(&mut recv).await?;
+    eprintln!(
+        "ROI QUIC hello: session_id={} token_len={}",
+        hello.session_id,
+        hello.token.len()
+    );
     let info = {
         let guard = roi.lock().map_err(|_| "roi lock")?;
         guard
@@ -132,6 +165,7 @@ async fn handle_connection(
         status: "ready".to_string(),
         session_id: info.session_id.clone(),
         max_datagram_size: max_datagram,
+        quic_port: info.quic_port,
         display_index: info.display_index,
         framebuffer_width: info.framebuffer_width,
         framebuffer_height: info.framebuffer_height,
@@ -139,15 +173,38 @@ async fn handle_connection(
         screen_height: info.screen_height,
     };
     send_json_message(&mut send, &ready).await?;
+    eprintln!(
+        "ROI QUIC ready: session_id={} quic_port={} max_datagram={} framebuffer={}x{} screen={}x{}",
+        ready.session_id,
+        ready.quic_port,
+        ready.max_datagram_size,
+        ready.framebuffer_width,
+        ready.framebuffer_height,
+        ready.screen_width,
+        ready.screen_height,
+    );
 
     let running = Arc::new(AtomicBool::new(true));
     let request_state = Arc::new(Mutex::new(None::<RoiRequest>));
     let reader_running = running.clone();
     let reader_state = request_state.clone();
     tokio::spawn(async move {
+        let mut logged_request = false;
         loop {
             match read_json_message::<RoiRequest>(&mut recv).await {
                 Ok(request) => {
+                    if !logged_request {
+                        eprintln!(
+                            "ROI QUIC request: center=({:.1},{:.1}) zoom={:.2} viewport={:.1}x{:.1} prefetch={:.1}",
+                            request.center_x,
+                            request.center_y,
+                            request.zoom,
+                            request.viewport_width,
+                            request.viewport_height,
+                            request.prefetch_radius
+                        );
+                        logged_request = true;
+                    }
                     if let Ok(mut guard) = reader_state.lock() {
                         *guard = Some(request);
                     }
@@ -159,6 +216,7 @@ async fn handle_connection(
     });
 
     let send_connection = connection.clone();
+    let session_id = info.session_id.clone();
     let capture_running = running.clone();
     let capture_state = request_state.clone();
     thread::spawn(move || {
@@ -168,7 +226,7 @@ async fn handle_connection(
     while running.load(Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
-
+    eprintln!("ROI QUIC closed: session_id={}", session_id);
     Ok(())
 }
 
@@ -216,15 +274,28 @@ fn run_roi_stream(
     request_state: Arc<Mutex<Option<RoiRequest>>>,
     running: Arc<AtomicBool>,
 ) {
-    let mut capturer = match RoiCapturer::new(
-        info.display_index,
-        info.screen_width,
-        info.screen_height,
-    ) {
-        Ok(capturer) => capturer,
-        Err(error) => {
-            eprintln!("ROI capture init failed: {error}");
-            return;
+    let fake_capture = std::env::var("ROI_FAKE_CAPTURE")
+        .ok()
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let fake_frame = if fake_capture {
+        Some(build_fake_frame(&info))
+    } else {
+        None
+    };
+    let mut capturer = if fake_capture {
+        None
+    } else {
+        match RoiCapturer::new(
+            info.display_index,
+            info.screen_width,
+            info.screen_height,
+        ) {
+            Ok(capturer) => Some(capturer),
+            Err(error) => {
+                eprintln!("ROI capture init failed: {error}");
+                return;
+            }
         }
     };
     let mut cache = RoiTileCache::new();
@@ -244,7 +315,33 @@ fn run_roi_stream(
             thread::sleep(Duration::from_millis(80));
             continue;
         };
-        if let Some(frame) = capturer.capture() {
+        if let Some(frame) = fake_frame.as_ref() {
+            frame_id = frame_id.wrapping_add(1);
+            let viewport = RoiViewport {
+                center_x: request.center_x,
+                center_y: request.center_y,
+                viewport_width: request.viewport_width,
+                viewport_height: request.viewport_height,
+                prefetch_radius: request.prefetch_radius,
+                zoom: request.zoom,
+            };
+            let tiles = build_tiles(
+                frame,
+                &info,
+                &viewport,
+                tile_size,
+                frame_id,
+                budget,
+                &mut cache,
+            );
+            for tile in tiles {
+                if send_tile_datagrams(&connection, &tile, max_datagram).is_err() {
+                    running.store(false, Ordering::SeqCst);
+                    break;
+                }
+            }
+        } else if let Some(capturer) = capturer.as_mut() {
+            if let Some(frame) = capturer.capture() {
             frame_id = frame_id.wrapping_add(1);
             let viewport = RoiViewport {
                 center_x: request.center_x,
@@ -269,9 +366,26 @@ fn run_roi_stream(
                     break;
                 }
             }
+            }
         }
         thread::sleep(Duration::from_millis(80));
     }
+}
+
+fn build_fake_frame(info: &RoiSessionInfo) -> RoiFrame {
+    let width = info.screen_width.max(info.framebuffer_width).max(1) as usize;
+    let height = info.screen_height.max(info.framebuffer_height).max(1) as usize;
+    let mut data = vec![0u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 4;
+            data[idx] = (x % 255) as u8;
+            data[idx + 1] = (y % 255) as u8;
+            data[idx + 2] = ((x + y) % 255) as u8;
+            data[idx + 3] = 255;
+        }
+    }
+    RoiFrame { data, width, height }
 }
 
 fn send_tile_datagrams(
@@ -334,4 +448,171 @@ fn compress_zlib(payload: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(payload)?;
     encoder.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::roi::{RoiManager, RoiSessionRequest};
+    use quinn::Endpoint;
+    use rustls::client::danger::ServerCertVerifier;
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn quic_roi_handshake_and_datagram() {
+        std::env::set_var("ROI_FAKE_CAPTURE", "1");
+        let roi_manager = Arc::new(Mutex::new(RoiManager::new(0)));
+        let server_config = build_server_config().expect("server config");
+        let endpoint = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap())
+            .expect("endpoint");
+        let port = endpoint.local_addr().expect("addr").port();
+        let running = Arc::new(AtomicBool::new(true));
+        let runner = {
+            let roi = roi_manager.clone();
+            let running = running.clone();
+            tokio::spawn(async move {
+                run_quic_server(endpoint, roi, running).await;
+            })
+        };
+
+        let info = {
+            let mut manager = roi_manager.lock().unwrap();
+            manager.start_session(RoiSessionRequest {
+                session_id: "roi-test".to_string(),
+                vnc_session_id: "vnc-test".to_string(),
+                client_id: None,
+                client_name: None,
+                display_index: None,
+                framebuffer_width: 640,
+                framebuffer_height: 360,
+                screen_width: 1280,
+                screen_height: 720,
+            })
+        };
+
+        let mut client_endpoint =
+            Endpoint::client("0.0.0.0:0".parse::<SocketAddr>().unwrap())
+                .expect("client endpoint");
+        client_endpoint.set_default_client_config(build_insecure_client_config());
+        let connection = client_endpoint
+            .connect(SocketAddr::from(([127, 0, 0, 1], port)), "vibe-inspect")
+            .expect("connect")
+            .await
+            .expect("connected");
+
+        let (mut send, mut recv) = connection.open_bi().await.expect("open bi");
+        let hello = serde_json::to_vec(&RoiHello {
+            session_id: info.session_id.clone(),
+            token: info.token.clone(),
+        })
+        .expect("hello");
+        let mut hello_buf = Vec::with_capacity(4 + hello.len());
+        hello_buf.extend_from_slice(&(hello.len() as u32).to_be_bytes());
+        hello_buf.extend_from_slice(&hello);
+        send.write_all(&hello_buf).await.expect("send hello");
+        send.flush().await.expect("flush");
+
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await.expect("read len");
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        recv.read_exact(&mut payload).await.expect("read payload");
+        let _ready: RoiReady = serde_json::from_slice(&payload).expect("ready");
+
+        let request = serde_json::to_vec(&RoiRequest {
+            center_x: 320.0,
+            center_y: 180.0,
+            zoom: 2.0,
+            viewport_width: 240.0,
+            viewport_height: 135.0,
+            prefetch_radius: 120.0,
+        })
+        .expect("request");
+        let mut req_buf = Vec::with_capacity(4 + request.len());
+        req_buf.extend_from_slice(&(request.len() as u32).to_be_bytes());
+        req_buf.extend_from_slice(&request);
+        send.write_all(&req_buf).await.expect("send request");
+        send.flush().await.expect("flush request");
+
+        let datagram = timeout(Duration::from_secs(2), connection.read_datagram())
+            .await
+            .expect("timeout")
+            .expect("datagram");
+        assert!(datagram.len() > 8);
+
+        running.store(false, Ordering::SeqCst);
+        drop(connection);
+        drop(client_endpoint);
+        let _ = timeout(Duration::from_millis(200), runner).await;
+    }
+
+    fn build_insecure_client_config() -> quinn::ClientConfig {
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
+        let crypto = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth();
+        let mut config = quinn::ClientConfig::new(
+            Arc::new(
+                quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
+                    .expect("quic client config"),
+            ),
+        );
+        let mut transport = quinn::TransportConfig::default();
+        transport.max_concurrent_bidi_streams(100u32.into());
+        config.transport_config(Arc::new(transport));
+        config
+    }
+
+    #[derive(Debug)]
+    struct SkipServerVerification;
+
+    impl SkipServerVerification {
+        fn new() -> Arc<Self> {
+            Arc::new(Self)
+        }
+    }
+
+    impl ServerCertVerifier for SkipServerVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::ED25519,
+            ]
+        }
+    }
 }

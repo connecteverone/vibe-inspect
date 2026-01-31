@@ -6,6 +6,12 @@ class RoiRenderer {
   RoiRenderer({required this.framebufferSize});
 
   final ui.Size framebufferSize;
+  final ui.Paint _nearestPaint = ui.Paint()
+    ..filterQuality = ui.FilterQuality.none
+    ..isAntiAlias = false;
+  final ui.Paint _linearPaint = ui.Paint()
+    ..filterQuality = ui.FilterQuality.medium
+    ..isAntiAlias = false;
 
   void paintTile({
     required ui.Canvas canvas,
@@ -26,11 +32,12 @@ class RoiRenderer {
       rect.width * scale,
       rect.height * scale,
     );
+    final paint = scale > 1.01 ? _nearestPaint : _linearPaint;
     canvas.drawImageRect(
       image,
       ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
       target,
-      ui.Paint(),
+      paint,
     );
   }
 }

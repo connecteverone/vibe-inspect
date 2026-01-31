@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
 import 'package:mobile/roi/roi_client.dart';
 import 'package:mobile/roi/roi_models.dart';
+import 'package:mobile/roi/roi_quic_client.dart';
 import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -10003,13 +10004,27 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   http.Client? _httpClient;
   AgentCommandClient? _agentClient;
   VncRfbClient? _vncClient;
+  VncSessionInfo? _lastVncSessionInfo;
   RoiClient _roiClient = RoiNoopClient();
   RoiSessionInfo? _roiSession;
   StreamSubscription<RoiTilePayload>? _roiSubscription;
   final Map<RoiTileKey, ui.Image> _roiImages = {};
   RoiRenderer? _roiRenderer;
   Timer? _roiRequestTimer;
+  Timer? _roiReconnectTimer;
+  DateTime? _roiLastTileAt;
+  bool _roiConnecting = false;
+  bool _roiConnected = false;
+  DateTime? _roiConnectedAt;
+  DateTime? _roiLastRequestAt;
+  int _roiTileCount = 0;
+  int _roiTileBytes = 0;
+  String? _roiLastError;
+  String? _roiHost;
+  String? _roiDisabledReason;
+  int _roiReconnectAttempts = 0;
   int _roiRevision = 0;
+  bool _debugPanelOpen = false;
   ui.Image? _frameImage;
   ui.Image? _cursorImage;
   Size _cursorSize = Size.zero;
@@ -10088,6 +10103,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _autoSizedOnce = false;
     _lastUpdatedAt = widget.event.createdAt;
     _configureAgentClient();
+    _configureRoiClient();
     _hydrateFromPayload();
     unawaited(_loadDisplaySelection());
     unawaited(_loadLocalCursorPreference());
@@ -10133,6 +10149,30 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     );
   }
 
+  void _configureRoiClient() {
+    _roiDisabledReason = null;
+    _roiHost = null;
+    if (kIsWeb) {
+      _roiClient = RoiNoopClient();
+      _roiDisabledReason = 'web';
+      return;
+    }
+    final baseUrl = widget.agentBaseUrl?.trim();
+    if (baseUrl == null || baseUrl.isEmpty) {
+      _roiClient = RoiNoopClient();
+      _roiDisabledReason = 'no-agent';
+      return;
+    }
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null || uri.host.isEmpty) {
+      _roiClient = RoiNoopClient();
+      _roiDisabledReason = 'invalid-url';
+      return;
+    }
+    _roiHost = uri.host;
+    _roiClient = RoiQuicClient(host: uri.host);
+  }
+
   void _resetCursorState() {
     _cursorImage?.dispose();
     _cursorImage = null;
@@ -10150,7 +10190,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   void _resetRoiState() {
     _roiRequestTimer?.cancel();
     _roiRequestTimer = null;
+    _roiReconnectTimer?.cancel();
+    _roiReconnectTimer = null;
     _roiSession = null;
+    _roiLastTileAt = null;
+    _roiConnected = false;
+    _roiConnectedAt = null;
+    _roiLastRequestAt = null;
+    _roiTileCount = 0;
+    _roiTileBytes = 0;
+    _roiLastError = null;
+    _roiConnecting = false;
+    _roiReconnectAttempts = 0;
     _roiSubscription?.cancel();
     _roiSubscription = null;
     for (final image in _roiImages.values) {
@@ -10166,10 +10217,19 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (agentClient == null || _roiClient is RoiNoopClient) {
       return;
     }
+    if (_roiConnecting) {
+      return;
+    }
     final screenWidth = sessionInfo.screenWidth ?? sessionInfo.width;
     final screenHeight = sessionInfo.screenHeight ?? sessionInfo.height;
     if (screenWidth <= 0 || screenHeight <= 0) {
       return;
+    }
+    _roiConnecting = true;
+    _roiConnected = false;
+    _roiLastError = null;
+    if (mounted && !_isDisposed) {
+      setState(() {});
     }
     try {
       final roiInfo = await agentClient.sendRoiCommand(
@@ -10190,8 +10250,22 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _roiSubscription?.cancel();
       _roiSubscription = _roiClient.tiles.listen(_handleRoiTile);
       _scheduleRoiRequest();
-    } catch (_) {
-      return;
+      _roiReconnectAttempts = 0;
+      _roiConnecting = false;
+      _roiConnected = true;
+      _roiConnectedAt = DateTime.now();
+      if (mounted && !_isDisposed) {
+        setState(() {});
+      }
+      _sendRoiRequest();
+    } catch (error) {
+      _roiConnecting = false;
+      _roiConnected = false;
+      _roiLastError = error.toString();
+      if (mounted && !_isDisposed) {
+        setState(() {});
+      }
+      _scheduleRoiReconnect(sessionInfo);
     }
   }
 
@@ -10204,6 +10278,30 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       await _roiClient.disconnect();
     } catch (_) {}
     _resetRoiState();
+  }
+
+  void _scheduleRoiReconnect(VncSessionInfo sessionInfo) {
+    if (_roiClient is RoiNoopClient) {
+      return;
+    }
+    if (_roiReconnectTimer != null) {
+      return;
+    }
+    if (_vncClient == null || _connectionError != null) {
+      return;
+    }
+    _roiReconnectAttempts = (_roiReconnectAttempts + 1).clamp(0, 5);
+    final delay = Duration(milliseconds: 1200 + _roiReconnectAttempts * 800);
+    _roiReconnectTimer = Timer(delay, () {
+      _roiReconnectTimer = null;
+      if (!mounted || _isDisposed) {
+        return;
+      }
+      if (_vncClient == null || _connectionError != null) {
+        return;
+      }
+      unawaited(_startRoiSession(sessionInfo));
+    });
   }
 
   void _scheduleRoiRequest() {
@@ -10224,9 +10322,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (roiSession == null) {
       return;
     }
-    final viewSize = _lastViewSize;
+    final now = DateTime.now();
+    _roiLastRequestAt = now;
+    var viewSize = _lastViewSize;
     if (viewSize.width <= 0 || viewSize.height <= 0) {
-      return;
+      final fallback = _frameSize;
+      if (fallback.width <= 0 || fallback.height <= 0) {
+        return;
+      }
+      viewSize = fallback;
     }
     final scale = _baseScale(viewSize) * _zoom;
     if (scale <= 0) {
@@ -10246,11 +10350,37 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       viewportHeight: viewportHeight,
       prefetchRadius: prefetchRadius,
     ));
+    final lastTileAt = _roiLastTileAt;
+    if (lastTileAt == null) {
+      final connectedAt = _roiConnectedAt;
+      if (connectedAt != null &&
+          now.difference(connectedAt) > const Duration(seconds: 4)) {
+        final info = _lastVncSessionInfo;
+        if (info != null && !_roiConnecting) {
+          _scheduleRoiReconnect(info);
+        }
+      }
+      return;
+    }
+    if (now.difference(lastTileAt) > const Duration(seconds: 4)) {
+      final info = _lastVncSessionInfo;
+      if (info != null && !_roiConnecting) {
+        _scheduleRoiReconnect(info);
+      }
+    }
   }
 
   void _handleRoiTile(RoiTilePayload payload) {
     if (!mounted || _isDisposed) {
       return;
+    }
+    final receivedAt = DateTime.now();
+    _roiLastTileAt = receivedAt;
+    final reconnectTimer = _roiReconnectTimer;
+    if (reconnectTimer != null) {
+      reconnectTimer.cancel();
+      _roiReconnectTimer = null;
+      _roiReconnectAttempts = 0;
     }
     if (payload.pixelWidth <= 0 || payload.pixelHeight <= 0) {
       return;
@@ -10268,14 +10398,21 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       payload.pixelHeight,
       ui.PixelFormat.bgra8888,
       (image) {
-        if (!mounted || _isDisposed) {
-          image.dispose();
-          return;
+      if (!mounted || _isDisposed) {
+        image.dispose();
+        return;
+      }
+      setState(() {
+        _roiLastTileAt = receivedAt;
+        _roiTileCount += 1;
+        _roiTileBytes += payload.pixels.length;
+        if (_roiTileCount > 1000000) {
+          _roiTileCount = 0;
+          _roiTileBytes = 0;
         }
-        setState(() {
-          _roiImages.remove(payload.key)?.dispose();
-          _roiImages[payload.key] = image;
-          _roiRevision += 1;
+        _roiImages.remove(payload.key)?.dispose();
+        _roiImages[payload.key] = image;
+        _roiRevision += 1;
           if (_roiImages.length > 256) {
             final firstKey = _roiImages.keys.first;
             _roiImages.remove(firstKey)?.dispose();
@@ -10288,6 +10425,57 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
   void _markInputActivity() {
     _lastInputAt = DateTime.now();
+  }
+
+  String _formatSince(DateTime? value) {
+    if (value == null) {
+      return 'never';
+    }
+    final delta = DateTime.now().difference(value);
+    if (delta.inMilliseconds < 1000) {
+      return '${delta.inMilliseconds}ms';
+    }
+    if (delta.inSeconds < 60) {
+      return '${delta.inSeconds}s';
+    }
+    if (delta.inMinutes < 60) {
+      return '${delta.inMinutes}m';
+    }
+    return '${delta.inHours}h';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '${bytes}B';
+    }
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)}GB';
+  }
+
+  String _roiStatusLabel() {
+    if (_roiClient is RoiNoopClient) {
+      switch (_roiDisabledReason) {
+        case 'web':
+          return '禁用(Web)';
+        case 'no-agent':
+          return '禁用(无Agent)';
+        case 'invalid-url':
+          return '禁用(URL异常)';
+      }
+      return '禁用';
+    }
+    if (_roiConnecting) {
+      return '连接中';
+    }
+    if (_roiConnected) {
+      return '已连接';
+    }
+    return '待机';
   }
 
   double _recordFrameFps(int nowMs) {
@@ -10873,6 +11061,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         displayIndex: _selectedDisplayIndex,
         highPerfIntervalMs: _highPerfEnabled ? _highPerfIntervalMs : null,
       );
+      _lastVncSessionInfo = sessionInfo;
       if (_cursorDebugEnabled) {
         _logCursorDebug('session_info', {
           'width': sessionInfo.width,
@@ -12409,6 +12598,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _maybeHandleLayoutChange(viewSize, isLandscape);
         final previousViewSize = _lastViewSize;
         _lastViewSize = viewSize;
+        if (_roiSession != null && _roiLastRequestAt == null) {
+          _scheduleRoiRequest();
+        }
         final viewDelta = (viewSize.width - previousViewSize.width).abs() +
             (viewSize.height - previousViewSize.height).abs();
         if (isInteractive && viewDelta > 6) {
@@ -12713,6 +12905,11 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     ),
                   ),
                 ),
+              Positioned(
+                left: 12 + safePadding.left,
+                bottom: 12 + safePadding.bottom,
+                child: _buildVncDebugPanel(theme: theme),
+              ),
               if (cursorImage != null &&
                   scale > 0 &&
                   cursorSize.width > 0 &&
@@ -12752,6 +12949,251 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return AspectRatio(
       aspectRatio: _viewAspectRatio(screenSize),
       child: canvas,
+    );
+  }
+
+  Widget _buildVncDebugPanel({required ThemeData theme}) {
+    final vncStatus = _connectionError != null
+        ? '错误'
+        : _isConnecting
+            ? '连接中'
+            : '已连接';
+    final vncSessionId = _lastVncSessionInfo?.sessionId ?? '-';
+    final frameLabel = _frameSize.width <= 0 || _frameSize.height <= 0
+        ? '-'
+        : '${_frameSize.width.toInt()}x${_frameSize.height.toInt()}';
+    final viewLabel = _lastViewSize.width <= 0 || _lastViewSize.height <= 0
+        ? '-'
+        : '${_lastViewSize.width.toInt()}x${_lastViewSize.height.toInt()}';
+    final fpsLabel = _streamFps > 0 ? _streamFps.toStringAsFixed(1) : '-';
+    final latencyLabel = _streamLatencyMs?.toString() ?? '-';
+    final encodingLabel = _encodingPreference.name;
+    final roiStatus = _roiStatusLabel();
+    final roiHost = _roiHost ?? '-';
+    final roiPortValue = _roiSession?.quicPort ?? 0;
+    final roiPortLabel = roiPortValue > 0 ? roiPortValue.toString() : '未知';
+    final roiLastTileLabel = _formatSince(_roiLastTileAt);
+    final roiLastRequestLabel = _formatSince(_roiLastRequestAt);
+    final roiTileLabel = _roiTileCount == 0
+        ? '-'
+        : '${_roiTileCount} (${_formatBytes(_roiTileBytes)})';
+    final roiCacheLabel = _roiImages.isEmpty ? '-' : '${_roiImages.length}';
+    final roiErrorLabel =
+        _roiLastError == null || _roiLastError!.isEmpty ? '-' : _roiLastError!;
+
+    const panelWidth = 300.0;
+    final background = Colors.black.withAlpha(165);
+    final borderColor = Colors.white.withAlpha(50);
+    final labelStyle = theme.textTheme.bodySmall?.copyWith(
+      color: Colors.white70,
+      fontWeight: FontWeight.w600,
+    );
+    final valueStyle = theme.textTheme.bodySmall?.copyWith(
+      color: Colors.white,
+      fontWeight: FontWeight.w600,
+    );
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: _debugPanelOpen
+          ? ConstrainedBox(
+              key: const ValueKey('debug-open'),
+              constraints: const BoxConstraints(maxWidth: panelWidth),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'VNC 调试',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _debugPanelOpen = false;
+                            });
+                          },
+                          icon: const Icon(
+                            Icons.expand_more,
+                            color: Colors.white70,
+                          ),
+                          tooltip: 'Collapse',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    _VncDebugRow(
+                      label: 'VNC 状态',
+                      value: vncStatus,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'VNC 会话',
+                      value: vncSessionId,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: '帧尺寸',
+                      value: frameLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: '视图尺寸',
+                      value: viewLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: '缩放',
+                      value: _zoom.toStringAsFixed(2),
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'FPS/延迟',
+                      value: '$fpsLabel fps / ${latencyLabel}ms',
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: '编码',
+                      value: encodingLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    const SizedBox(height: 6),
+                    Divider(color: Colors.white.withAlpha(30), height: 12),
+                    _VncDebugRow(
+                      label: 'ROI 状态',
+                      value: roiStatus,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI Host',
+                      value: roiHost,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI 端口',
+                      value: roiPortLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI 最近帧',
+                      value: roiLastTileLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI 最近请求',
+                      value: roiLastRequestLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI Tiles',
+                      value: roiTileLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI 缓存',
+                      value: roiCacheLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                    _VncDebugRow(
+                      label: 'ROI 错误',
+                      value: roiErrorLabel,
+                      labelStyle: labelStyle,
+                      valueStyle: valueStyle,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : GestureDetector(
+              key: const ValueKey('debug-closed'),
+              onTap: () {
+                setState(() {
+                  _debugPanelOpen = true;
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.bug_report,
+                      size: 14,
+                      color: Colors.white70,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '调试',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'VNC:$vncStatus',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'ROI:$roiStatus',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.expand_more,
+                      size: 14,
+                      color: Colors.white70,
+                    ),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 
@@ -14374,6 +14816,55 @@ class _VncStatsBadge extends StatelessWidget {
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
                 ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VncDebugRow extends StatelessWidget {
+  const _VncDebugRow({
+    required this.label,
+    required this.value,
+    this.labelStyle,
+    this.valueStyle,
+  });
+
+  final String label;
+  final String value;
+  final TextStyle? labelStyle;
+  final TextStyle? valueStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final baseLabelStyle = labelStyle ??
+        Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+            );
+    final baseValueStyle = valueStyle ??
+        Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 86,
+            child: Text(
+              label,
+              style: baseLabelStyle,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: baseValueStyle,
+            ),
           ),
         ],
       ),

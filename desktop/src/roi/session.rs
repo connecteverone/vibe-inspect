@@ -49,6 +49,14 @@ impl RoiManager {
         }
     }
 
+    pub fn quic_port(&self) -> u16 {
+        self.quic_port
+    }
+
+    pub fn set_quic_port(&mut self, port: u16) {
+        self.quic_port = port;
+    }
+
     pub fn start_session(&mut self, request: RoiSessionRequest) -> RoiSessionInfo {
         let token = generate_token(32);
         let issued_at = current_unix_seconds();
