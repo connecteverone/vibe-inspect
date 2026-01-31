@@ -2145,4 +2145,139 @@ index 6e3a1d73238c9515239ce6ef304c388d682368e0..0a0937ea5a40897740bc60a8d23d4035
 thinking
 **Preparing to commit with progress logging**
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 75ms:
+
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 6e3a1d73238c9515239ce6ef304c388d682368e0..0a0937ea5a40897740bc60a8d23d4035df61f585
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1584,7 +1584,10 @@
+           header.className = "device-header";
+           const title = document.createElement("div");
+           title.className = "device-title";
+-          title.textContent = device.name || device.id || "Unknown device";
++          const rawName = typeof device.name === "string" ? device.name.trim() : "";
++          const rawId = typeof device.id === "string" ? device.id.trim() : "";
++          const displayName = rawName || "Unknown";
++          title.textContent = rawId ? `${displayName} · ${rawId}` : displayName;
+           const tags = document.createElement("div");
+           tags.className = "device-tags";
+           if (activeLabel) {
+@@ -1607,9 +1610,6 @@
+           const meta = document.createElement("div");
+           meta.className = "device-meta";
+           const parts = [];
+-          if (device.id) {
+-            parts.push(`id ${device.id}`);
+-          }
+           if (device.paired_at) {
+             parts.push(`paired ${formatTime(device.paired_at)}`);
+           }
+
+
+thinking
+**Formulating commit message**
+
+I'm preparing a conventional commit message with scope "device-list" that fits length limits and includes a descriptive body explaining the device rendering and timestamp metadata.
+exec
+/bin/zsh -lc "git commit -m \"feat(device-list): show device name with id
+
+Render device titles as '<name> · <id>' with Unknown fallback,
+leaving metadata focused on paired/seen timestamps.
+
+Reference: US-003\"" in /Users/mac/codes/vibe-inspect succeeded in 61ms:
+[main f4e95e7] feat(device-list): show device name with id
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 10 files changed, 3763 insertions(+), 10 deletions(-)
+ create mode 100644 .ralph/.tmp/prompt-20260131-221506-98331-3.md
+ create mode 100644 .ralph/.tmp/story-20260131-221506-98331-3.json
+ create mode 100644 .ralph/.tmp/story-20260131-221506-98331-3.md
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-2.md
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-3.log
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 6e3a1d73238c9515239ce6ef304c388d682368e0..0a0937ea5a40897740bc60a8d23d4035df61f585
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1584,7 +1584,10 @@
+           header.className = "device-header";
+           const title = document.createElement("div");
+           title.className = "device-title";
+-          title.textContent = device.name || device.id || "Unknown device";
++          const rawName = typeof device.name === "string" ? device.name.trim() : "";
++          const rawId = typeof device.id === "string" ? device.id.trim() : "";
++          const displayName = rawName || "Unknown";
++          title.textContent = rawId ? `${displayName} · ${rawId}` : displayName;
+           const tags = document.createElement("div");
+           tags.className = "device-tags";
+           if (activeLabel) {
+@@ -1607,9 +1610,6 @@
+           const meta = document.createElement("div");
+           meta.className = "device-meta";
+           const parts = [];
+-          if (device.id) {
+-            parts.push(`id ${device.id}`);
+-          }
+           if (device.paired_at) {
+             parts.push(`paired ${formatTime(device.paired_at)}`);
+           }
+
+
+thinking
+**Checking clean git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 40ms:
+ M .ralph/runs/run-20260131-221506-98331-iter-3.log
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index 6e3a1d73238c9515239ce6ef304c388d682368e0..0a0937ea5a40897740bc60a8d23d4035df61f585
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1584,7 +1584,10 @@
+           header.className = "device-header";
+           const title = document.createElement("div");
+           title.className = "device-title";
+-          title.textContent = device.name || device.id || "Unknown device";
++          const rawName = typeof device.name === "string" ? device.name.trim() : "";
++          const rawId = typeof device.id === "string" ? device.id.trim() : "";
++          const displayName = rawName || "Unknown";
++          title.textContent = rawId ? `${displayName} · ${rawId}` : displayName;
+           const tags = document.createElement("div");
+           tags.className = "device-tags";
+           if (activeLabel) {
+@@ -1607,9 +1610,6 @@
+           const meta = document.createElement("div");
+           meta.className = "device-meta";
+           const parts = [];
+-          if (device.id) {
+-            parts.push(`id ${device.id}`);
+-          }
+           if (device.paired_at) {
+             parts.push(`paired ${formatTime(device.paired_at)}`);
+           }
+
+
+
+thinking
+**Handling post-commit run log changes**
+
+The run log file changes after the initial commit, causing a dirty working tree; since amending commits isn't allowed, I'll stage and create a new commit for the leftover changes to satisfy the requirement that all changes are committed.
+thinking
+**Staging and committing updated run log**
+
+I'll stage the updated run log and commit it with a descriptive chore message, proceeding to verify no other modifications before finalizing the commit.
+exec
+/bin/zsh -lc 'git add .ralph/runs/run-20260131-221506-98331-iter-3.log' in /Users/mac/codes/vibe-inspect
