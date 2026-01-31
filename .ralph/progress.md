@@ -855,3 +855,37 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
   - Import bundle is useful for seeding sessions during web UI checks.
 ---
+## [2026-02-01 01:06:27] - US-006: Enable terminal session operation from desktop UI
+Thread: 
+Run: 20260131-221506-98331 (iteration 7)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-7.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-7.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 7a2baea feat(desktop-ui): add terminal session console
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260131-221506-98331-iter-6.log
+  - .ralph/runs/run-20260131-221506-98331-iter-6.md
+  - .ralph/runs/run-20260131-221506-98331-iter-7.log
+  - .ralph/.tmp/prompt-20260131-221506-98331-7.md
+  - .ralph/.tmp/story-20260131-221506-98331-7.json
+  - .ralph/.tmp/story-20260131-221506-98331-7.md
+  - desktop/frontend/index.html
+- What was implemented
+  - Added a terminal session console card with live output polling, command input, and resize controls.
+  - Wired open-session actions to focus the console and disable input when sessions end or go missing.
+  - Added desktop-side disconnect handling consistent with mobile terminal stop behavior.
+- **Learnings for future iterations:**
+  - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
+---
