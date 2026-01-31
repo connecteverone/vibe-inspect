@@ -222,7 +222,7 @@
     {
       "id": "US-004",
       "title": "Add terminal session labels and rename synchronization",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a user, I want to rename terminal sessions and have the name synced between mobile and desktop.",
       "acceptanceCriteria": [
@@ -232,13 +232,13 @@
         "Negative case: renaming to an empty string is rejected with a user-friendly error and no changes applied"
       ],
       "startedAt": "2026-01-31T15:50:58.903095+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T15:50:58.903207+00:00"
+      "completedAt": "2026-01-31T16:06:00.226391+00:00",
+      "updatedAt": "2026-01-31T16:06:00.226306+00:00"
     },
     {
       "id": "US-005",
       "title": "Fix terminal session list reconciliation and persistence",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-004"
       ],
@@ -248,7 +248,10 @@
         "Mobile differentiates 'no sessions' from 'cannot fetch sessions' with distinct UI states",
         "Example: after reconnect, sessions created earlier appear in both mobile and desktop lists",
         "Negative case: if the desktop agent restarted and sessions are gone, mobile marks them as closed with a clear reason"
-      ]
+      ],
+      "startedAt": "2026-01-31T16:06:02.324672+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T16:06:02.324786+00:00"
     },
     {
       "id": "US-006",

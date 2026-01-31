@@ -5965,6 +5965,35 @@ class _TerminalToolButton extends StatelessWidget {
   }
 }
 
+class _RemoteTerminalFetchResult {
+  const _RemoteTerminalFetchResult({
+    required this.sessions,
+    required this.isSuccess,
+    this.errorMessage,
+  });
+
+  final List<RemoteTerminalSession> sessions;
+  final bool isSuccess;
+  final String? errorMessage;
+
+  factory _RemoteTerminalFetchResult.success(
+    List<RemoteTerminalSession> sessions,
+  ) {
+    return _RemoteTerminalFetchResult(
+      sessions: sessions,
+      isSuccess: true,
+    );
+  }
+
+  factory _RemoteTerminalFetchResult.failure(String message) {
+    return _RemoteTerminalFetchResult(
+      sessions: const [],
+      isSuccess: false,
+      errorMessage: message,
+    );
+  }
+}
+
 class TerminalWorkspaceScreen extends StatefulWidget {
   const TerminalWorkspaceScreen({
     super.key,
@@ -6000,6 +6029,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   static const int _terminalMaxLines = 8000;
   static const Duration _pollInterval = Duration(milliseconds: 900);
   static const Duration _terminalPersistInterval = Duration(milliseconds: 900);
+  static const String _missingRemoteSessionReason =
+      'Session closed because the desktop agent restarted.';
 
   final FocusNode _terminalFocusNode = FocusNode();
   final TerminalController _terminalController = TerminalController();
@@ -6010,6 +6041,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   bool _statusIsError = false;
   bool _isLoading = true;
   String? _loadError;
+  String? _remoteFetchError;
   bool _autoRunTriggered = false;
   List<TerminalSessionView> _sessions = [];
   String? _activeSessionId;
@@ -6098,15 +6130,22 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     );
   }
 
-  Future<List<RemoteTerminalSession>> _fetchRemoteTerminalSessions() async {
+  Future<_RemoteTerminalFetchResult> _fetchRemoteTerminalSessions() async {
     final client = _agentClient;
     if (client == null) {
-      return const [];
+      return _RemoteTerminalFetchResult.failure(
+        'Connect to the desktop agent to load sessions.',
+      );
     }
     try {
-      return await client.fetchTerminalSessions();
+      final sessions = await client.fetchTerminalSessions();
+      return _RemoteTerminalFetchResult.success(sessions);
+    } on AgentCommandFailure catch (error) {
+      return _RemoteTerminalFetchResult.failure(error.message);
     } catch (_) {
-      return const [];
+      return _RemoteTerminalFetchResult.failure(
+        'Unable to load terminal sessions.',
+      );
     }
   }
 
@@ -6225,6 +6264,24 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return null;
     }
     return _terminals[active.session.id];
+  }
+
+  String? _sessionStatusReason(TerminalSessionView? session) {
+    if (session == null) {
+      return null;
+    }
+    final status = session.session.status.toLowerCase();
+    if (!_isTerminalClosed(status) &&
+        status != 'disconnected' &&
+        status != 'error') {
+      return null;
+    }
+    final reason = session.lastEvent?.payload['error_message']?.toString();
+    if (reason == null) {
+      return null;
+    }
+    final trimmed = reason.trim();
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   void _setTerminalStatusMessage(String message, {bool isError = false}) {
@@ -7249,6 +7306,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       _disconnectTerminalStream();
       return;
     }
+    if (_isTerminalClosed(active.session.status.toLowerCase())) {
+      _disconnectTerminalStream();
+      return;
+    }
     if (_terminalChannelReady &&
         _terminalChannelSessionId == active.session.id) {
       return;
@@ -7395,6 +7456,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     setState(() {
       _isLoading = true;
       _loadError = null;
+      _remoteFetchError = null;
     });
     try {
       final sessions = await widget.storage.fetchToolSessions();
@@ -7404,8 +7466,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           .where((session) => session.type.toLowerCase() == 'terminal')
           .where((session) => agentId == null || session.agentId == agentId)
           .toList();
-      final remoteSessions = await _fetchRemoteTerminalSessions();
-      if (remoteSessions.isNotEmpty) {
+      final remoteResult = await _fetchRemoteTerminalSessions();
+      final closedReasons = <String, String>{};
+      String? remoteError;
+      if (remoteResult.isSuccess) {
+        remoteError = null;
+        final remoteSessions = remoteResult.sessions;
         final remoteById = <String, RemoteTerminalSession>{
           for (final remote in remoteSessions) remote.id: remote,
         };
@@ -7413,7 +7479,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         for (final session in terminalSessions) {
           final remote = remoteById.remove(session.id);
           if (remote == null) {
-            merged.add(session);
+            if (_isTerminalClosed(session.status.toLowerCase())) {
+              merged.add(session);
+            } else {
+              final closedSession = _sessionWithStatus(session, 'closed');
+              await widget.storage.insertToolSession(closedSession);
+              merged.add(closedSession);
+              closedReasons[session.id] = _missingRemoteSessionReason;
+            }
             continue;
           }
           final remoteStatus =
@@ -7436,6 +7509,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
             await widget.storage.insertToolSession(updated);
           }
           merged.add(updated);
+          final reason = remote.closedReason?.trim();
+          if (reason != null && reason.isNotEmpty) {
+            closedReasons[session.id] = reason;
+          }
         }
         for (final remote in remoteById.values) {
           final createdAt = remote.createdAt;
@@ -7452,8 +7529,15 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           );
           await widget.storage.insertToolSession(newSession);
           merged.add(newSession);
+          final reason = remote.closedReason?.trim();
+          if (reason != null && reason.isNotEmpty) {
+            closedReasons[newSession.id] = reason;
+          }
         }
         terminalSessions = merged;
+      } else {
+        remoteError = remoteResult.errorMessage ??
+            'Unable to load terminal sessions.';
       }
       final terminalEvents = events
           .where((event) => event.type.toLowerCase() == 'terminal')
@@ -7461,6 +7545,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final latestEvents = <String, TimelineEvent>{};
       for (final event in terminalEvents) {
         latestEvents.putIfAbsent(event.sessionId, () => event);
+      }
+      if (closedReasons.isNotEmpty) {
+        await _applyClosedReasons(
+          closedReasons,
+          latestEvents,
+          terminalSessions,
+        );
       }
       final initialSession = widget.initialSession;
       if (initialSession != null &&
@@ -7504,6 +7595,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         _statusMessage = null;
         _statusIsError = false;
         _isLoading = false;
+        _remoteFetchError = remoteError;
       });
       _startPolling();
       unawaited(_pollActiveSession());
@@ -7517,7 +7609,80 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       setState(() {
         _isLoading = false;
         _loadError = 'Unable to load terminal sessions.';
+        _remoteFetchError = null;
       });
+    }
+  }
+
+  Future<void> _applyClosedReasons(
+    Map<String, String> closedReasons,
+    Map<String, TimelineEvent> latestEvents,
+    List<ToolSession> terminalSessions,
+  ) async {
+    for (final entry in closedReasons.entries) {
+      final sessionId = entry.key;
+      final reason = entry.value.trim();
+      if (reason.isEmpty) {
+        continue;
+      }
+      final existing = latestEvents[sessionId];
+      if (existing != null) {
+        final existingReason =
+            existing.payload['error_message']?.toString() ?? '';
+        final existingStatus =
+            existing.payload['status']?.toString().toLowerCase() ?? '';
+        if (existingReason == reason && existingStatus == 'closed') {
+          continue;
+        }
+        final entries = _parseOutputEntries(
+          existing.payload,
+          existing.createdAt,
+        );
+        final command = existing.payload['command']?.toString() ?? '';
+        final updated = await _persistTerminalEvent(
+          event: existing,
+          command: command,
+          entries: entries,
+          status: 'closed',
+          nextSeq: _parseNextSeq(existing.payload),
+          exitCode: null,
+          errorMessage: reason,
+        );
+        if (updated != null) {
+          latestEvents[sessionId] = updated;
+        }
+        continue;
+      }
+      final session = terminalSessions.firstWhere(
+        (session) => session.id == sessionId,
+        orElse: () => ToolSession(
+          id: sessionId,
+          type: 'terminal',
+          label: 'Terminal ${_truncate(sessionId, 6)}',
+          status: 'closed',
+          agentId: widget.agentId,
+          createdAt: DateTime.now(),
+        ),
+      );
+      final event = TimelineEvent(
+        id: createStorageId(),
+        sessionId: sessionId,
+        type: 'terminal',
+        title: 'Terminal: ${session.label}',
+        payload: {
+          'command': '',
+          'status': 'closed',
+          'next_seq': 0,
+          'error_message': reason,
+        },
+        createdAt: DateTime.now(),
+      );
+      try {
+        await widget.storage.insertTimelineEvent(event);
+        latestEvents[sessionId] = event;
+      } catch (_) {
+        // Ignore storage errors for recovery hint.
+      }
     }
   }
 
@@ -8948,6 +9113,11 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         : _terminalChannelReady
             ? 'Live stream'
             : 'Polling updates';
+    final resolvedStatusMessage =
+        _statusMessage ?? _sessionStatusReason(active);
+    final resolvedStatusIsError =
+        _statusMessage != null ? _statusIsError : resolvedStatusMessage != null;
+    final showEmptyHint = _sessions.isEmpty && _remoteFetchError == null;
     final headerStyle = theme.textTheme.bodyMedium?.copyWith(
       fontWeight: FontWeight.w700,
       color: const Color(0xFF0F172A),
@@ -9557,12 +9727,24 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                     ],
                   ),
                 ),
-                if (_statusMessage != null) ...[
+                if (_remoteFetchError != null) ...[
+                  const SizedBox(height: 8),
+                  _InlineStatus(
+                    message: _remoteFetchError!,
+                    isError: true,
+                  ),
+                ] else if (showEmptyHint) ...[
+                  const SizedBox(height: 8),
+                  const _InlineStatus(
+                    message: 'No terminal sessions yet.',
+                  ),
+                ],
+                if (resolvedStatusMessage != null) ...[
                   const SizedBox(height: 4),
                   Text(
-                    _statusMessage!,
+                    resolvedStatusMessage!,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: _statusIsError
+                      color: resolvedStatusIsError
                           ? const Color(0xFFB91C1C)
                           : const Color(0xFF16A34A),
                       fontWeight: FontWeight.w600,
@@ -9805,6 +9987,16 @@ class _TerminalSessionRow extends StatelessWidget {
     final borderColor =
         isActive ? const Color(0xFF93C5FD) : const Color(0xFFE2E8F0);
     final statusLabel = session.session.status.toUpperCase();
+    final rawReason = session.lastEvent?.payload['error_message']?.toString();
+    final reason = rawReason?.trim();
+    final status = session.session.status.toLowerCase();
+    final showReason = reason != null &&
+        reason.isNotEmpty &&
+        (status == 'closed' ||
+            status == 'killed' ||
+            status == 'exited' ||
+            status == 'disconnected' ||
+            status == 'error');
 
     return Material(
       color: background,
@@ -9848,6 +10040,16 @@ class _TerminalSessionRow extends StatelessWidget {
                         _truncate(session.lastCommand!, 40),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: const Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                    if (showReason) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _truncate(reason!, 60),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFFB91C1C),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
@@ -16158,6 +16360,7 @@ class RemoteTerminalSession {
     required this.lastActivity,
     this.exitCode,
     this.lastOutput,
+    this.closedReason,
   });
 
   final String id;
@@ -16167,6 +16370,7 @@ class RemoteTerminalSession {
   final DateTime lastActivity;
   final int? exitCode;
   final String? lastOutput;
+  final String? closedReason;
 
   factory RemoteTerminalSession.fromPayload(Map<String, dynamic> payload) {
     final id = payload['id']?.toString() ?? '';
@@ -16181,6 +16385,10 @@ class RemoteTerminalSession {
         : DateTime.fromMillisecondsSinceEpoch(lastRaw * 1000);
     final exitCode = int.tryParse(payload['exit_code']?.toString() ?? '');
     final lastOutput = payload['last_output']?.toString();
+    final closedReasonRaw = payload['closed_reason']?.toString();
+    final closedReason = closedReasonRaw != null && closedReasonRaw.trim().isNotEmpty
+        ? closedReasonRaw.trim()
+        : null;
     if (id.isEmpty) {
       throw const AgentCommandFailure('Terminal session missing id.');
     }
@@ -16195,6 +16403,7 @@ class RemoteTerminalSession {
       lastActivity: lastActivity,
       exitCode: exitCode,
       lastOutput: lastOutput,
+      closedReason: closedReason,
     );
   }
 }

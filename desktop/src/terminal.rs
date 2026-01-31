@@ -1,10 +1,14 @@
 use axum::extract::ws::{Message, WebSocket};
+use directories::ProjectDirs;
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use rand::{distributions::Alphanumeric, Rng};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -19,6 +23,8 @@ const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
 const OUTPUT_LIMIT_DEFAULT: usize = 800;
 const SNAPSHOT_SCROLLBACK: usize = 0;
 const MAX_LABEL_LEN: usize = 80;
+const TERMINAL_SESSIONS_FILE: &str = "terminal_sessions.json";
+const TERMINAL_RESTART_REASON: &str = "Session closed because the desktop agent restarted.";
 
 #[derive(Clone)]
 struct TerminalOutputChunk {
@@ -180,7 +186,7 @@ pub struct TerminalActionRequest {
     pub env: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalSessionSummary {
     pub id: String,
     pub label: String,
@@ -188,7 +194,10 @@ pub struct TerminalSessionSummary {
     pub created_at: u64,
     pub last_activity: u64,
     pub exit_code: Option<i32>,
+    #[serde(default)]
     pub last_output: String,
+    #[serde(default)]
+    pub closed_reason: Option<String>,
 }
 
 pub struct TerminalError {
@@ -206,6 +215,70 @@ impl TerminalError {
 }
 
 static TERMINAL_MANAGER: OnceLock<Arc<Mutex<TerminalManager>>> = OnceLock::new();
+static TERMINAL_HISTORY: OnceLock<Arc<Mutex<TerminalSessionHistory>>> = OnceLock::new();
+
+struct TerminalSessionHistory {
+    sessions: HashMap<String, TerminalSessionSummary>,
+}
+
+impl TerminalSessionHistory {
+    fn load() -> Self {
+        Self {
+            sessions: load_terminal_session_history(),
+        }
+    }
+
+    fn persist(&self) {
+        let _ = save_terminal_session_history(&self.sessions);
+    }
+}
+
+fn terminal_history() -> &'static Arc<Mutex<TerminalSessionHistory>> {
+    TERMINAL_HISTORY.get_or_init(|| Arc::new(Mutex::new(TerminalSessionHistory::load())))
+}
+
+fn terminal_sessions_path() -> Option<PathBuf> {
+    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+    Some(dirs.config_dir().join(TERMINAL_SESSIONS_FILE))
+}
+
+fn load_terminal_session_history() -> HashMap<String, TerminalSessionSummary> {
+    let mut sessions = HashMap::new();
+    let Some(path) = terminal_sessions_path() else {
+        return sessions;
+    };
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(_) => return sessions,
+    };
+    let parsed = match serde_json::from_str::<Vec<TerminalSessionSummary>>(&contents) {
+        Ok(parsed) => parsed,
+        Err(_) => return sessions,
+    };
+    for session in parsed {
+        if !session.id.trim().is_empty() {
+            sessions.insert(session.id.clone(), session);
+        }
+    }
+    sessions
+}
+
+fn save_terminal_session_history(
+    sessions: &HashMap<String, TerminalSessionSummary>,
+) -> Result<(), std::io::Error> {
+    let Some(path) = terminal_sessions_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut entries = sessions.values().cloned().collect::<Vec<_>>();
+    entries.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    let payload = serde_json::to_string_pretty(&entries)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+    fs::write(path, payload)?;
+    Ok(())
+}
 
 pub fn terminal_manager() -> &'static Arc<Mutex<TerminalManager>> {
     TERMINAL_MANAGER.get_or_init(|| {
@@ -213,6 +286,47 @@ pub fn terminal_manager() -> &'static Arc<Mutex<TerminalManager>> {
         spawn_cleanup(manager.clone());
         manager
     })
+}
+
+fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
+    let last_output = session
+        .buffer
+        .back()
+        .map(|chunk| chunk.data.trim().to_string())
+        .unwrap_or_default();
+    let preview = if last_output.chars().count() > 160 {
+        last_output
+            .chars()
+            .rev()
+            .take(160)
+            .collect::<Vec<char>>()
+            .into_iter()
+            .rev()
+            .collect()
+    } else {
+        last_output
+    };
+    TerminalSessionSummary {
+        id: session.id.clone(),
+        label: session.label.clone(),
+        status: session.status.as_str().to_string(),
+        created_at: session.created_at,
+        last_activity: session.last_activity,
+        exit_code: session.exit_code,
+        last_output: preview,
+        closed_reason: None,
+    }
+}
+
+fn persist_session_summary(session: &TerminalSession) {
+    let summary = build_session_summary(session);
+    let history = terminal_history();
+    let mut history = match history.lock() {
+        Ok(history) => history,
+        Err(_) => return,
+    };
+    history.sessions.insert(summary.id.clone(), summary);
+    history.persist();
 }
 
 pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
@@ -224,32 +338,35 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
     let mut sessions = Vec::new();
     for session in manager.sessions.values() {
         if let Ok(session) = session.lock() {
-            let last_output = session
-                .buffer
-                .back()
-                .map(|chunk| chunk.data.trim().to_string())
-                .unwrap_or_default();
-            let preview = if last_output.chars().count() > 160 {
-                last_output
-                    .chars()
-                    .rev()
-                    .take(160)
-                    .collect::<Vec<char>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
-            } else {
-                last_output
-            };
-            sessions.push(TerminalSessionSummary {
-                id: session.id.clone(),
-                label: session.label.clone(),
-                status: session.status.as_str().to_string(),
-                created_at: session.created_at,
-                last_activity: session.last_activity,
-                exit_code: session.exit_code,
-                last_output: preview,
-            });
+            sessions.push(build_session_summary(&session));
+        }
+    }
+    let active_ids = sessions
+        .iter()
+        .map(|session| session.id.clone())
+        .collect::<HashSet<_>>();
+    if let Ok(mut history) = terminal_history().lock() {
+        for session in &sessions {
+            history.sessions.insert(session.id.clone(), session.clone());
+        }
+        let now = now_ts();
+        for session in history.sessions.values_mut() {
+            if active_ids.contains(&session.id) {
+                continue;
+            }
+            if session.status == "running" {
+                session.status = "closed".to_string();
+                if session.closed_reason.is_none() {
+                    session.closed_reason = Some(TERMINAL_RESTART_REASON.to_string());
+                }
+                session.last_activity = now;
+            }
+        }
+        history.persist();
+        for session in history.sessions.values() {
+            if !active_ids.contains(&session.id) {
+                sessions.push(session.clone());
+            }
         }
     }
     sessions.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
@@ -609,6 +726,9 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
             }
         }
     }
+    if let Ok(session) = session.lock() {
+        persist_session_summary(&session);
+    }
 
     Ok(build_session_payload(
         "start",
@@ -778,6 +898,7 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
     session.status = TerminalSessionStatus::Killed;
     session.exit_code = None;
     session.last_activity = now_ts();
+    persist_session_summary(&session);
     Ok(build_session_payload(
         "stop",
         &session.id,
@@ -879,6 +1000,7 @@ fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
     session.label = label.clone();
     session.last_activity = now_ts();
+    persist_session_summary(&session);
     Ok(build_session_payload(
         "rename",
         &session.id,
@@ -985,6 +1107,7 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                     }
                     session.exit_code = exit_code;
                     session.last_activity = now_ts();
+                    persist_session_summary(&session);
                     return;
                 }
                 Ok(count) => {
@@ -997,6 +1120,7 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                         session.flush_utf8_carry();
                         session.status = TerminalSessionStatus::Error;
                         session.last_activity = now_ts();
+                        persist_session_summary(&session);
                     }
                     return;
                 }
