@@ -1070,10 +1070,8 @@ fn build_session_payload(
         "exit_code": exit_code,
         "last_activity": last_activity,
     });
-    if let Some(label) = label {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("label".to_string(), json!(label));
-        }
+    if let Some(map) = payload.as_object_mut() {
+        map.insert("label".to_string(), json!(label.unwrap_or("")));
     }
     if let Some(snapshot) = snapshot {
         if let Some(map) = payload.as_object_mut() {

@@ -231,9 +231,9 @@
         "Example: rename session to 'Deploy logs' on mobile and the desktop list shows the same label within 5 seconds",
         "Negative case: renaming to an empty string is rejected with a user-friendly error and no changes applied"
       ],
-      "startedAt": "2026-01-31T15:16:50.660655+00:00",
+      "startedAt": "2026-01-31T15:50:58.903095+00:00",
       "completedAt": null,
-      "updatedAt": "2026-01-31T15:16:50.660767+00:00"
+      "updatedAt": "2026-01-31T15:50:58.903207+00:00"
     },
     {
       "id": "US-005",

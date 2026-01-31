@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-01-31 23:50:56 | run=20260131-221506-98331 | iter=4 | mode=build | story=US-004 | duration=2046s | status=success
 - 2026-01-31 23:16:48 | run=20260131-221506-98331 | iter=3 | mode=build | story=US-003 | duration=905s | status=success
 - 2026-01-31 23:01:41 | run=20260131-221506-98331 | iter=2 | mode=build | story=US-002 | duration=1542s | status=success
 - 2026-01-31 22:35:57 | run=20260131-221506-98331 | iter=1 | mode=build | story=US-001 | duration=1251s | status=success
@@ -219,3 +220,9 @@
 [2026-01-31 23:30:43] Implemented terminal session label payloads and rename UI/actions on mobile/desktop
 [2026-01-31 23:41:14] Completed tests/builds: flutter test/analyze (analyze fails due to known flutter_quic deps), flutter build web, browser UI check
 [2026-01-31 23:48:29] Updated progress log for US-004
+[2026-01-31 23:50:56] ITERATION 4 end (duration=2046s)
+[2026-01-31 23:50:59] ITERATION 5 start (mode=build story=US-004)
+[2026-01-31 23:51:17] Start US-004 work
+[2026-01-31 23:51:31] Start US-004 work (iteration 5)
+[2026-01-31 23:59:16] Ensure terminal payloads always include label field
+[2026-01-31 23:59:56] Ran US-004 verification commands (flutter test/analyze + scripts)
