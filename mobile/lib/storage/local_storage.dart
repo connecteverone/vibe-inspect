@@ -28,7 +28,7 @@ class LocalStorageInitializer extends StorageInitializer {
   const LocalStorageInitializer();
 
   static const _databaseName = 'vibe_inspect.db';
-  static const _schemaVersion = 6;
+  static const _schemaVersion = 7;
   static const _storageKeyId = 'vibe_storage_key';
 
   @override
@@ -79,6 +79,11 @@ class LocalStorageInitializer extends StorageInitializer {
         if (oldVersion < 6) {
           await db.execute(
             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+          );
+        }
+        if (oldVersion < 7) {
+          await db.execute(
+            'ALTER TABLE connections ADD COLUMN host_name TEXT',
           );
         }
       },
@@ -134,6 +139,7 @@ class LocalStorageInitializer extends StorageInitializer {
       CREATE TABLE connections (
         id TEXT PRIMARY KEY,
         device_id TEXT,
+        host_name TEXT,
         token TEXT NOT NULL,
         status TEXT NOT NULL,
         connected_at INTEGER NOT NULL,
@@ -527,6 +533,7 @@ class ConnectionRecord {
     required this.status,
     required this.connectedAt,
     this.deviceId,
+    this.hostName,
     this.agentUrl,
     this.tunnelUrl,
     this.tunnelError,
@@ -543,6 +550,7 @@ class ConnectionRecord {
   final String status;
   final DateTime connectedAt;
   final String? deviceId;
+  final String? hostName;
   final String? agentUrl;
   final String? tunnelUrl;
   final String? tunnelError;
@@ -559,6 +567,7 @@ class ConnectionRecord {
     String? status,
     DateTime? connectedAt,
     String? deviceId,
+    String? hostName,
     String? agentUrl,
     String? tunnelUrl,
     String? tunnelError,
@@ -575,6 +584,7 @@ class ConnectionRecord {
       status: status ?? this.status,
       connectedAt: connectedAt ?? this.connectedAt,
       deviceId: deviceId ?? this.deviceId,
+      hostName: hostName ?? this.hostName,
       agentUrl: agentUrl ?? this.agentUrl,
       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
       tunnelError: tunnelError ?? this.tunnelError,
@@ -591,6 +601,7 @@ class ConnectionRecord {
     return {
       'id': id,
       'device_id': deviceId,
+      'host_name': hostName,
       'token': token,
       'status': status,
       'connected_at': connectedAt.millisecondsSinceEpoch,
@@ -615,6 +626,7 @@ class ConnectionRecord {
         (row['connected_at'] as int?) ?? 0,
       ),
       deviceId: row['device_id']?.toString(),
+      hostName: row['host_name']?.toString(),
       agentUrl: row['agent_url']?.toString(),
       tunnelUrl: row['tunnel_url']?.toString(),
       tunnelError: row['tunnel_error']?.toString(),
@@ -638,6 +650,7 @@ class ConnectionRecord {
       'status': status,
       'connectedAt': connectedAt.toIso8601String(),
       'deviceId': deviceId,
+      'hostName': hostName,
       'agentUrl': agentUrl,
       'tunnelUrl': tunnelUrl,
       'tunnelError': tunnelError,
@@ -675,6 +688,10 @@ class ConnectionRecord {
     final deviceIdRaw = json['deviceId'];
     if (deviceIdRaw != null && deviceIdRaw is! String) {
       throw const FormatException('Connection deviceId must be a string.');
+    }
+    final hostNameRaw = json['hostName'] ?? json['host_name'];
+    if (hostNameRaw != null && hostNameRaw is! String) {
+      throw const FormatException('Connection hostName must be a string.');
     }
     final tunnelUrl = json['tunnelUrl'];
     if (tunnelUrl != null && tunnelUrl is! String) {
@@ -723,6 +740,7 @@ class ConnectionRecord {
       status: status,
       connectedAt: connectedAt,
       deviceId: deviceIdRaw as String?,
+      hostName: hostNameRaw as String?,
       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
           ? agentUrlRaw
           : null,

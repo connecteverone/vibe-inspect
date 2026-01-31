@@ -541,10 +541,13 @@ class _PairingScreenState extends State<PairingScreen> {
       );
       final identity = await client.fetchIdentity();
       final deviceId = identity['device_id']?.toString();
+      final hostName =
+          identity['host_name']?.toString() ?? identity['hostName']?.toString();
       await _recordManualConnection(
         agentUrl: url,
         authToken: token,
         deviceId: deviceId,
+        hostName: hostName,
       );
       if (!mounted) {
         return;
@@ -1233,6 +1236,7 @@ class _PairingScreenState extends State<PairingScreen> {
         status: 'connected',
         connectedAt: now,
         deviceId: deviceId ?? existing?.deviceId,
+        hostName: payload.hostName ?? existing?.hostName,
         agentUrl: agentUrl,
         tunnelUrl: payload.tunnelUrl,
         tunnelError: payload.tunnelError,
@@ -1296,6 +1300,7 @@ class _PairingScreenState extends State<PairingScreen> {
     required String agentUrl,
     required String authToken,
     String? deviceId,
+    String? hostName,
   }) async {
     try {
       final now = DateTime.now();
@@ -1323,6 +1328,7 @@ class _PairingScreenState extends State<PairingScreen> {
         status: 'connected',
         connectedAt: now,
         deviceId: deviceId ?? existing?.deviceId,
+        hostName: hostName ?? existing?.hostName,
         agentUrl: agentUrl,
         tunnelUrl: existing?.tunnelUrl,
         tunnelError: existing?.tunnelError,
@@ -1943,6 +1949,8 @@ class _PairingScreenState extends State<PairingScreen> {
       );
       final identity = await commandClient.fetchIdentity();
       final deviceId = identity['device_id']?.toString();
+      final hostName =
+          identity['host_name']?.toString() ?? identity['hostName']?.toString();
       final wifiSsid =
           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
       final localIps =
@@ -1961,6 +1969,7 @@ class _PairingScreenState extends State<PairingScreen> {
       );
       return agent.copyWith(
         deviceId: deviceId ?? agent.deviceId,
+        hostName: hostName ?? agent.hostName,
         wifiSsid: wifiSsid ?? agent.wifiSsid,
         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
@@ -16670,6 +16679,7 @@ class PairingPayload {
     required this.secret,
     this.expiresAt,
     this.deviceId,
+    this.hostName,
     this.wifiSsid,
     this.localIps = const [],
     this.tunnelUrl,
@@ -16684,6 +16694,7 @@ class PairingPayload {
   final String secret;
   final DateTime? expiresAt;
   final String? deviceId;
+  final String? hostName;
   final String? wifiSsid;
   final List<String> localIps;
   final String? tunnelUrl;
@@ -16752,6 +16763,8 @@ class PairingPayload {
 
     final deviceId =
         data['device_id']?.toString() ?? data['deviceId']?.toString();
+    final hostName =
+        data['host_name']?.toString() ?? data['hostName']?.toString();
     final wifiSsid =
         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
     final localIps =
@@ -16783,6 +16796,7 @@ class PairingPayload {
       secret: secret,
       expiresAt: expiresAt,
       deviceId: deviceId,
+      hostName: hostName,
       wifiSsid: wifiSsid,
       localIps: localIps,
       tunnelUrl: tunnelUrl,
@@ -16869,13 +16883,9 @@ class _AgentRouteResolution {
 }
 
 String _agentLabel(ConnectionRecord agent) {
-  final url = agent.agentUrl?.trim();
-  if (url != null && url.isNotEmpty) {
-    final uri = Uri.tryParse(url);
-    if (uri != null && uri.host.isNotEmpty) {
-      return uri.host;
-    }
-    return url;
+  final hostName = agent.hostName?.trim();
+  if (hostName != null && hostName.isNotEmpty) {
+    return hostName;
   }
   final deviceId = agent.deviceId?.trim();
   if (deviceId != null && deviceId.isNotEmpty) {

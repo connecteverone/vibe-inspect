@@ -3049,4 +3049,186 @@ thinking
 
 I’ll stage and commit the current run log modifications as the last command to include its log entries, then stop running further commands to keep the tree clean. I’ll capture the final commit hash from the commit output to avoid running additional commands afterward.
 exec
-/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect succeeded in 29ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+
+thinking
+**Committing changes**
+exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect commit -m "chore(ralph): sync run log
+
+Capture latest run log updates for US-001."' in /Users/mac/codes/vibe-inspect succeeded in 34ms:
+[main f1348d3] chore(ralph): sync run log
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 157 insertions(+)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+
+
+thinking
+**Finalizing summary without new shell commands**
+
+All required commit and log details are noted from earlier steps; no further git commands will run to avoid log changes. The final response will mention commit history, testing outcomes including known Flutter analyzer issues, and browser verification done via dev-browser.
+thinking
+**Crafting final detailed summary**
+
+Planning a final response that highlights the UI action parity map and manual QA checklist added, tooltip alignment for mobile terminal session, and relevant file updates. It will include test results with passing and failing commands, browser verification details, review notes on security/performance/regression, and summaries of key commits. The final message will close with an optional next step to investigate flutter analyze errors and the completion signal.
+codex
+Added a shared UI action parity map with a manual QA checklist and aligned the mobile terminal session close tooltip to use the desktop “Disconnect” label so the action name is consistent across platforms. Updates are in `docs/ui_action_parity.md` and `mobile/lib/main.dart`.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (82 existing issues in `third_party/flutter_quic` toolchain + warnings)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (same 82 existing issues)
+- `cd mobile && flutter build web` -> PASS (FlutterLoader deprecation + wasm dry run warnings)
+- `cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1` -> PASS
+- `dev-browser` -> PASS (loaded `http://127.0.0.1:8030/`; bundle contains “Disconnect” and no “Kill session”)
+
+Security/performance/regression review: UI-only label/doc changes, no new data handling or runtime work; behavior unchanged, so no perf or regression risk identified.
+
+Commits:
+- `c0e84be fix(ui): align disconnect action labels`
+- `328c333 chore(ralph): update run logs`
+- `f1348d3 chore(ralph): sync run log`
+
+Next steps (optional):
+1) Investigate the existing `flutter analyze` errors under `third_party/flutter_quic` if they are blocking CI.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 47a38f3cd3e20e9b7db75bf73899fdec449ba64b..0c3ff5493e1f8e41ca56e54e7e9eba9df6e6c815
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -671,8 +671,11 @@
+   - docs/ui_action_parity.md
+   - mobile/lib/main.dart
+ - What was implemented
++  Added a UI action parity map and aligned the mobile terminal session tooltip
++  with the desktop "Disconnect" action to keep labels consistent across
++  platforms.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
++  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
++  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+ ---
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 85847ee917d65d3932454b4890100dd41bf61e29..b5c2508d644a1139d092cc1ae1585afe4d348f4b
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -9725,7 +9725,7 @@
+                 IconButton(
+                   onPressed: onClose,
+                   icon: const Icon(Icons.stop_circle_outlined),
+-                  tooltip: 'Kill session',
++                  tooltip: 'Disconnect',
+                 ),
+               ],
+             ],
+
+tokens used
+148,690
+Added a shared UI action parity map with a manual QA checklist and aligned the mobile terminal session close tooltip to use the desktop “Disconnect” label so the action name is consistent across platforms. Updates are in `docs/ui_action_parity.md` and `mobile/lib/main.dart`.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (82 existing issues in `third_party/flutter_quic` toolchain + warnings)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (same 82 existing issues)
+- `cd mobile && flutter build web` -> PASS (FlutterLoader deprecation + wasm dry run warnings)
+- `cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1` -> PASS
+- `dev-browser` -> PASS (loaded `http://127.0.0.1:8030/`; bundle contains “Disconnect” and no “Kill session”)
+
+Security/performance/regression review: UI-only label/doc changes, no new data handling or runtime work; behavior unchanged, so no perf or regression risk identified.
+
+Commits:
+- `c0e84be fix(ui): align disconnect action labels`
+- `328c333 chore(ralph): update run logs`
+- `f1348d3 chore(ralph): sync run log`
+
+Next steps (optional):
+1) Investigate the existing `flutter analyze` errors under `third_party/flutter_quic` if they are blocking CI.
+
+<promise>COMPLETE</promise>

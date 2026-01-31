@@ -44,6 +44,7 @@ pub struct PairingSessionResponse {
     pub local_urls: Vec<String>,
     pub requires_approval: bool,
     pub device_id: String,
+    pub host_name: Option<String>,
     pub auth_token: String,
     pub wifi_ssid: Option<String>,
     pub local_ips: Vec<String>,
@@ -102,6 +103,7 @@ pub struct PairingStatusResponse {
     pub tunnel_url: Option<String>,
     pub tunnel_error: Option<String>,
     pub device_id: String,
+    pub host_name: Option<String>,
     pub auth_token: String,
     pub auth_tokens: Vec<AuthTokenSnapshot>,
     pub wifi_ssid: Option<String>,
@@ -184,6 +186,10 @@ impl PairingState {
 
     pub fn device_id(&self) -> &str {
         &self.identity.device_id
+    }
+
+    pub fn host_name(&self) -> Option<String> {
+        self.identity.host_name()
     }
 
     pub fn frp_url(&self) -> Option<String> {
@@ -355,6 +361,7 @@ pub fn create_pairing_session(
         "pairing_secret": session.secret.clone(),
         "expires_at": session.expires_at,
         "device_id": pairing_state.identity.device_id.clone(),
+        "host_name": pairing_state.identity.host_name.clone(),
         "wifi_ssid": wifi_ssid.clone(),
         "local_ips": local_ips.clone(),
         "local_urls": local_urls.clone(),
@@ -384,6 +391,7 @@ pub fn create_pairing_session(
         local_urls,
         requires_approval: pairing_state.requires_approval,
         device_id: pairing_state.identity.device_id.clone(),
+        host_name: pairing_state.identity.host_name.clone(),
         auth_token: pairing_state.identity.auth_token.clone(),
         wifi_ssid,
         local_ips,
@@ -997,6 +1005,7 @@ fn build_pairing_status(pairing_state: &PairingState) -> PairingStatusResponse {
         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
         tunnel_error: pairing_state.tunnel_error.clone(),
         device_id: pairing_state.identity.device_id.clone(),
+        host_name: pairing_state.identity.host_name.clone(),
         auth_token: pairing_state.identity.auth_token.clone(),
         auth_tokens: auth_token_snapshots(pairing_state),
         wifi_ssid,

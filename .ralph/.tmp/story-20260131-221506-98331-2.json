@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 10,
+  "remaining": 9,
+  "quality_gates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze"
+  ],
+  "id": "US-002",
+  "title": "Expose host_name from desktop identity and use it for agent display"
+}

@@ -209,6 +209,7 @@ async fn handle_command(
                 json!({
                     "type": "identity",
                     "device_id": state.device_id(),
+                    "host_name": state.host_name(),
                     "auth_token": state.auth_token(),
                     "wifi_ssid": wifi_ssid,
                     "local_ips": local_ips,
@@ -221,6 +222,7 @@ async fn handle_command(
             Err(_) => json!({
                 "type": "identity",
                 "device_id": "",
+                "host_name": null,
                 "auth_token": "",
                 "wifi_ssid": null,
                 "local_ips": [],

@@ -174,7 +174,7 @@
     {
       "id": "US-001",
       "title": "Define and enforce UI action parity across mobile and desktop",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a user, I want the same-named buttons on mobile and desktop to perform the same actions so the UI is predictable.",
       "acceptanceCriteria": [
@@ -184,13 +184,13 @@
         "Negative case: a mismatched label/action is detected (manual QA checklist) and corrected before release"
       ],
       "startedAt": "2026-01-31T14:15:06.638763+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T14:15:06.638859+00:00"
+      "completedAt": "2026-01-31T14:35:57.916069+00:00",
+      "updatedAt": "2026-01-31T14:35:57.915978+00:00"
     },
     {
       "id": "US-002",
       "title": "Expose host_name from desktop identity and use it for agent display",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [],
       "description": "As a user, I want the PC agent to be identified by host name or device ID rather than IP:port.",
       "acceptanceCriteria": [
@@ -198,7 +198,10 @@
         "Mobile stores host_name and uses it in agent display label priority",
         "Example: after QR pairing, the agent label shows 'MyMacBook' instead of '192.168.1.10:8899'",
         "Negative case: if host_name is missing, the label falls back to device_id instead of IP:port"
-      ]
+      ],
+      "startedAt": "2026-01-31T14:36:00.014910+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T14:36:00.015039+00:00"
     },
     {
       "id": "US-003",

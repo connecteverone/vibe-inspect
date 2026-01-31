@@ -18,3 +18,7 @@
 
 ## Learned Signs
 
+### Sign: Document Known Flutter Analyze Failures
+- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
+- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
+- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies

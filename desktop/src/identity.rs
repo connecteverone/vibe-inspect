@@ -13,6 +13,8 @@ const LONG_TOKEN_LEN: usize = 64;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentIdentity {
     pub device_id: String,
+    #[serde(default)]
+    pub host_name: Option<String>,
     pub auth_token: String,
     pub created_at: u64,
     #[serde(default)]
@@ -59,6 +61,7 @@ pub fn load_or_create_identity() -> AgentIdentity {
                     hydrated.ensure_listen_port();
                     hydrated.ensure_roi_quic_port();
                     hydrated.ensure_primary_token();
+                    hydrated.ensure_host_name();
                     let _ = save_identity(&hydrated);
                     return hydrated;
                 }
@@ -69,6 +72,7 @@ pub fn load_or_create_identity() -> AgentIdentity {
     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
     let mut identity = AgentIdentity {
         device_id: hash_device_id(&raw_device_id),
+        host_name: current_host_name(),
         auth_token: generate_token(LONG_TOKEN_LEN),
         created_at: now_ts(),
         frp_url: None,
@@ -92,6 +96,10 @@ impl AgentIdentity {
         } else {
             self.listen_port
         }
+    }
+
+    pub fn host_name(&self) -> Option<String> {
+        self.host_name.clone()
     }
 
     pub fn roi_quic_port(&self) -> u16 {
@@ -398,6 +406,20 @@ impl AgentIdentity {
             self.roi_quic_port = default_roi_quic_port();
         }
     }
+
+    fn ensure_host_name(&mut self) {
+        let has_value = self
+            .host_name
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        if has_value {
+            return;
+        }
+        if let Some(value) = current_host_name() {
+            self.host_name = Some(value);
+        }
+    }
 }
 
 fn default_listen_port() -> u16 {
@@ -406,6 +428,16 @@ fn default_listen_port() -> u16 {
 
 fn default_roi_quic_port() -> u16 {
     5000
+}
+
+fn current_host_name() -> Option<String> {
+    let raw = hostname::get().ok()?;
+    let value = raw.to_string_lossy().trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn identity_path() -> Option<PathBuf> {
