@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-01 00:41:19 | run=20260131-221506-98331 | iter=6 | mode=build | story=US-005 | duration=2116s | status=success
 - 2026-02-01 00:06:00 | run=20260131-221506-98331 | iter=5 | mode=build | story=US-004 | duration=902s | status=success
 - 2026-01-31 23:50:56 | run=20260131-221506-98331 | iter=4 | mode=build | story=US-004 | duration=2046s | status=success
 - 2026-01-31 23:16:48 | run=20260131-221506-98331 | iter=3 | mode=build | story=US-003 | duration=905s | status=success
@@ -235,3 +236,9 @@
 [2026-02-01 00:29:55] US-005 ran flutter tests/analyze
 [2026-02-01 00:35:32] US-005 browser UI check completed
 [2026-02-01 00:39:52] US-005 progress log updated
+[2026-02-01 00:41:18] ITERATION 6 end (duration=2116s)
+[2026-02-01 00:41:21] ITERATION 7 start (mode=build story=US-006)
+[2026-02-01 00:42:20] Start US-006 terminal session desktop UI
+[2026-02-01 00:55:41] Implemented desktop terminal detail view with polling, input, resize, and stop controls
+[2026-02-01 00:58:37] Ran flutter tests/analyze and web build commands
+[2026-02-01 00:59:55] Verified desktop terminal UI in browser and captured screenshot

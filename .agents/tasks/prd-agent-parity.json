@@ -238,7 +238,7 @@
     {
       "id": "US-005",
       "title": "Fix terminal session list reconciliation and persistence",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-004"
       ],
@@ -250,13 +250,13 @@
         "Negative case: if the desktop agent restarted and sessions are gone, mobile marks them as closed with a clear reason"
       ],
       "startedAt": "2026-01-31T16:06:02.324672+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T16:06:02.324786+00:00"
+      "completedAt": "2026-01-31T16:41:19.081059+00:00",
+      "updatedAt": "2026-01-31T16:41:19.080973+00:00"
     },
     {
       "id": "US-006",
       "title": "Enable terminal session operation from desktop UI",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-005"
       ],
@@ -266,7 +266,10 @@
         "Desktop UI supports resize and stop actions consistent with mobile behavior",
         "Example: open a session, run 'ls', and see output update live",
         "Negative case: if the session is missing or ended, the UI shows a non-blocking error and disables input"
-      ]
+      ],
+      "startedAt": "2026-01-31T16:41:21.184734+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T16:41:21.184849+00:00"
     },
     {
       "id": "US-007",

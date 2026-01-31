@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 10,
+  "remaining": 5,
+  "quality_gates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze"
+  ],
+  "id": "US-006",
+  "title": "Enable terminal session operation from desktop UI"
+}
