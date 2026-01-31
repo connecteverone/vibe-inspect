@@ -646,3 +646,36 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-095746-38453
   - Gotchas encountered: Flutter web command bar submits on Enter reliably.
   - Useful context: dev-browser requires server.sh to finish npm install.
 ---
+## [2026-01-31 22:30:54] - US-001: Define and enforce UI action parity across mobile and desktop
+Thread: 
+Run: 20260131-221506-98331 (iteration 1)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-1.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: c0e84be fix(ui): align disconnect action labels
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: cd mobile && flutter build web -> PASS (warnings about FlutterLoader.loadEntrypoint deprecation and wasm dry run incompatibilities)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+  - Command: cd .codex/skills/dev-browser && npx tsx (load http://127.0.0.1:8030/, verify Disconnect string) -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-1.log
+  - docs/ui_action_parity.md
+  - mobile/lib/main.dart
+- What was implemented
+  Added a UI action parity map and aligned the mobile terminal session tooltip
+  with the desktop "Disconnect" action to keep labels consistent across
+  platforms.
+- **Learnings for future iterations:**
+  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
+  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
+  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+---
