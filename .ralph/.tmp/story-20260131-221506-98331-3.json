@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "total": 10,
+  "remaining": 8,
+  "quality_gates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze"
+  ],
+  "id": "US-003",
+  "title": "Show mobile device name + device ID in desktop device list"
+}
