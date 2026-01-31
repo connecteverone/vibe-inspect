@@ -989,3 +989,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool deps.
   - Useful context: flutter build web emits wasm/ffi warnings but completes successfully.
 ---
+## [2026-02-01 03:02] - US-010: Standardize error handling and diagnostics across clients
+Thread: 
+Run: 20260131-221506-98331 (iteration 11)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-11.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-11.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 0623c4f feat(errors): standardize client error details
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm/ffi warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-10.log
+  - .ralph/runs/run-20260131-221506-98331-iter-10.md
+  - .ralph/runs/run-20260131-221506-98331-iter-11.log
+  - desktop/frontend/index.html
+  - mobile/lib/main.dart
+- What was implemented
+  - Added standardized error presentations with friendly messages + error codes across mobile pairing, API, terminal, VNC, and ROI flows.
+  - Captured diagnostic metadata (endpoint, request id, details) in logs and desktop UI status handling.
+  - Aligned desktop agent UI error parsing with shared error-code mapping.
+- **Learnings for future iterations:**
+  - Patterns discovered: Use centralized error presentation helpers to keep user-facing messaging consistent.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: flutter build web succeeds with wasm/ffi warnings; browser check verified UI loads.
+---
