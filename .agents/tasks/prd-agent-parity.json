@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "project": "Agent Parity & Reliability",
+  "overview": "Align mobile and desktop (PC agent) UI/behavior, fix agent/device naming, stabilize terminal session sync and control, add terminal notifications to mobile, enforce fixed ports, and harden error handling without breaking existing pairing flows.",
+  "goals": [
+    "Unify button labels and behaviors across mobile and desktop so same-named actions do the same thing",
+    "Show PC agent identity using host name or device ID instead of IP:port",
+    "Keep terminal session lists consistent across mobile and desktop with rename support and operability",
+    "Forward terminal notifications from desktop agent to mobile and surface them in timeline/alerts",
+    "Guarantee QR pairing and static token + addr login are both supported with approval + token reuse",
+    "Enforce configured ports for local server and ROI QUIC, with clear startup errors on conflict",
+    "Provide friendly, actionable errors with developer-facing details across both clients"
+  ],
+  "nonGoals": [
+    "Do not add automatic port-fallback or random port selection",
+    "Do not add auto-discovery or new cloud relay services",
+    "Do not redesign the entire UI; only align and harden the existing experience",
+    "Do not change the core auth model (tokens + pairing)"
+  ],
+  "successMetrics": [
+    "QR pairing and static token + addr login both succeed end-to-end with clear errors on failure",
+    "Agent label never shows raw IP:port when host name or device ID is available",
+    "Terminal session list is non-empty when sessions exist and reconciles within one refresh cycle",
+    "Terminal session rename appears on both mobile and desktop within 5 seconds",
+    "Device list shows mobile device name + device ID and supports unbind/offline actions",
+    "Port conflicts block startup with an explicit error message and no fallback",
+    "All quality gates pass"
+  ],
+  "openQuestions": [
+    "Should terminal session metadata persist across desktop agent restarts, or should sessions be marked closed with a clear reason?",
+    "What exact device name should mobile report (platform-only vs model name) if OS APIs allow?",
+    "What is the source of terminal notifications (command completion, explicit 'notify' command, or error-only)?",
+    "Do we need desktop-side test/lint/build commands as quality gates in addition to mobile?",
+    "Where should desktop store new metadata (extend identity JSON vs a new storage file)?"
+  ],
+  "stack": {
+    "framework": "Flutter (mobile) + Rust (Axum) + Tauri (desktop) + HTML/JS (desktop UI)",
+    "hosting": "Local device apps (no server hosting)",
+    "database": "Mobile: SQLite via sqflite; Desktop: JSON file(s) on disk",
+    "auth": "QR pairing with approval + device-bound long-lived token + static tokens"
+  },
+  "routes": [
+    {
+      "path": "/",
+      "name": "Desktop Dashboard",
+      "purpose": "QR, device list, terminal sessions, status"
+    },
+    {
+      "path": "/settings",
+      "name": "Desktop Settings",
+      "purpose": "Tokens, FRP URL, listen/ROI ports"
+    },
+    {
+      "path": "mobile://connections",
+      "name": "Connections",
+      "purpose": "Agent list + pairing options"
+    },
+    {
+      "path": "mobile://scan",
+      "name": "QR Scan",
+      "purpose": "Scan pairing QR and approve flow"
+    },
+    {
+      "path": "mobile://manual",
+      "name": "Manual Login",
+      "purpose": "Static token + addr login"
+    },
+    {
+      "path": "mobile://agent/:id",
+      "name": "Agent Detail",
+      "purpose": "Status, devices, sessions"
+    },
+    {
+      "path": "mobile://terminal",
+      "name": "Terminal List",
+      "purpose": "List terminal sessions"
+    },
+    {
+      "path": "mobile://terminal/:id",
+      "name": "Terminal Session",
+      "purpose": "Operate a terminal session"
+    }
+  ],
+  "uiNotes": [
+    "Button labels must match behavior across mobile and desktop; create a single action map and align naming",
+    "Agent display name priority: user-defined label > host_name > device_id > short token; never raw IP:port when host_name/device_id exists",
+    "Device list shows '<device name> \u00b7 <device id>' with status tags and clear actions (Disconnect vs Unbind vs Block)",
+    "Terminal sessions show label, status, last activity, last output preview, and allow rename + open detail",
+    "Errors show friendly summary with expandable developer details (error code, endpoint, request id)",
+    "Empty states differentiate 'no sessions' from 'cannot fetch sessions'"
+  ],
+  "dataModel": [
+    {
+      "entity": "AgentIdentity",
+      "fields": [
+        "device_id",
+        "host_name",
+        "auth_token",
+        "listen_port",
+        "roi_quic_port",
+        "frp_url"
+      ]
+    },
+    {
+      "entity": "ConnectionRecord",
+      "fields": [
+        "id",
+        "agent_url",
+        "token",
+        "device_id",
+        "host_name",
+        "display_name",
+        "last_route",
+        "last_seen_at",
+        "last_error"
+      ]
+    },
+    {
+      "entity": "ClientDevice",
+      "fields": [
+        "client_id",
+        "client_name",
+        "device_id",
+        "platform",
+        "paired_at",
+        "last_seen_at",
+        "blocked_until",
+        "status"
+      ]
+    },
+    {
+      "entity": "TerminalSession",
+      "fields": [
+        "id",
+        "label",
+        "status",
+        "created_at",
+        "last_activity",
+        "exit_code",
+        "last_output"
+      ]
+    },
+    {
+      "entity": "TerminalNotification",
+      "fields": [
+        "id",
+        "session_id",
+        "message",
+        "level",
+        "created_at",
+        "source"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Not applicable",
+    "example": {}
+  },
+  "rules": [
+    "Desktop agent must bind to configured listen_port and roi_quic_port only; if unavailable, startup fails with an explicit error and no fallback",
+    "QR pairing requires approval and returns a device-bound token reused for the same client_id; static token + addr login must bypass approval",
+    "Agent display name must never default to raw IP:port if host_name or device_id is available",
+    "Device names shown on desktop must include mobile device name + device ID, and unbind must revoke the device-bound token",
+    "Terminal session rename must be validated (non-empty, length-limited) and synchronized to both ends; if sync fails, revert and show error",
+    "Terminal session list reconciliation uses desktop as source of truth for running sessions; missing sessions are marked closed with a reason",
+    "Terminal notifications are deduplicated and rate-limited per session to avoid spam",
+    "Error surfaces include user-friendly summaries plus developer diagnostics (code, request id, endpoint)"
+  ],
+  "qualityGates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Define and enforce UI action parity across mobile and desktop",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a user, I want the same-named buttons on mobile and desktop to perform the same actions so the UI is predictable.",
+      "acceptanceCriteria": [
+        "Create an action-parity map (document or config) listing each shared action name and its expected behavior",
+        "Update mobile and desktop UI labels and handlers to match the action-parity map",
+        "Example: a button labeled 'Disconnect' removes the active session but keeps the pairing on both platforms",
+        "Negative case: a mismatched label/action is detected (manual QA checklist) and corrected before release"
+      ],
+      "startedAt": "2026-01-31T14:15:06.638763+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T14:15:06.638859+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Expose host_name from desktop identity and use it for agent display",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a user, I want the PC agent to be identified by host name or device ID rather than IP:port.",
+      "acceptanceCriteria": [
+        "Desktop identity response includes host_name (and is stored in pairing status as needed)",
+        "Mobile stores host_name and uses it in agent display label priority",
+        "Example: after QR pairing, the agent label shows 'MyMacBook' instead of '192.168.1.10:8899'",
+        "Negative case: if host_name is missing, the label falls back to device_id instead of IP:port"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Show mobile device name + device ID in desktop device list",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a desktop user, I want connected devices to show a clear mobile device name and device ID so I can manage them.",
+      "acceptanceCriteria": [
+        "Mobile sends a device name plus device ID (client_id) for client_name or a new dedicated field",
+        "Desktop device list displays '<device name> \u00b7 <device id>' and keeps existing actions (block/kick/forget)",
+        "Example: device appears as 'iOS \u00b7 8f3a1b' with last seen time",
+        "Negative case: if device name is empty, desktop shows 'Unknown \u00b7 <device id>' and still allows unbind"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Add terminal session labels and rename synchronization",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a user, I want to rename terminal sessions and have the name synced between mobile and desktop.",
+      "acceptanceCriteria": [
+        "Terminal session payloads include a label field in list/status responses",
+        "Add a terminal rename action that updates desktop session metadata and syncs to mobile storage",
+        "Example: rename session to 'Deploy logs' on mobile and the desktop list shows the same label within 5 seconds",
+        "Negative case: renaming to an empty string is rejected with a user-friendly error and no changes applied"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Fix terminal session list reconciliation and persistence",
+      "status": "open",
+      "dependsOn": [
+        "US-004"
+      ],
+      "description": "As a user, I want terminal session lists to stay consistent across reconnects and not appear empty when sessions exist.",
+      "acceptanceCriteria": [
+        "Desktop provides a stable list of running/recent terminal sessions; mobile reconciles with local storage",
+        "Mobile differentiates 'no sessions' from 'cannot fetch sessions' with distinct UI states",
+        "Example: after reconnect, sessions created earlier appear in both mobile and desktop lists",
+        "Negative case: if the desktop agent restarted and sessions are gone, mobile marks them as closed with a clear reason"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Enable terminal session operation from desktop UI",
+      "status": "open",
+      "dependsOn": [
+        "US-005"
+      ],
+      "description": "As a desktop user, I want to open a terminal session and interact with it directly from the desktop UI.",
+      "acceptanceCriteria": [
+        "Desktop UI provides a terminal session detail view with live output and input support (WebSocket or polling)",
+        "Desktop UI supports resize and stop actions consistent with mobile behavior",
+        "Example: open a session, run 'ls', and see output update live",
+        "Negative case: if the session is missing or ended, the UI shows a non-blocking error and disables input"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Forward terminal notifications from desktop to mobile",
+      "status": "open",
+      "dependsOn": [
+        "US-004"
+      ],
+      "description": "As a mobile user, I want terminal notifications received by the desktop agent to appear on mobile.",
+      "acceptanceCriteria": [
+        "Define a terminal notification payload and delivery path from desktop agent to mobile",
+        "Mobile stores notifications in timeline and optionally surfaces a toast/banner",
+        "Example: terminal session emits a warning notification and mobile shows it in the timeline",
+        "Negative case: if mobile is offline, notifications queue or fail gracefully without crashing"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Harden pairing flows for QR approval + static token + addr",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a user, I want both QR pairing (with approval) and static token + addr login to work reliably with clear errors.",
+      "acceptanceCriteria": [
+        "QR pairing flow validates expiry, requires approval, and stores the device-bound token on success",
+        "Manual login accepts static token + addr without requiring desktop approval when token is valid",
+        "Example: scan QR, approve on desktop, and reconnect later using stored token without re-approval",
+        "Negative case: expired QR shows an explicit error and prompts to generate a new code"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Enforce fixed ports for local server and ROI QUIC",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As an operator, I want the desktop agent to fail fast on port conflicts instead of switching ports.",
+      "acceptanceCriteria": [
+        "Desktop agent refuses to start if listen_port or roi_quic_port is in use and reports the conflict",
+        "UI surfaces a clear error message with the conflicting port number and remediation hint",
+        "Example: port 8899 in use -> startup error shown in UI and logs",
+        "Negative case: the agent does not auto-select another port or start silently"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Standardize error handling and diagnostics across clients",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a user and developer, I want errors to be friendly yet actionable with diagnostic details.",
+      "acceptanceCriteria": [
+        "All major connection/terminal/device errors map to user-friendly messages and structured error codes",
+        "Developer details (code, endpoint, request id) are available via UI expansion or logs",
+        "Example: invalid token shows a friendly message and error code 'invalid_token'",
+        "Negative case: raw stack traces or empty error dialogs are not shown to users"
+      ]
+    }
+  ]
+}

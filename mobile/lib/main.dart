@@ -9725,7 +9725,7 @@ class _TerminalSessionRow extends StatelessWidget {
                 IconButton(
                   onPressed: onClose,
                   icon: const Icon(Icons.stop_circle_outlined),
-                  tooltip: 'Kill session',
+                  tooltip: 'Disconnect',
                 ),
               ],
             ],
