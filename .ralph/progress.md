@@ -954,3 +954,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool deps.
   - Useful context: flutter build web emits wasm/ffi warnings but completes successfully.
 ---
+## [2026-02-01 02:25:30] - US-009: Enforce fixed ports for local server and ROI QUIC
+Thread: 
+Run: 20260131-221506-98331 (iteration 10)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-10.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-10.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 3858086 fix(server): fail fast on port conflicts; 845c402 chore(ralph): update run log
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm/ffi warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-9.log
+  - .ralph/runs/run-20260131-221506-98331-iter-9.md
+  - .ralph/runs/run-20260131-221506-98331-iter-10.log
+  - desktop/src/pairing.rs
+  - desktop/src/quic/mod.rs
+  - desktop/src/server.rs
+- What was implemented
+  - Enforced fixed listen/ROI QUIC ports, rejecting port 0 and mismatched bindings.
+  - Added port-in-use errors with remediation hints and log output for conflicts.
+- **Learnings for future iterations:**
+  - Patterns discovered: Port conflicts should emit messages prefixed with "Local server unavailable." so tunnel errors clear correctly.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool deps.
+  - Useful context: flutter build web emits wasm/ffi warnings but completes successfully.
+---
