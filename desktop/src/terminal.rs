@@ -25,12 +25,27 @@ const SNAPSHOT_SCROLLBACK: usize = 0;
 const MAX_LABEL_LEN: usize = 80;
 const TERMINAL_SESSIONS_FILE: &str = "terminal_sessions.json";
 const TERMINAL_RESTART_REASON: &str = "Session closed because the desktop agent restarted.";
+const NOTIFICATION_RATE_LIMIT_SECS: u64 = 10;
+const NOTIFICATION_QUEUE_LIMIT: usize = 200;
+const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
 
 #[derive(Clone)]
 struct TerminalOutputChunk {
     seq: u64,
     data: String,
     ts: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct TerminalNotification {
+    id: String,
+    session_id: String,
+    message: String,
+    level: String,
+    created_at: u64,
+    source: String,
+    seq: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +81,9 @@ struct TerminalSession {
     buffer: VecDeque<TerminalOutputChunk>,
     buffer_bytes: usize,
     next_seq: u64,
+    notification_seq: u64,
+    notifications: VecDeque<TerminalNotification>,
+    notification_cache: HashMap<String, u64>,
     parser: vt100::Parser,
     utf8_carry: Vec<u8>,
     master: Box<dyn MasterPty + Send>,
@@ -78,6 +96,7 @@ impl TerminalSession {
         if data.is_empty() {
             return;
         }
+        self.capture_notifications(&data);
         self.next_seq = self.next_seq.saturating_add(1);
         let chunk = TerminalOutputChunk {
             seq: self.next_seq,
@@ -131,6 +150,72 @@ impl TerminalSession {
         output
     }
 
+    fn notifications_since(&self, since: u64, limit: usize) -> Vec<TerminalNotification> {
+        let mut notifications = self
+            .notifications
+            .iter()
+            .filter(|notification| notification.seq > since)
+            .cloned()
+            .collect::<Vec<_>>();
+        if notifications.len() > limit {
+            notifications = notifications.split_off(notifications.len() - limit);
+        }
+        notifications
+    }
+
+    fn capture_notifications(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let now = now_ts();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let lowered = trimmed.to_lowercase();
+            let (level, matched) = if lowered.contains("warning") || lowered.contains("warn") {
+                ("warning", true)
+            } else if lowered.contains("error")
+                || lowered.contains("failed")
+                || lowered.contains("fatal")
+            {
+                ("error", true)
+            } else {
+                ("info", false)
+            };
+            if !matched {
+                continue;
+            }
+            let message = truncate_message(trimmed, NOTIFICATION_MESSAGE_LIMIT);
+            let fingerprint = format!("{}:{}", level, message);
+            if let Some(last_seen) = self.notification_cache.get(&fingerprint) {
+                if now.saturating_sub(*last_seen) < NOTIFICATION_RATE_LIMIT_SECS {
+                    continue;
+                }
+            }
+            self.notification_cache.insert(fingerprint, now);
+            if self.notification_cache.len() > NOTIFICATION_QUEUE_LIMIT {
+                self.notification_cache
+                    .retain(|_, ts| now.saturating_sub(*ts) < 300);
+            }
+            self.notification_seq = self.notification_seq.saturating_add(1);
+            let notification = TerminalNotification {
+                id: format!("{}:{}", self.id, self.notification_seq),
+                session_id: self.id.clone(),
+                message: message.to_string(),
+                level: level.to_string(),
+                created_at: now,
+                source: "terminal_output".to_string(),
+                seq: self.notification_seq,
+            };
+            if self.notifications.len() >= NOTIFICATION_QUEUE_LIMIT {
+                self.notifications.pop_front();
+            }
+            self.notifications.push_back(notification);
+        }
+    }
+
     fn first_seq(&self) -> Option<u64> {
         self.buffer.front().map(|chunk| chunk.seq)
     }
@@ -182,6 +267,7 @@ pub struct TerminalActionRequest {
     pub rows: Option<u16>,
     pub since: Option<u64>,
     pub limit: Option<usize>,
+    pub notify_since: Option<u64>,
     pub working_dir: Option<String>,
     pub env: Option<HashMap<String, String>>,
 }
@@ -430,6 +516,8 @@ async fn run_terminal_stream(
         initial_first_seq,
         initial_snapshot,
         initial_label,
+        initial_notifications,
+        initial_notification_seq,
     ) = {
         let session = session
             .lock()
@@ -442,6 +530,8 @@ async fn run_terminal_stream(
             session.first_seq(),
             session.snapshot_formatted(),
             session.label.clone(),
+            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
+            session.notification_seq,
         )
     };
     let initial_truncated = initial_first_seq
@@ -459,6 +549,8 @@ async fn run_terminal_stream(
         initial_exit,
         now_ts(),
         Some(initial_label.as_str()),
+        initial_notification_seq,
+        initial_notifications,
     );
     sender
         .send(Message::Text(initial_payload.to_string().into()))
@@ -469,12 +561,13 @@ async fn run_terminal_stream(
     let mut last_status = initial_status;
     let mut last_exit = initial_exit;
     let mut last_label = initial_label;
+    let mut last_notification_seq = initial_notification_seq;
     let mut last_sent_at = Instant::now();
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let (output, status, next_seq, exit_code, first_seq, snapshot, label) = {
+                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
                     let session = session
                         .lock()
                         .map_err(|_| "Terminal session unavailable.".to_string())?;
@@ -486,6 +579,8 @@ async fn run_terminal_stream(
                         session.first_seq(),
                         session.snapshot_formatted(),
                         session.label.clone(),
+                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
+                        session.notification_seq,
                     )
                 };
 
@@ -493,6 +588,7 @@ async fn run_terminal_stream(
                     && status == last_status
                     && exit_code == last_exit
                     && label == last_label
+                    && notifications.is_empty()
                 {
                     if last_sent_at.elapsed() > Duration::from_secs(15) {
                         let _ = sender.send(Message::Ping(Vec::new().into())).await;
@@ -505,6 +601,7 @@ async fn run_terminal_stream(
                 last_status = status;
                 last_exit = exit_code;
                 last_label = label.clone();
+                last_notification_seq = notification_seq;
 
                 let truncated = first_seq
                     .map(|first| last_seq.saturating_add(1) < first)
@@ -521,6 +618,8 @@ async fn run_terminal_stream(
                     exit_code,
                     now_ts(),
                     Some(label.as_str()),
+                    notification_seq,
+                    notifications,
                 );
                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
                     break;
@@ -554,6 +653,7 @@ async fn run_terminal_stream(
                                         rows: None,
                                         since: None,
                                         limit: None,
+                                        notify_since: None,
                                         working_dir: None,
                                         env: None,
                                     };
@@ -573,6 +673,7 @@ async fn run_terminal_stream(
                                         rows,
                                         since: None,
                                         limit: None,
+                                        notify_since: None,
                                         working_dir: None,
                                         env: None,
                                     };
@@ -589,6 +690,7 @@ async fn run_terminal_stream(
                                     rows: None,
                                     since: None,
                                     limit: None,
+                                    notify_since: None,
                                     working_dir: None,
                                     env: None,
                                 };
@@ -604,6 +706,7 @@ async fn run_terminal_stream(
                                     rows: None,
                                     since: None,
                                     limit: None,
+                                    notify_since: None,
                                     working_dir: None,
                                     env: None,
                                 };
@@ -696,6 +799,9 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         buffer: VecDeque::new(),
         buffer_bytes: 0,
         next_seq: 0,
+        notification_seq: 0,
+        notifications: VecDeque::new(),
+        notification_cache: HashMap::new(),
         parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
         utf8_carry: Vec::new(),
         master: pair.master,
@@ -742,6 +848,8 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         None,
         now,
         Some(label.as_str()),
+        0,
+        Vec::new(),
     ))
 }
 
@@ -761,8 +869,10 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
     session.last_activity = now_ts();
     let since = request.since.unwrap_or(0);
+    let notify_since = request.notify_since.unwrap_or(0);
     let limit = request.limit.unwrap_or(OUTPUT_LIMIT_DEFAULT);
     let output = session.output_since(since, limit);
+    let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
     let first_seq = session.first_seq();
     let truncated = first_seq
         .map(|first| since.saturating_add(1) < first)
@@ -784,6 +894,8 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        notifications,
     ))
 }
 
@@ -831,6 +943,8 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        Vec::new(),
     ))
 }
 
@@ -877,6 +991,8 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        Vec::new(),
     ))
 }
 
@@ -911,6 +1027,8 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        Vec::new(),
     ))
 }
 
@@ -950,6 +1068,8 @@ fn keepalive_session(request: TerminalActionRequest) -> Result<Value, TerminalEr
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        Vec::new(),
     ))
 }
 
@@ -968,6 +1088,8 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
     let snapshot = session.snapshot_formatted();
+    let notify_since = request.notify_since.unwrap_or(0);
+    let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
     Ok(build_session_payload(
         "status",
         &session.id,
@@ -980,6 +1102,8 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         session.exit_code,
         session.last_activity,
         Some(session.label.as_str()),
+        session.notification_seq,
+        notifications,
     ))
 }
 
@@ -1013,6 +1137,8 @@ fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         session.exit_code,
         session.last_activity,
         Some(label.as_str()),
+        session.notification_seq,
+        Vec::new(),
     ))
 }
 
@@ -1084,6 +1210,18 @@ fn ensure_label_length(label: &str) -> Result<(), TerminalError> {
 fn default_label(session_id: &str) -> String {
     let short = session_id.chars().take(6).collect::<String>();
     format!("Terminal {}", short)
+}
+
+fn truncate_message(message: &str, max_len: usize) -> String {
+    if message.chars().count() <= max_len {
+        return message.to_string();
+    }
+    if max_len <= 3 {
+        return message.chars().take(max_len).collect();
+    }
+    let mut truncated = message.chars().take(max_len - 3).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read + Send>) {
@@ -1171,6 +1309,8 @@ fn build_session_payload(
     exit_code: Option<i32>,
     last_activity: u64,
     label: Option<&str>,
+    notification_next_seq: u64,
+    notifications: Vec<TerminalNotification>,
 ) -> Value {
     let output_json = output
         .into_iter()
@@ -1196,6 +1336,19 @@ fn build_session_payload(
     });
     if let Some(map) = payload.as_object_mut() {
         map.insert("label".to_string(), json!(label.unwrap_or("")));
+        map.insert(
+            "notification_next_seq".to_string(),
+            json!(notification_next_seq),
+        );
+    }
+    if !notifications.is_empty() {
+        let notifications_json = notifications
+            .into_iter()
+            .map(|notification| json!(notification))
+            .collect::<Vec<_>>();
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("notifications".to_string(), json!(notifications_json));
+        }
     }
     if let Some(snapshot) = snapshot {
         if let Some(map) = payload.as_object_mut() {

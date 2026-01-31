@@ -3059,7 +3059,10 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
 
   Future<void> _openSession(ToolSession session) async {
     final baseUrl = _agentBaseUrl;
-    final latestEvent = _latestEventForSession(session.id);
+    final latestEvent = _latestEventForSession(
+      session.id,
+      sessionType: session.type,
+    );
     if (session.type == 'terminal') {
       await Navigator.of(context)
           .push(
@@ -3135,9 +3138,17 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
     );
   }
 
-  TimelineEvent? _latestEventForSession(String sessionId) {
+  TimelineEvent? _latestEventForSession(
+    String sessionId, {
+    String? sessionType,
+  }) {
+    final normalizedType = sessionType?.toLowerCase();
     for (final event in _events) {
       if (event.sessionId == sessionId) {
+        if (normalizedType != null &&
+            event.type.toLowerCase() != normalizedType) {
+          continue;
+        }
         return event;
       }
     }
@@ -3275,7 +3286,10 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
                         for (final session in sessions) ...[
                           _AgentSessionRow(
                             session: session,
-                            event: _latestEventForSession(session.id),
+                            event: _latestEventForSession(
+                              session.id,
+                              sessionType: session.type,
+                            ),
                             onTap: () => _openSession(session),
                           ),
                           if (session != sessions.last)
@@ -4078,6 +4092,12 @@ _EventVisuals _eventVisuals(String type) {
         icon: Icons.terminal,
         backgroundColor: Color(0xFFDCFCE7),
         foregroundColor: Color(0xFF166534),
+      );
+    case 'terminal_notification':
+      return const _EventVisuals(
+        icon: Icons.notifications_active,
+        backgroundColor: Color(0xFFFEF3C7),
+        foregroundColor: Color(0xFF92400E),
       );
     case 'ai':
       return const _EventVisuals(
@@ -5704,6 +5724,7 @@ class TerminalSessionView {
     required this.session,
     required this.output,
     this.nextSeq = 0,
+    this.notificationSeq = 0,
     this.exitCode,
     this.lastCommand,
     this.lastEvent,
@@ -5712,6 +5733,7 @@ class TerminalSessionView {
   final ToolSession session;
   final List<TerminalOutputEntry> output;
   final int nextSeq;
+  final int notificationSeq;
   final int? exitCode;
   final String? lastCommand;
   final TimelineEvent? lastEvent;
@@ -5720,6 +5742,7 @@ class TerminalSessionView {
     ToolSession? session,
     List<TerminalOutputEntry>? output,
     int? nextSeq,
+    int? notificationSeq,
     int? exitCode,
     String? lastCommand,
     TimelineEvent? lastEvent,
@@ -5728,6 +5751,7 @@ class TerminalSessionView {
       session: session ?? this.session,
       output: output ?? this.output,
       nextSeq: nextSeq ?? this.nextSeq,
+      notificationSeq: notificationSeq ?? this.notificationSeq,
       exitCode: exitCode ?? this.exitCode,
       lastCommand: lastCommand ?? this.lastCommand,
       lastEvent: lastEvent ?? this.lastEvent,
@@ -6055,6 +6079,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   bool _terminalChannelReady = false;
   final Map<String, _TerminalGrid> _terminalSizes = {};
   final Map<String, DateTime> _terminalPersistedAt = {};
+  DateTime? _lastNotificationToastAt;
   Timer? _terminalReconnectTimer;
   Timer? _terminalKeepaliveTimer;
   int _terminalReconnectAttempts = 0;
@@ -7568,11 +7593,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
             : _parseOutputEntries(event.payload, event.createdAt);
         final lastCommand = event?.payload['command']?.toString();
         final nextSeq = event == null ? 0 : _parseNextSeq(event.payload);
+        final notificationSeq =
+            event == null ? 0 : _parseNotificationSeq(event.payload);
         final exitCode = event == null ? null : _parseExitCode(event.payload);
         return TerminalSessionView(
           session: session,
           output: output,
           nextSeq: nextSeq,
+          notificationSeq: notificationSeq,
           exitCode: exitCode,
           lastCommand: lastCommand,
           lastEvent: event,
@@ -7712,6 +7740,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final payload = await agentClient.sendTerminalAction(
         action: 'status',
         sessionId: view.session.id,
+        notifySince: view.notificationSeq,
       );
       await _applyTerminalPayload(
         sessionId: view.session.id,
@@ -7823,6 +7852,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         sessionId: active.session.id,
         since: active.nextSeq,
         limit: _maxOutputEntries,
+        notifySince: active.notificationSeq,
       );
       await _applyTerminalPayload(
         sessionId: active.session.id,
@@ -8594,6 +8624,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     required List<TerminalOutputEntry> entries,
     required String status,
     int? nextSeq,
+    int? notificationSeq,
     int? exitCode,
     String? errorMessage,
   }) async {
@@ -8612,6 +8643,11 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     payload['output_preview'] = _buildOutputPreview(entries);
     if (nextSeq != null) {
       payload['next_seq'] = nextSeq;
+    }
+    if (notificationSeq != null) {
+      payload['notification_next_seq'] = notificationSeq;
+    } else {
+      payload.remove('notification_next_seq');
     }
     if (exitCode != null) {
       payload['exit_code'] = exitCode;
@@ -8674,6 +8710,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         labelRaw.trim().isNotEmpty ? labelRaw.trim() : view.session.label;
     final action = payload['action']?.toString() ?? '';
     final nextSeq = _parseNextSeq(payload, fallback: view.nextSeq);
+    final notificationNextSeq =
+        _parseNotificationSeq(payload, fallback: view.notificationSeq);
     final firstSeq =
         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
     final expectedNext = view.nextSeq + 1;
@@ -8705,9 +8743,15 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       session: updatedSession,
       output: mergedOutput,
       nextSeq: nextSeq,
+      notificationSeq: notificationNextSeq,
       exitCode: exitCode,
     );
     _replaceSession(sessionId, updatedView);
+    await _handleTerminalNotifications(
+      sessionId: sessionId,
+      sessionLabel: resolvedLabel,
+      rawNotifications: payload['notifications'],
+    );
     if (action == 'start' || nextSeq < view.nextSeq) {
       _terminalGapWarned.remove(sessionId);
       _terminalTruncateWarned.remove(sessionId);
@@ -8752,6 +8796,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           entries: mergedOutput,
           status: status,
           nextSeq: nextSeq,
+          notificationSeq: notificationNextSeq,
           exitCode: exitCode,
           errorMessage: errorMessage,
         );
@@ -8966,6 +9011,125 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       }
     }
     return fallback;
+  }
+
+  int _parseNotificationSeq(
+    Map<String, dynamic> payload, {
+    int fallback = 0,
+  }) {
+    final raw = payload['notification_next_seq'] ?? payload['notify_next_seq'];
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+    return fallback;
+  }
+
+  String _notificationTitle(String level) {
+    switch (level.toLowerCase()) {
+      case 'warning':
+        return 'Terminal warning';
+      case 'error':
+        return 'Terminal error';
+      case 'info':
+        return 'Terminal notice';
+      default:
+        return 'Terminal notification';
+    }
+  }
+
+  bool _shouldToastNotification(String level) {
+    final normalized = level.toLowerCase();
+    return normalized == 'warning' || normalized == 'error';
+  }
+
+  Future<void> _handleTerminalNotifications({
+    required String sessionId,
+    required String sessionLabel,
+    required dynamic rawNotifications,
+  }) async {
+    if (rawNotifications is! List || rawNotifications.isEmpty) {
+      return;
+    }
+    final parsed = <Map<String, dynamic>>[];
+    for (final item in rawNotifications) {
+      if (item is! Map) {
+        continue;
+      }
+      parsed.add(Map<String, dynamic>.from(item));
+    }
+    if (parsed.isEmpty) {
+      return;
+    }
+    TimelineEvent? latestEvent;
+    for (final item in parsed) {
+      final messageRaw = item['message']?.toString() ?? '';
+      final message = messageRaw.trim();
+      if (message.isEmpty) {
+        continue;
+      }
+      final rawId = item['id']?.toString() ?? '';
+      final notificationId =
+          rawId.trim().isNotEmpty ? rawId.trim() : createStorageId();
+      final level = item['level']?.toString().toLowerCase() ?? 'info';
+      final createdAt =
+          _parseEpochSeconds(item['created_at']) ?? DateTime.now();
+      final source = item['source']?.toString() ?? 'terminal';
+      final event = TimelineEvent(
+        id: notificationId,
+        sessionId: sessionId,
+        type: 'terminal_notification',
+        title: _notificationTitle(level),
+        payload: {
+          'message': message,
+          'level': level,
+          'source': source,
+          'session_id': sessionId,
+          'session_label': sessionLabel,
+          'notification_id': notificationId,
+          'created_at': createdAt.toIso8601String(),
+        },
+        createdAt: createdAt,
+      );
+      try {
+        await widget.storage.insertTimelineEvent(event);
+        latestEvent = event;
+      } catch (_) {
+        // Ignore notification storage failures.
+      }
+    }
+    if (!mounted || latestEvent == null) {
+      return;
+    }
+    final level = latestEvent.payload['level']?.toString() ?? 'info';
+    if (!_shouldToastNotification(level)) {
+      return;
+    }
+    final now = DateTime.now();
+    final lastToast = _lastNotificationToastAt;
+    if (lastToast != null && now.difference(lastToast).inSeconds < 3) {
+      return;
+    }
+    _lastNotificationToastAt = now;
+    final message = latestEvent.payload['message']?.toString() ?? '';
+    if (message.trim().isEmpty) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${_notificationTitle(level)}: ${_truncate(message, 120)}',
+        ),
+      ),
+    );
   }
 
   int? _parseExitCode(Map<String, dynamic> payload) {
@@ -16501,6 +16665,7 @@ class AgentCommandClient {
     int? rows,
     int? since,
     int? limit,
+    int? notifySince,
     String? workingDir,
     Map<String, String>? env,
   }) async {
@@ -16527,6 +16692,9 @@ class AgentCommandClient {
     }
     if (limit != null) {
       payload['limit'] = limit;
+    }
+    if (notifySince != null) {
+      payload['notify_since'] = notifySince;
     }
     if (workingDir != null && workingDir.trim().isNotEmpty) {
       payload['working_dir'] = workingDir;

@@ -55,6 +55,7 @@ struct TerminalCommandPayload {
     rows: Option<u16>,
     since: Option<u64>,
     limit: Option<usize>,
+    notify_since: Option<u64>,
     working_dir: Option<String>,
     env: Option<HashMap<String, String>>,
     command: Option<String>,
@@ -133,6 +134,7 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
                     rows: payload.rows,
                     since: payload.since,
                     limit: payload.limit,
+                    notify_since: payload.notify_since,
                     working_dir: payload.working_dir.clone(),
                     env: payload.env.clone(),
                 };

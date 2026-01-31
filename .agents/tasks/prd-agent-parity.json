@@ -256,7 +256,7 @@
     {
       "id": "US-006",
       "title": "Enable terminal session operation from desktop UI",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-005"
       ],
@@ -268,13 +268,13 @@
         "Negative case: if the session is missing or ended, the UI shows a non-blocking error and disables input"
       ],
       "startedAt": "2026-01-31T16:41:21.184734+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T16:41:21.184849+00:00"
+      "completedAt": "2026-01-31T17:12:04.263058+00:00",
+      "updatedAt": "2026-01-31T17:12:04.262761+00:00"
     },
     {
       "id": "US-007",
       "title": "Forward terminal notifications from desktop to mobile",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-004"
       ],
@@ -284,7 +284,10 @@
         "Mobile stores notifications in timeline and optionally surfaces a toast/banner",
         "Example: terminal session emits a warning notification and mobile shows it in the timeline",
         "Negative case: if mobile is offline, notifications queue or fail gracefully without crashing"
-      ]
+      ],
+      "startedAt": "2026-01-31T17:12:06.368720+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-31T17:12:06.368830+00:00"
     },
     {
       "id": "US-008",
