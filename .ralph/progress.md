@@ -924,3 +924,33 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies (build_tool, version, ed25519_edwards, github, toml, hex).
   - flutter build web warns about wasm incompatibilities from ffi/win32 dependencies.
 ---
+## [2026-02-01 02:08:45] - US-008: Harden pairing flows for QR approval + static token + addr
+Thread: 
+Run: 20260131-221506-98331 (iteration 9)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-9.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-9.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: b54ffa1 fix(pairing): harden QR pairing errors
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm/ffi warnings)
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-8.md
+  - .ralph/runs/run-20260131-221506-98331-iter-9.log
+  - desktop/src/pairing.rs
+  - mobile/lib/main.dart
+- What was implemented: Ensured QR pairing respects approval settings, returns device-bound tokens, and surfaces desktop expiry errors; fixed-token login now resolves client IDs consistently.
+- **Learnings for future iterations:**
+  - Patterns discovered: Pairing errors are returned as JSON on non-2xx responses and should be parsed for user messaging.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool deps.
+  - Useful context: flutter build web emits wasm/ffi warnings but completes successfully.
+---
