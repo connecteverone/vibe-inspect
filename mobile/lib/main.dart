@@ -5996,6 +5996,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   static const int _defaultCols = 120;
   static const int _defaultRows = 32;
   static const int _maxOutputEntries = 800;
+  static const int _terminalLabelMax = 80;
   static const int _terminalMaxLines = 8000;
   static const Duration _pollInterval = Duration(milliseconds: 900);
   static const Duration _terminalPersistInterval = Duration(milliseconds: 900);
@@ -7417,24 +7418,30 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           }
           final remoteStatus =
               remote.status.trim().isNotEmpty ? remote.status : session.status;
-          final updated = remoteStatus != session.status
+          final remoteLabel =
+              remote.label.trim().isNotEmpty ? remote.label : session.label;
+          final statusChanged = remoteStatus != session.status;
+          final labelChanged = remoteLabel != session.label;
+          final updated = statusChanged || labelChanged
               ? ToolSession(
                   id: session.id,
                   type: session.type,
-                  label: session.label,
+                  label: remoteLabel,
                   status: remoteStatus,
                   agentId: session.agentId,
                   createdAt: session.createdAt,
                 )
               : session;
-          if (remoteStatus != session.status) {
+          if (statusChanged || labelChanged) {
             await widget.storage.insertToolSession(updated);
           }
           merged.add(updated);
         }
         for (final remote in remoteById.values) {
           final createdAt = remote.createdAt;
-          final label = 'Terminal ${_truncate(remote.id, 6)}';
+          final label = remote.label.trim().isNotEmpty
+              ? remote.label
+              : 'Terminal ${_truncate(remote.id, 6)}';
           final newSession = ToolSession(
             id: remote.id,
             type: 'terminal',
@@ -7572,6 +7579,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final payload = await agentClient.sendTerminalAction(
         action: 'start',
         sessionId: session.id,
+        label: session.label,
         cols: _defaultCols,
         rows: _defaultRows,
       );
@@ -7846,6 +7854,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return;
     }
     final trimmed = label.trim();
+    if (trimmed.isNotEmpty && trimmed.runes.length > _terminalLabelMax) {
+      _showSessionLabelError(
+        'Session name must be $_terminalLabelMax characters or fewer.',
+      );
+      return;
+    }
     final sessionLabel = trimmed.isEmpty
         ? 'Terminal Session ${_sessions.length + 1}'
         : trimmed;
@@ -7883,6 +7897,119 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     _startPolling();
     unawaited(_pollActiveSession());
     _focusTerminal();
+  }
+
+  void _showSessionLabelError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _renameActiveSession() async {
+    final active = _activeSession;
+    if (active == null) {
+      _setTerminalStatusMessage(
+        'Select a session to rename.',
+        isError: true,
+      );
+      return;
+    }
+    await _renameSession(active);
+  }
+
+  Future<void> _renameSession(TerminalSessionView view) async {
+    final controller = TextEditingController(text: view.session.label);
+    final label = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename terminal session'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: 'Session name',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('Rename'),
+            ),
+          ],
+        );
+      },
+    );
+    if (label == null) {
+      return;
+    }
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) {
+      _showSessionLabelError('Session name cannot be empty.');
+      return;
+    }
+    if (trimmed.runes.length > _terminalLabelMax) {
+      _showSessionLabelError(
+        'Session name must be $_terminalLabelMax characters or fewer.',
+      );
+      return;
+    }
+    if (trimmed == view.session.label) {
+      return;
+    }
+
+    final previousSession = view.session;
+    Future<void> revert() async {
+      final currentView = _sessionById(previousSession.id) ?? view;
+      _replaceSession(
+        previousSession.id,
+        currentView.copyWith(session: previousSession),
+      );
+      await _persistSession(previousSession);
+    }
+    final updatedSession = ToolSession(
+      id: previousSession.id,
+      type: previousSession.type,
+      label: trimmed,
+      status: previousSession.status,
+      agentId: previousSession.agentId,
+      createdAt: previousSession.createdAt,
+    );
+    _replaceSession(
+      previousSession.id,
+      view.copyWith(session: updatedSession),
+    );
+    await _persistSession(updatedSession);
+
+    final agentClient = _agentClient;
+    if (agentClient == null) {
+      await revert();
+      _showSessionLabelError(
+        'Connect to the desktop agent to rename sessions.',
+      );
+      return;
+    }
+    try {
+      await agentClient.sendTerminalAction(
+        action: 'rename',
+        sessionId: previousSession.id,
+        label: trimmed,
+      );
+      _setTerminalStatusMessage('Session renamed.');
+    } on AgentCommandFailure catch (error) {
+      await revert();
+      _showSessionLabelError(error.message);
+    } catch (error) {
+      await revert();
+      _showSessionLabelError('Failed to rename session.');
+    }
   }
 
   Future<void> _closeSession(String sessionId) async {
@@ -8225,11 +8352,15 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     unawaited(_connectTerminalStream());
   }
 
-  ToolSession _sessionWithStatus(ToolSession session, String status) {
+  ToolSession _sessionWithStatus(
+    ToolSession session,
+    String status, {
+    String? label,
+  }) {
     return ToolSession(
       id: session.id,
       type: session.type,
-      label: session.label,
+      label: label ?? session.label,
       status: status,
       agentId: session.agentId,
       createdAt: session.createdAt,
@@ -8373,6 +8504,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       return;
     }
     final status = payload['status']?.toString() ?? view.session.status;
+    final labelRaw = payload['label']?.toString() ?? '';
+    final resolvedLabel =
+        labelRaw.trim().isNotEmpty ? labelRaw.trim() : view.session.label;
     final action = payload['action']?.toString() ?? '';
     final nextSeq = _parseNextSeq(payload, fallback: view.nextSeq);
     final firstSeq =
@@ -8400,7 +8534,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final mergedOutput = shouldReset
         ? outputEntries
         : _mergeOutputEntries(view.output, outputEntries);
-    final updatedSession = _sessionWithStatus(view.session, status);
+    final updatedSession =
+        _sessionWithStatus(view.session, status, label: resolvedLabel);
     final updatedView = view.copyWith(
       session: updatedSession,
       output: mergedOutput,
@@ -9348,6 +9483,11 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                         style: headerStyle,
                         overflow: TextOverflow.ellipsis,
                       ),
+                    ),
+                    IconButton(
+                      tooltip: 'Rename session',
+                      onPressed: active == null ? null : _renameActiveSession,
+                      icon: const Icon(Icons.edit_outlined),
                     ),
                     IconButton(
                       tooltip: 'Switch session',
@@ -16012,6 +16152,7 @@ class VncDisplayInfo {
 class RemoteTerminalSession {
   const RemoteTerminalSession({
     required this.id,
+    required this.label,
     required this.status,
     required this.createdAt,
     required this.lastActivity,
@@ -16020,6 +16161,7 @@ class RemoteTerminalSession {
   });
 
   final String id;
+  final String label;
   final String status;
   final DateTime createdAt;
   final DateTime lastActivity;
@@ -16042,8 +16184,12 @@ class RemoteTerminalSession {
     if (id.isEmpty) {
       throw const AgentCommandFailure('Terminal session missing id.');
     }
+    final rawLabel = payload['label']?.toString() ?? '';
+    final resolvedLabel =
+        rawLabel.trim().isNotEmpty ? rawLabel.trim() : 'Terminal ${_truncate(id, 6)}';
     return RemoteTerminalSession(
       id: id,
+      label: resolvedLabel,
       status: status,
       createdAt: createdAt,
       lastActivity: lastActivity,
@@ -16140,6 +16286,7 @@ class AgentCommandClient {
   Future<Map<String, dynamic>> sendTerminalAction({
     required String action,
     String? sessionId,
+    String? label,
     String? input,
     int? cols,
     int? rows,
@@ -16153,6 +16300,9 @@ class AgentCommandClient {
     };
     if (sessionId != null && sessionId.trim().isNotEmpty) {
       payload['session_id'] = sessionId;
+    }
+    if (label != null && label.trim().isNotEmpty) {
+      payload['label'] = label.trim();
     }
     if (input != null && input.isNotEmpty) {
       payload['input'] = input;

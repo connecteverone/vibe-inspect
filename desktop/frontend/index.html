@@ -1698,7 +1698,9 @@
           header.className = "device-header";
           const title = document.createElement("div");
           title.className = "device-title";
-          title.textContent = session.id;
+          const rawLabel = typeof session.label === "string" ? session.label.trim() : "";
+          const displayLabel = rawLabel || session.id;
+          title.textContent = displayLabel;
           const tags = document.createElement("div");
           tags.className = "device-tags";
           tags.appendChild(createTag(session.status, "connected"));
@@ -1707,9 +1709,14 @@
           item.appendChild(header);
           const meta = document.createElement("div");
           meta.className = "device-meta";
-          meta.textContent = `started ${formatTime(session.created_at)} · last ${formatTime(
-            session.last_activity
-          )}`;
+          const metaParts = [
+            `started ${formatTime(session.created_at)}`,
+            `last ${formatTime(session.last_activity)}`,
+          ];
+          if (rawLabel && session.id) {
+            metaParts.push(`id ${session.id}`);
+          }
+          meta.textContent = metaParts.join(" · ");
           item.appendChild(meta);
           if (session.last_output) {
             const preview = document.createElement("div");
@@ -1719,6 +1726,26 @@
           }
           const actions = document.createElement("div");
           actions.className = "device-actions";
+          const renameBtn = createActionButton("Rename", "secondary mini", async () => {
+            const name = window.prompt("Rename terminal session", displayLabel);
+            if (name === null) return;
+            const trimmed = name.trim();
+            if (!trimmed) {
+              setStatus("Session name cannot be empty.", "error");
+              return;
+            }
+            if (trimmed.length > 80) {
+              setStatus("Session name must be 80 characters or fewer.", "error");
+              return;
+            }
+            const payload = await sendTerminalAction("rename", session.id, {
+              label: trimmed,
+            });
+            if (payload) {
+              await refreshStatus();
+              setStatus("Terminal session renamed.");
+            }
+          });
           const keepaliveBtn = createActionButton("Keep alive", "secondary mini", async () => {
             await sendTerminalAction("keepalive", session.id);
             await refreshStatus();
@@ -1747,6 +1774,7 @@
             await sendTerminalAction("stop", session.id);
             await refreshStatus();
           });
+          actions.appendChild(renameBtn);
           actions.appendChild(keepaliveBtn);
           actions.appendChild(pollBtn);
           actions.appendChild(stopBtn);

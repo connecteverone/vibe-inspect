@@ -18,6 +18,7 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
 const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
 const OUTPUT_LIMIT_DEFAULT: usize = 800;
 const SNAPSHOT_SCROLLBACK: usize = 0;
+const MAX_LABEL_LEN: usize = 80;
 
 #[derive(Clone)]
 struct TerminalOutputChunk {
@@ -51,6 +52,7 @@ impl TerminalSessionStatus {
 
 struct TerminalSession {
     id: String,
+    label: String,
     created_at: u64,
     last_activity: u64,
     status: TerminalSessionStatus,
@@ -168,6 +170,7 @@ impl TerminalManager {
 pub struct TerminalActionRequest {
     pub action: String,
     pub session_id: Option<String>,
+    pub label: Option<String>,
     pub input: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
@@ -180,6 +183,7 @@ pub struct TerminalActionRequest {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TerminalSessionSummary {
     pub id: String,
+    pub label: String,
     pub status: String,
     pub created_at: u64,
     pub last_activity: u64,
@@ -239,6 +243,7 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
             };
             sessions.push(TerminalSessionSummary {
                 id: session.id.clone(),
+                label: session.label.clone(),
                 status: session.status.as_str().to_string(),
                 created_at: session.created_at,
                 last_activity: session.last_activity,
@@ -261,6 +266,7 @@ pub fn handle_terminal_command(request: TerminalActionRequest) -> Result<Value, 
         "stop" | "kill" => stop_session(request),
         "keepalive" => keepalive_session(request),
         "status" => status_session(request),
+        "rename" => rename_session(request),
         _ => Err(TerminalError::new(
             "unsupported_action",
             format!("Unsupported terminal action: {}", request.action),
@@ -306,6 +312,7 @@ async fn run_terminal_stream(
         initial_exit,
         initial_first_seq,
         initial_snapshot,
+        initial_label,
     ) = {
         let session = session
             .lock()
@@ -317,6 +324,7 @@ async fn run_terminal_stream(
             session.exit_code,
             session.first_seq(),
             session.snapshot_formatted(),
+            session.label.clone(),
         )
     };
     let initial_truncated = initial_first_seq
@@ -333,6 +341,7 @@ async fn run_terminal_stream(
         if initial_truncated { initial_snapshot } else { None },
         initial_exit,
         now_ts(),
+        Some(initial_label.as_str()),
     );
     sender
         .send(Message::Text(initial_payload.to_string().into()))
@@ -342,12 +351,13 @@ async fn run_terminal_stream(
     let mut last_seq = initial_next_seq;
     let mut last_status = initial_status;
     let mut last_exit = initial_exit;
+    let mut last_label = initial_label;
     let mut last_sent_at = Instant::now();
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let (output, status, next_seq, exit_code, first_seq, snapshot) = {
+                let (output, status, next_seq, exit_code, first_seq, snapshot, label) = {
                     let session = session
                         .lock()
                         .map_err(|_| "Terminal session unavailable.".to_string())?;
@@ -358,10 +368,15 @@ async fn run_terminal_stream(
                         session.exit_code,
                         session.first_seq(),
                         session.snapshot_formatted(),
+                        session.label.clone(),
                     )
                 };
 
-                if output.is_empty() && status == last_status && exit_code == last_exit {
+                if output.is_empty()
+                    && status == last_status
+                    && exit_code == last_exit
+                    && label == last_label
+                {
                     if last_sent_at.elapsed() > Duration::from_secs(15) {
                         let _ = sender.send(Message::Ping(Vec::new().into())).await;
                         last_sent_at = Instant::now();
@@ -372,6 +387,7 @@ async fn run_terminal_stream(
                 last_seq = next_seq;
                 last_status = status;
                 last_exit = exit_code;
+                last_label = label.clone();
 
                 let truncated = first_seq
                     .map(|first| last_seq.saturating_add(1) < first)
@@ -387,6 +403,7 @@ async fn run_terminal_stream(
                     if truncated { snapshot } else { None },
                     exit_code,
                     now_ts(),
+                    Some(label.as_str()),
                 );
                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
                     break;
@@ -414,6 +431,7 @@ async fn run_terminal_stream(
                                     let request = TerminalActionRequest {
                                         action: "input".to_string(),
                                         session_id: Some(session_id.clone()),
+                                        label: None,
                                         input: Some(input.to_string()),
                                         cols: None,
                                         rows: None,
@@ -432,6 +450,7 @@ async fn run_terminal_stream(
                                     let request = TerminalActionRequest {
                                         action: "resize".to_string(),
                                         session_id: Some(session_id.clone()),
+                                        label: None,
                                         input: None,
                                         cols,
                                         rows,
@@ -447,6 +466,7 @@ async fn run_terminal_stream(
                                 let request = TerminalActionRequest {
                                     action: "stop".to_string(),
                                     session_id: Some(session_id.clone()),
+                                    label: None,
                                     input: None,
                                     cols: None,
                                     rows: None,
@@ -461,6 +481,7 @@ async fn run_terminal_stream(
                                 let request = TerminalActionRequest {
                                     action: "keepalive".to_string(),
                                     session_id: Some(session_id.clone()),
+                                    label: None,
                                     input: None,
                                     cols: None,
                                     rows: None,
@@ -489,6 +510,7 @@ async fn run_terminal_stream(
 
 fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
     let session_id = resolve_session_id(request.session_id)?;
+    let label = resolve_start_label(request.label.clone(), &session_id)?;
     {
         let manager = terminal_manager();
         let manager = manager
@@ -549,6 +571,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
     let now = now_ts();
     let session = Arc::new(Mutex::new(TerminalSession {
         id: session_id.clone(),
+        label: label.clone(),
         created_at: now,
         last_activity: now,
         status: TerminalSessionStatus::Running,
@@ -598,6 +621,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         None,
         None,
         now,
+        Some(label.as_str()),
     ))
 }
 
@@ -639,6 +663,7 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         snapshot,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
     ))
 }
 
@@ -685,6 +710,7 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         None,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
     ))
 }
 
@@ -730,6 +756,7 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         None,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
     ))
 }
 
@@ -762,6 +789,7 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         None,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
     ))
 }
 
@@ -800,6 +828,7 @@ fn keepalive_session(request: TerminalActionRequest) -> Result<Value, TerminalEr
         None,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
     ))
 }
 
@@ -829,6 +858,39 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         snapshot,
         session.exit_code,
         session.last_activity,
+        Some(session.label.as_str()),
+    ))
+}
+
+fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+    let session_id = required_session_id(request.session_id)?;
+    let label = resolve_rename_label(request.label)?;
+    let manager = terminal_manager();
+    let session = {
+        let manager = manager
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
+        manager
+            .session(&session_id)
+            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+    };
+    let mut session = session
+        .lock()
+        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+    session.label = label.clone();
+    session.last_activity = now_ts();
+    Ok(build_session_payload(
+        "rename",
+        &session.id,
+        session.status,
+        session.next_seq,
+        Vec::new(),
+        session.first_seq(),
+        false,
+        None,
+        session.exit_code,
+        session.last_activity,
+        Some(label.as_str()),
     ))
 }
 
@@ -858,6 +920,48 @@ fn random_session_id() -> String {
         .take(16)
         .map(char::from)
         .collect()
+}
+
+fn resolve_start_label(
+    label: Option<String>,
+    session_id: &str,
+) -> Result<String, TerminalError> {
+    if let Some(raw) = label {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            ensure_label_length(trimmed)?;
+            return Ok(trimmed.to_string());
+        }
+    }
+    Ok(default_label(session_id))
+}
+
+fn resolve_rename_label(label: Option<String>) -> Result<String, TerminalError> {
+    let raw = label.unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(TerminalError::new(
+            "invalid_label",
+            "Session name cannot be empty.",
+        ));
+    }
+    ensure_label_length(trimmed)?;
+    Ok(trimmed.to_string())
+}
+
+fn ensure_label_length(label: &str) -> Result<(), TerminalError> {
+    if label.chars().count() > MAX_LABEL_LEN {
+        return Err(TerminalError::new(
+            "invalid_label",
+            format!("Session name must be {MAX_LABEL_LEN} characters or fewer."),
+        ));
+    }
+    Ok(())
+}
+
+fn default_label(session_id: &str) -> String {
+    let short = session_id.chars().take(6).collect::<String>();
+    format!("Terminal {}", short)
 }
 
 fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read + Send>) {
@@ -942,6 +1046,7 @@ fn build_session_payload(
     snapshot: Option<String>,
     exit_code: Option<i32>,
     last_activity: u64,
+    label: Option<&str>,
 ) -> Value {
     let output_json = output
         .into_iter()
@@ -965,6 +1070,11 @@ fn build_session_payload(
         "exit_code": exit_code,
         "last_activity": last_activity,
     });
+    if let Some(label) = label {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("label".to_string(), json!(label));
+        }
+    }
     if let Some(snapshot) = snapshot {
         if let Some(map) = payload.as_object_mut() {
             map.insert("snapshot".to_string(), json!(snapshot));

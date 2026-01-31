@@ -49,6 +49,7 @@ struct ApiCommandPayload {
 struct TerminalCommandPayload {
     action: Option<String>,
     session_id: Option<String>,
+    label: Option<String>,
     input: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
@@ -126,6 +127,7 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
                 let terminal_request = terminal::TerminalActionRequest {
                     action: resolve_terminal_action(&payload).to_lowercase(),
                     session_id: payload.session_id.clone(),
+                    label: payload.label.clone(),
                     input: resolve_terminal_input(&payload),
                     cols: payload.cols,
                     rows: payload.rows,
