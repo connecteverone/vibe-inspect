@@ -679,3 +679,48 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
   - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
 ---
+## [2026-01-31 22:57:01] - US-002: Expose host_name from desktop identity and use it for agent display
+Thread: 
+Run: 20260131-221506-98331 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 2956a54 feat(identity): use host name for agent labels
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: cd mobile && flutter build web -> PASS (warnings about FlutterLoader.loadEntrypoint deprecation and wasm dry run incompatibilities)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+  - Command: cd .codex/skills/dev-browser && npx tsx (import bundle, verify MyMacBook label) -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/guardrails.md
+  - .ralph/runs/run-20260131-221506-98331-iter-1.log
+  - .ralph/runs/run-20260131-221506-98331-iter-1.md
+  - .ralph/runs/run-20260131-221506-98331-iter-2.log
+  - .ralph/.tmp/prompt-20260131-221506-98331-2.md
+  - .ralph/.tmp/story-20260131-221506-98331-2.json
+  - .ralph/.tmp/story-20260131-221506-98331-2.md
+  - desktop/Cargo.lock
+  - desktop/Cargo.toml
+  - desktop/src/identity.rs
+  - desktop/src/pairing.rs
+  - desktop/src/server.rs
+  - mobile/lib/main.dart
+  - mobile/lib/storage/local_storage.dart
+  - mobile/test/widget_test.dart
+- What was implemented
+  Added host_name to desktop identity/pairing responses and QR payloads, stored
+  host_name in mobile connections with schema migration, and updated agent label
+  priority to prefer host_name before device_id.
+- **Learnings for future iterations:**
+  - Patterns discovered: QR payloads are the fastest way to seed agent metadata on mobile.
+  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
+  - Useful context: Import bundle dialog is the easiest way to verify agent labels on web.
+---

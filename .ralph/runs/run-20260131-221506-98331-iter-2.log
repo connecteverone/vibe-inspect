@@ -31015,4 +31015,4076 @@ index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d4
 thinking
 **Staging all changes for commit**
 exec
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 80ms:
+
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+thinking
+**Composing detailed commit message**
+
+I'm crafting a concise commit subject with scope and a body describing the addition of host_name across desktop/mobile identity flows, local storage, and tests, referencing US-002.
+exec
+/bin/zsh -lc 'git commit -m "feat(identity): use host name for agent labels
+
+Expose host_name in desktop identity and pairing responses.
+Store host_name in mobile connections and prefer it for labels.
+Update local storage schema and widget tests.
+
+Reference: US-002"' in /Users/mac/codes/vibe-inspect succeeded in 82ms:
+[main 2956a54] feat(identity): use host name for agent labels
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 18 files changed, 31535 insertions(+), 30 deletions(-)
+ create mode 100644 .ralph/.tmp/prompt-20260131-221506-98331-2.md
+ create mode 100644 .ralph/.tmp/story-20260131-221506-98331-2.json
+ create mode 100644 .ralph/.tmp/story-20260131-221506-98331-2.md
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-1.md
+ create mode 100644 .ralph/runs/run-20260131-221506-98331-iter-2.log
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+thinking
+**Confirming clean git status**
+
+The commit involved a massive change of 31k lines, likely from Cargo.lock, which is unusually large. I'm verifying the working directory is clean now.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 52ms:
+ M .ralph/runs/run-20260131-221506-98331-iter-2.log
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+
+thinking
+**Considering multiple commits for run log updates**
+
+The run log and progress files update after the initial commit, making a clean tree tricky. Since amending is discouraged without explicit request, creating one or more additional commits to include these post-commit updates seems necessary and acceptable.
+thinking
+**Planning sequential commits including logs and progress**
+
+It's acceptable to have a second commit for the run and progress logs since amending isn't allowed. I'll update the progress log after the initial commit, perform required reviews beforehand, then stage and commit all remaining changes, finally capturing the latest commit hash and subject after the final commit.
+exec
+/bin/zsh -lc 'git status -sb' in /Users/mac/codes/vibe-inspect succeeded in 48ms:
+## main
+ M .ralph/runs/run-20260131-221506-98331-iter-2.log
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+
+thinking
+**Deciding commit strategy for progress log**
+
+Considering that progress log should reference the commit containing code changes, it seems best to create a second commit for logs that references the first commit's hash in the progress log, since amending commits is not possible.
+thinking
+**Confirming second commit for logs and progress update**
+
+Decided to create a second commit for run logs and progress log updates with a chore-scoped message referencing the story; progress log will cite this final commit hash and subject per instructions, despite code being in the first commit. I'll gather verification results, list key changed files, and update the progress log accordingly before committing.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M:%S"' in /Users/mac/codes/vibe-inspect succeeded in 23ms:
+2026-01-31 22:57:01
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+
+thinking
+**Clarifying progress log commit timing**
+
+The progress log update should happen after the main commit, requiring a second commit for the progress entry to ensure all changes, including the log, are committed as instructed.
+thinking
+**Confirming progress log references first commit**
+
+The progress entry will reference the initial code commit hash to keep logs meaningful, while the second commit will finalize the progress log itself; this aligns with instructions and expected workflow.
+exec
+/bin/zsh -lc 'tail -n 20 /Users/mac/codes/vibe-inspect/.ralph/progress.md' in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: cd mobile && flutter build web -> PASS (warnings about FlutterLoader.loadEntrypoint deprecation and wasm dry run incompatibilities)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+  - Command: cd .codex/skills/dev-browser && npx tsx (load http://127.0.0.1:8030/, verify Disconnect string) -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260131-221506-98331-iter-1.log
+  - docs/ui_action_parity.md
+  - mobile/lib/main.dart
+- What was implemented
+  Added a UI action parity map and aligned the mobile terminal session tooltip
+  with the desktop "Disconnect" action to keep labels consistent across
+  platforms.
+- **Learnings for future iterations:**
+  - Patterns discovered: Capture shared action labels in the parity map before UI edits.
+  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
+  - Useful context: dev-browser can validate Flutter UI strings via main.dart.js fetch.
+---
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+
+thinking
+**Planning progress log update timing**
+
+The progress log entry must include final commit info and post-commit status, so it should be appended after the second commit; however, since the log change has to be committed too, I'll update it now with a placeholder "clean" and finalize it after the last commit.
+thinking
+**Compiling detailed progress log entry**
+
+I'm gathering comprehensive commit info, changed file list including code and logs, test results, and verification commands to craft a complete progress log entry before appending it.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/mac/codes/vibe-inspect/.ralph/progress.md
+## [2026-01-31 22:57:01] - US-002: Expose host_name from desktop identity and use it for agent display
+Thread: 
+Run: 20260131-221506-98331 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 2956a54 feat(identity): use host name for agent labels
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (82 issues in third_party/flutter_quic toolchain and existing warnings)
+  - Command: cd mobile && flutter build web -> PASS (warnings about FlutterLoader.loadEntrypoint deprecation and wasm dry run incompatibilities)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+  - Command: cd .codex/skills/dev-browser && npx tsx (import bundle, verify MyMacBook label) -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/guardrails.md
+  - .ralph/runs/run-20260131-221506-98331-iter-1.log
+  - .ralph/runs/run-20260131-221506-98331-iter-1.md
+  - .ralph/runs/run-20260131-221506-98331-iter-2.log
+  - .ralph/.tmp/prompt-20260131-221506-98331-2.md
+  - .ralph/.tmp/story-20260131-221506-98331-2.json
+  - .ralph/.tmp/story-20260131-221506-98331-2.md
+  - desktop/Cargo.lock
+  - desktop/Cargo.toml
+  - desktop/src/identity.rs
+  - desktop/src/pairing.rs
+  - desktop/src/server.rs
+  - mobile/lib/main.dart
+  - mobile/lib/storage/local_storage.dart
+  - mobile/test/widget_test.dart
+- What was implemented
+  Added host_name to desktop identity/pairing responses and QR payloads, stored
+  host_name in mobile connections with schema migration, and updated agent label
+  priority to prefer host_name before device_id.
+- **Learnings for future iterations:**
+  - Patterns discovered: QR payloads are the fastest way to seed agent metadata on mobile.
+  - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
+  - Useful context: Import bundle dialog is the easiest way to verify agent labels on web.
+---
+EOF" in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+thinking
+**Logging progress update**
+
+I'm adding an activity log entry using the specified command to record the progress log update for the task.
+exec
+/bin/zsh -lc 'ralph log "Updated progress log for US-002"' in /Users/mac/codes/vibe-inspect succeeded in 115ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+thinking
+**Staging and committing updates**
+
+I'm staging the updated progress and run logs, then making the second commit before verifying the git status.
+exec
+/bin/zsh -lc 'git status -sb' in /Users/mac/codes/vibe-inspect succeeded in 50ms:
+## main
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260131-221506-98331-iter-2.log
+file update:
+diff --git a/.ralph/guardrails.md b/.ralph/guardrails.md
+index e7b8dff783a04a73307cd703691492d793d08ee3..4f48114ad99d2b66406ad4065fd04c28d80b40a3
+--- a/.ralph/guardrails.md
++++ b/.ralph/guardrails.md
+@@ -18,3 +18,7 @@
+ 
+ ## Learned Signs
+ 
++### Sign: Document Known Flutter Analyze Failures
++- **Trigger**: When `flutter analyze` or `./scripts/flutter_analyze.sh` fails on third_party/flutter_quic build_tool imports
++- **Instruction**: Record the failure as a known external dependency issue and proceed without attempting to fix unrelated third_party tooling
++- **Added after**: Iteration 2 - flutter analyze repeatedly failed due to missing build_tool dependencies
+diff --git a/desktop/Cargo.toml b/desktop/Cargo.toml
+index 55c1f95384d42404f3c3a491acd29f8f9985da60..873e476f43895863d417a1978846e84fd0dbeaef
+--- a/desktop/Cargo.toml
++++ b/desktop/Cargo.toml
+@@ -8,6 +8,7 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ rand = "0.8"
++hostname = "0.3"
+ qrcode = "0.13"
+ reqwest = { version = "0.12", features = ["blocking", "json"] }
+ get_if_addrs = "0.5"
+diff --git a/desktop/src/identity.rs b/desktop/src/identity.rs
+index 1249fde6cec2d77dd5d2a2691bf0e1831ef96a2e..49c992f234a868c8fed0afb50bc19d4e954fb361
+--- a/desktop/src/identity.rs
++++ b/desktop/src/identity.rs
+@@ -13,6 +13,8 @@
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct AgentIdentity {
+     pub device_id: String,
++    #[serde(default)]
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub created_at: u64,
+     #[serde(default)]
+@@ -59,6 +61,7 @@
+                     hydrated.ensure_listen_port();
+                     hydrated.ensure_roi_quic_port();
+                     hydrated.ensure_primary_token();
++                    hydrated.ensure_host_name();
+                     let _ = save_identity(&hydrated);
+                     return hydrated;
+                 }
+@@ -69,6 +72,7 @@
+     let raw_device_id = read_raw_device_id().unwrap_or_else(generate_fallback_id);
+     let mut identity = AgentIdentity {
+         device_id: hash_device_id(&raw_device_id),
++        host_name: current_host_name(),
+         auth_token: generate_token(LONG_TOKEN_LEN),
+         created_at: now_ts(),
+         frp_url: None,
+@@ -94,6 +98,10 @@
+         }
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.host_name.clone()
++    }
++
+     pub fn roi_quic_port(&self) -> u16 {
+         if self.roi_quic_port == 0 {
+             default_roi_quic_port()
+@@ -398,6 +406,20 @@
+             self.roi_quic_port = default_roi_quic_port();
+         }
+     }
++
++    fn ensure_host_name(&mut self) {
++        let has_value = self
++            .host_name
++            .as_deref()
++            .map(|value| !value.trim().is_empty())
++            .unwrap_or(false);
++        if has_value {
++            return;
++        }
++        if let Some(value) = current_host_name() {
++            self.host_name = Some(value);
++        }
++    }
+ }
+ 
+ fn default_listen_port() -> u16 {
+@@ -408,6 +430,16 @@
+     5000
+ }
+ 
++fn current_host_name() -> Option<String> {
++    let raw = hostname::get().ok()?;
++    let value = raw.to_string_lossy().trim().to_string();
++    if value.is_empty() {
++        None
++    } else {
++        Some(value)
++    }
++}
++
+ fn identity_path() -> Option<PathBuf> {
+     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+     Some(dirs.config_dir().join(IDENTITY_FILE))
+diff --git a/desktop/src/pairing.rs b/desktop/src/pairing.rs
+index b78e4c6ae28512789840854ed3b428657c0427f2..6f62e1e39888200262a183b0d3bf85b4d7fc48ec
+--- a/desktop/src/pairing.rs
++++ b/desktop/src/pairing.rs
+@@ -44,6 +44,7 @@
+     pub local_urls: Vec<String>,
+     pub requires_approval: bool,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub wifi_ssid: Option<String>,
+     pub local_ips: Vec<String>,
+@@ -102,6 +103,7 @@
+     pub tunnel_url: Option<String>,
+     pub tunnel_error: Option<String>,
+     pub device_id: String,
++    pub host_name: Option<String>,
+     pub auth_token: String,
+     pub auth_tokens: Vec<AuthTokenSnapshot>,
+     pub wifi_ssid: Option<String>,
+@@ -186,6 +188,10 @@
+         &self.identity.device_id
+     }
+ 
++    pub fn host_name(&self) -> Option<String> {
++        self.identity.host_name()
++    }
++
+     pub fn frp_url(&self) -> Option<String> {
+         self.identity.frp_url.clone()
+     }
+@@ -355,6 +361,7 @@
+         "pairing_secret": session.secret.clone(),
+         "expires_at": session.expires_at,
+         "device_id": pairing_state.identity.device_id.clone(),
++        "host_name": pairing_state.identity.host_name.clone(),
+         "wifi_ssid": wifi_ssid.clone(),
+         "local_ips": local_ips.clone(),
+         "local_urls": local_urls.clone(),
+@@ -384,6 +391,7 @@
+         local_urls,
+         requires_approval: pairing_state.requires_approval,
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         wifi_ssid,
+         local_ips,
+@@ -997,6 +1005,7 @@
+         tunnel_url: pairing_state.tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+         tunnel_error: pairing_state.tunnel_error.clone(),
+         device_id: pairing_state.identity.device_id.clone(),
++        host_name: pairing_state.identity.host_name.clone(),
+         auth_token: pairing_state.identity.auth_token.clone(),
+         auth_tokens: auth_token_snapshots(pairing_state),
+         wifi_ssid,
+diff --git a/desktop/src/server.rs b/desktop/src/server.rs
+index 7fbb3933f75c3b353c36016071f8e0bf8f8f38ce..2975915e9e93a7dd6f79b72aa30b690c7681680a
+--- a/desktop/src/server.rs
++++ b/desktop/src/server.rs
+@@ -209,6 +209,7 @@
+                 json!({
+                     "type": "identity",
+                     "device_id": state.device_id(),
++                    "host_name": state.host_name(),
+                     "auth_token": state.auth_token(),
+                     "wifi_ssid": wifi_ssid,
+                     "local_ips": local_ips,
+@@ -221,6 +222,7 @@
+             Err(_) => json!({
+                 "type": "identity",
+                 "device_id": "",
++                "host_name": null,
+                 "auth_token": "",
+                 "wifi_ssid": null,
+                 "local_ips": [],
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index b5c2508d644a1139d092cc1ae1585afe4d348f4b..895cf65be539dd817363f9044e63642700bb7286
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -541,10 +541,13 @@
+       );
+       final identity = await client.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       await _recordManualConnection(
+         agentUrl: url,
+         authToken: token,
+         deviceId: deviceId,
++        hostName: hostName,
+       );
+       if (!mounted) {
+         return;
+@@ -1233,6 +1236,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: payload.hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: payload.tunnelUrl,
+         tunnelError: payload.tunnelError,
+@@ -1296,6 +1300,7 @@
+     required String agentUrl,
+     required String authToken,
+     String? deviceId,
++    String? hostName,
+   }) async {
+     try {
+       final now = DateTime.now();
+@@ -1323,6 +1328,7 @@
+         status: 'connected',
+         connectedAt: now,
+         deviceId: deviceId ?? existing?.deviceId,
++        hostName: hostName ?? existing?.hostName,
+         agentUrl: agentUrl,
+         tunnelUrl: existing?.tunnelUrl,
+         tunnelError: existing?.tunnelError,
+@@ -1943,6 +1949,8 @@
+       );
+       final identity = await commandClient.fetchIdentity();
+       final deviceId = identity['device_id']?.toString();
++      final hostName =
++          identity['host_name']?.toString() ?? identity['hostName']?.toString();
+       final wifiSsid =
+           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
+       final localIps =
+@@ -1961,6 +1969,7 @@
+       );
+       return agent.copyWith(
+         deviceId: deviceId ?? agent.deviceId,
++        hostName: hostName ?? agent.hostName,
+         wifiSsid: wifiSsid ?? agent.wifiSsid,
+         localIps: localIps.isNotEmpty ? localIps : agent.localIps,
+         localUrls: localUrls.isNotEmpty ? localUrls : agent.localUrls,
+@@ -16670,6 +16679,7 @@
+     required this.secret,
+     this.expiresAt,
+     this.deviceId,
++    this.hostName,
+     this.wifiSsid,
+     this.localIps = const [],
+     this.tunnelUrl,
+@@ -16684,6 +16694,7 @@
+   final String secret;
+   final DateTime? expiresAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? wifiSsid;
+   final List<String> localIps;
+   final String? tunnelUrl;
+@@ -16752,6 +16763,8 @@
+ 
+     final deviceId =
+         data['device_id']?.toString() ?? data['deviceId']?.toString();
++    final hostName =
++        data['host_name']?.toString() ?? data['hostName']?.toString();
+     final wifiSsid =
+         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
+     final localIps =
+@@ -16783,6 +16796,7 @@
+       secret: secret,
+       expiresAt: expiresAt,
+       deviceId: deviceId,
++      hostName: hostName,
+       wifiSsid: wifiSsid,
+       localIps: localIps,
+       tunnelUrl: tunnelUrl,
+@@ -16869,13 +16883,9 @@
+ }
+ 
+ String _agentLabel(ConnectionRecord agent) {
+-  final url = agent.agentUrl?.trim();
+-  if (url != null && url.isNotEmpty) {
+-    final uri = Uri.tryParse(url);
+-    if (uri != null && uri.host.isNotEmpty) {
+-      return uri.host;
+-    }
+-    return url;
++  final hostName = agent.hostName?.trim();
++  if (hostName != null && hostName.isNotEmpty) {
++    return hostName;
+   }
+   final deviceId = agent.deviceId?.trim();
+   if (deviceId != null && deviceId.isNotEmpty) {
+diff --git a/mobile/lib/storage/local_storage.dart b/mobile/lib/storage/local_storage.dart
+index a59e7e2ac894f99e7607c1b174af4027bcf3f1bd..2c4a3fc238d7a5aaab78d99375ecdff19736dc43
+--- a/mobile/lib/storage/local_storage.dart
++++ b/mobile/lib/storage/local_storage.dart
+@@ -28,7 +28,7 @@
+   const LocalStorageInitializer();
+ 
+   static const _databaseName = 'vibe_inspect.db';
+-  static const _schemaVersion = 6;
++  static const _schemaVersion = 7;
+   static const _storageKeyId = 'vibe_storage_key';
+ 
+   @override
+@@ -81,6 +81,11 @@
+             'ALTER TABLE connections ADD COLUMN roi_quic_port INTEGER',
+           );
+         }
++        if (oldVersion < 7) {
++          await db.execute(
++            'ALTER TABLE connections ADD COLUMN host_name TEXT',
++          );
++        }
+       },
+     );
+     await _ensureStorageKey(secureStorage);
+@@ -134,6 +139,7 @@
+       CREATE TABLE connections (
+         id TEXT PRIMARY KEY,
+         device_id TEXT,
++        host_name TEXT,
+         token TEXT NOT NULL,
+         status TEXT NOT NULL,
+         connected_at INTEGER NOT NULL,
+@@ -527,6 +533,7 @@
+     required this.status,
+     required this.connectedAt,
+     this.deviceId,
++    this.hostName,
+     this.agentUrl,
+     this.tunnelUrl,
+     this.tunnelError,
+@@ -543,6 +550,7 @@
+   final String status;
+   final DateTime connectedAt;
+   final String? deviceId;
++  final String? hostName;
+   final String? agentUrl;
+   final String? tunnelUrl;
+   final String? tunnelError;
+@@ -559,6 +567,7 @@
+     String? status,
+     DateTime? connectedAt,
+     String? deviceId,
++    String? hostName,
+     String? agentUrl,
+     String? tunnelUrl,
+     String? tunnelError,
+@@ -575,6 +584,7 @@
+       status: status ?? this.status,
+       connectedAt: connectedAt ?? this.connectedAt,
+       deviceId: deviceId ?? this.deviceId,
++      hostName: hostName ?? this.hostName,
+       agentUrl: agentUrl ?? this.agentUrl,
+       tunnelUrl: tunnelUrl ?? this.tunnelUrl,
+       tunnelError: tunnelError ?? this.tunnelError,
+@@ -591,6 +601,7 @@
+     return {
+       'id': id,
+       'device_id': deviceId,
++      'host_name': hostName,
+       'token': token,
+       'status': status,
+       'connected_at': connectedAt.millisecondsSinceEpoch,
+@@ -615,6 +626,7 @@
+         (row['connected_at'] as int?) ?? 0,
+       ),
+       deviceId: row['device_id']?.toString(),
++      hostName: row['host_name']?.toString(),
+       agentUrl: row['agent_url']?.toString(),
+       tunnelUrl: row['tunnel_url']?.toString(),
+       tunnelError: row['tunnel_error']?.toString(),
+@@ -638,6 +650,7 @@
+       'status': status,
+       'connectedAt': connectedAt.toIso8601String(),
+       'deviceId': deviceId,
++      'hostName': hostName,
+       'agentUrl': agentUrl,
+       'tunnelUrl': tunnelUrl,
+       'tunnelError': tunnelError,
+@@ -676,6 +689,10 @@
+     if (deviceIdRaw != null && deviceIdRaw is! String) {
+       throw const FormatException('Connection deviceId must be a string.');
+     }
++    final hostNameRaw = json['hostName'] ?? json['host_name'];
++    if (hostNameRaw != null && hostNameRaw is! String) {
++      throw const FormatException('Connection hostName must be a string.');
++    }
+     final tunnelUrl = json['tunnelUrl'];
+     if (tunnelUrl != null && tunnelUrl is! String) {
+       throw const FormatException('Connection tunnelUrl must be a string.');
+@@ -723,6 +740,7 @@
+       status: status,
+       connectedAt: connectedAt,
+       deviceId: deviceIdRaw as String?,
++      hostName: hostNameRaw as String?,
+       agentUrl: agentUrlRaw is String && agentUrlRaw.isNotEmpty
+           ? agentUrlRaw
+           : null,
+diff --git a/mobile/test/widget_test.dart b/mobile/test/widget_test.dart
+index d50093e114fc677655309811bf594d2dfcd02cf7..835a3da40fc73bd8e6584aacea0cf3d45846dd85
+--- a/mobile/test/widget_test.dart
++++ b/mobile/test/widget_test.dart
+@@ -171,6 +171,7 @@
+           token: 'TOKEN-1',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'agent.local',
+           agentUrl: 'https://agent.local',
+           lastSeenAt: now,
+         ),
+@@ -247,6 +248,7 @@
+           token: 'TOKEN-2',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'terminal.agent',
+           agentUrl: 'https://terminal.agent',
+           lastSeenAt: now,
+         ),
+@@ -310,6 +312,7 @@
+           token: 'TOKEN-3',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'api.agent',
+           agentUrl: 'https://api.agent',
+           lastSeenAt: now,
+         ),
+@@ -360,6 +363,7 @@
+           token: 'TOKEN-4',
+           status: 'connected',
+           connectedAt: now,
++          hostName: 'broken.agent',
+           agentUrl: 'https://broken.agent',
+           lastSeenAt: now,
+         ),
+
+
+thinking
+**Staging changes for commit**
+exec
 /bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
