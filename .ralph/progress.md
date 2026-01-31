@@ -756,3 +756,36 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
   - flutter build web emits wasm dry-run warnings for ffi-based deps; not blocking for desktop UI validation.
 ---
+## [2026-01-31 23:45] - US-004: Add terminal session labels and rename synchronization
+Thread:
+Run: 20260131-221506-98331 (iteration 4)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-4.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-4.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 6e0a763 feat(terminal): add labels and rename sync
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (with wasm ffi warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260131-221506-98331-iter-3.log
+  - desktop/frontend/index.html
+  - desktop/src/command.rs
+  - desktop/src/terminal.rs
+  - mobile/lib/main.dart
+- What was implemented
+  - Added terminal session labels to desktop payloads, including list/status/stream responses, plus rename action with validation.
+  - Mobile terminal sessions now sync labels from the desktop, send labels on start/rename, and surface rename UI with error handling.
+  - Desktop UI now shows session labels and exposes a rename action; browser UI verified for mobile and desktop terminal views.
+- **Learnings for future iterations:**
+  - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
+  - flutter build web emits wasm dry-run warnings for ffi-based deps; not blocking for UI validation.
+---
