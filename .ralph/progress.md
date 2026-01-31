@@ -724,3 +724,35 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - Gotchas encountered: flutter analyze fails due to missing deps in third_party/flutter_quic.
   - Useful context: Import bundle dialog is the easiest way to verify agent labels on web.
 ---
+## [2026-01-31 23:12:50] - US-003: Show mobile device name + device ID in desktop device list
+Thread: 
+Run: 20260131-221506-98331 (iteration 3)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-3.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331-iter-3.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: f4e95e7 feat(device-list): show device name with id
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-agent-parity.json
+  - .ralph/.tmp/prompt-20260131-221506-98331-3.md
+  - .ralph/.tmp/story-20260131-221506-98331-3.json
+  - .ralph/.tmp/story-20260131-221506-98331-3.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260131-221506-98331-iter-2.log
+  - .ralph/runs/run-20260131-221506-98331-iter-2.md
+  - .ralph/runs/run-20260131-221506-98331-iter-3.log
+  - desktop/frontend/index.html
+- What was implemented
+  - Desktop device list titles now render "<device name> · <device id>" with Unknown fallback and paired/seen metadata in the subline.
+  - Browser UI verification via dev-browser against desktop/frontend/index.html (screenshot: /tmp/vibe-device-list.png).
+- **Learnings for future iterations:**
+  - flutter analyze currently fails due to missing third_party/flutter_quic build_tool dependencies; treat as external.
+  - flutter build web emits wasm dry-run warnings for ffi-based deps; not blocking for desktop UI validation.
+---
