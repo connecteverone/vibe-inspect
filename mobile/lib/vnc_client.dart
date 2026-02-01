@@ -189,9 +189,23 @@ class VncRfbClient {
 
   void sendText(String text) {
     for (final rune in text.runes) {
-      sendKey(down: true, keysym: rune);
-      sendKey(down: false, keysym: rune);
+      final keysym = _keysymForRune(rune);
+      if (keysym == null) {
+        continue;
+      }
+      sendKey(down: true, keysym: keysym);
+      sendKey(down: false, keysym: keysym);
     }
+  }
+
+  int? _keysymForRune(int rune) {
+    if (rune < 0 || rune > 0x10ffff) {
+      return null;
+    }
+    if (rune <= 0xff) {
+      return rune;
+    }
+    return 0x01000000 | rune;
   }
 
   void _handleMessage(dynamic message) {

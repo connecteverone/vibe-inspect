@@ -10730,6 +10730,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   Offset? _primaryDownPosition;
   DateTime? _primaryDownTime;
   Offset? _lastPrimaryPosition;
+  Offset? _lastMultiFingerPosition;
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
   bool _isFullscreen = false;
@@ -12879,6 +12880,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _primaryDownPosition = null;
     _primaryDownTime = null;
     _lastPrimaryPosition = null;
+    _lastMultiFingerPosition = null;
   }
 
   void _clearPointerState({bool sendPointer = true}) {
@@ -12923,6 +12925,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = event.position;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = event.position;
+      _lastMultiFingerPosition = null;
+    } else if (_activePointers.length >= 2) {
+      _lastMultiFingerPosition = _averagePointerPosition();
     }
   }
 
@@ -12934,6 +12939,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     _activePointers[event.pointer] = event.position;
+    if (_activePointers.length >= 2) {
+      final average = _averagePointerPosition();
+      final last = _lastMultiFingerPosition;
+      if (last != null) {
+        final delta = average - last;
+        if (delta.distance != 0) {
+          _handleScrollDelta(Offset(0, delta.dy));
+        }
+      }
+      _lastMultiFingerPosition = average;
+      return;
+    }
     if (_activePointers.length == 1) {
       final last = _lastPrimaryPosition ?? event.position;
       final delta = event.position - last;
@@ -12985,6 +13002,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = remaining;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = remaining;
+      _lastMultiFingerPosition = null;
+    } else {
+      _lastMultiFingerPosition = _averagePointerPosition();
     }
   }
 
@@ -13056,6 +13076,45 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                   }
                   Navigator.of(context).maybePop();
                 },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Special keys',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _VncSpecialKeyButton(
+                    label: 'Enter',
+                    onPressed: () => _sendKeyPress(0xff0d),
+                  ),
+                  _VncSpecialKeyButton(
+                    label: 'Backspace',
+                    onPressed: () => _sendKeyPress(0xff08),
+                  ),
+                  _VncSpecialKeyButton(
+                    label: 'Delete',
+                    onPressed: () => _sendKeyPress(0xffff),
+                  ),
+                  _VncSpecialKeyButton(
+                    label: 'Ctrl',
+                    onPressed: () => _sendKeyPress(0xffe3),
+                  ),
+                  _VncSpecialKeyButton(
+                    label: 'Cmd',
+                    onPressed: () => _sendKeyPress(0xffe7),
+                  ),
+                  _VncSpecialKeyButton(
+                    label: 'Opt',
+                    onPressed: () => _sendKeyPress(0xffe9),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               Row(
@@ -15784,6 +15843,34 @@ class _VncRecoveryCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VncSpecialKeyButton extends StatelessWidget {
+  const _VncSpecialKeyButton({
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonal(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
       ),
     );
   }

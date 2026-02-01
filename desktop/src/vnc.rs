@@ -2116,6 +2116,7 @@ fn map_keysym(keysym: u32) -> Option<Key> {
         0xff09 => Some(Key::Tab),
         0xff0d => Some(Key::Return),
         0xff08 => Some(Key::Backspace),
+        0xffff => Some(Key::Delete),
         0xffe1 => Some(Key::Shift),
         0xffe2 => Some(Key::Shift),
         0xffe3 => Some(Key::Control),
@@ -2133,9 +2134,11 @@ fn map_keysym(keysym: u32) -> Option<Key> {
 }
 
 fn keysym_to_char(keysym: u32) -> Option<char> {
-    if keysym <= 0x7f {
-        std::char::from_u32(keysym)
-    } else {
-        None
+    if keysym <= 0xff {
+        return std::char::from_u32(keysym);
     }
+    if (0x0100_0000..=0x0110_ffff).contains(&keysym) {
+        return std::char::from_u32(keysym & 0x00ff_ffff);
+    }
+    None
 }
