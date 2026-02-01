@@ -1490,3 +1490,34 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
   - Use VIBE_CTL_* overrides and discovery file parsing for CLI configuration
 ---
+## [2026-02-02 03:14:51] - US-012: vibe-ctl attach raw mode and detach key
+Thread: 
+Run: 20260201-231810-31541 (iteration 12)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 5d3b176 feat(vibe-ctl): add interactive attach mode
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-11.log
+  - .ralph/runs/run-20260201-231810-31541-iter-11.md
+  - .ralph/runs/run-20260201-231810-31541-iter-12.log
+  - desktop/src/bin/vibe-ctl.rs
+- What was implemented
+- Added vibe-ctl attach command with raw-mode input forwarding and Ctrl-b d detach handling
+- Added detach key parsing/timeout support and read-only input suppression
+- Added SIGWINCH resize updates plus terminal payload streaming output
+- **Learnings for future iterations:**
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+  - Attach requires raw mode + detach handling to restore terminal cleanly
+---
