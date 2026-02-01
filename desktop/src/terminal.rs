@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,6 +28,46 @@ const TERMINAL_RESTART_REASON: &str = "Session closed because the desktop agent 
 const NOTIFICATION_RATE_LIMIT_SECS: u64 = 10;
 const NOTIFICATION_QUEUE_LIMIT: usize = 200;
 const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+
+fn resolve_shell() -> String {
+    if let Ok(shell) = std::env::var("SHELL") {
+        let trimmed = shell.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    if cfg!(target_os = "windows") {
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            let trimmed = comspec.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        return "powershell.exe".to_string();
+    }
+    if cfg!(target_os = "macos") {
+        if Path::new("/bin/zsh").exists() {
+            return "/bin/zsh".to_string();
+        }
+        if Path::new("/bin/bash").exists() {
+            return "/bin/bash".to_string();
+        }
+        return "/bin/sh".to_string();
+    }
+    if cfg!(target_os = "linux") {
+        if Path::new("/bin/bash").exists() {
+            return "/bin/bash".to_string();
+        }
+        if Path::new("/bin/sh").exists() {
+            return "/bin/sh".to_string();
+        }
+        return "sh".to_string();
+    }
+    if Path::new("/bin/sh").exists() {
+        return "/bin/sh".to_string();
+    }
+    "sh".to_string()
+}
 
 #[derive(Clone)]
 struct TerminalOutputChunk {
@@ -755,7 +795,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         })
         .map_err(|error| TerminalError::new("pty_error", error.to_string()))?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let shell = resolve_shell();
     let mut cmd = CommandBuilder::new(shell);
     if let Some(working_dir) = request.working_dir.clone() {
         if !working_dir.trim().is_empty() {
