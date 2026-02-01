@@ -1,5 +1,7 @@
 use base64::Engine;
 use clap::{Args, Parser, Subcommand};
+use crossterm::terminal;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use desktop::terminal_core::{
     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
@@ -10,13 +12,17 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
 
 const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
 const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
@@ -29,6 +35,8 @@ const TERMINALD_DISCOVERY_POLL: Duration = Duration::from_millis(150);
 
 type TerminaldSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
+type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -57,6 +65,9 @@ enum Command {
     Ls(LsArgs),
     /// Create a new session.
     New(NewArgs),
+    /// Attach to a session.
+    #[command(alias = "a")]
+    Attach(AttachArgs),
     /// Send input to a session.
     Send(SendArgs),
     /// Resize a session.
@@ -94,6 +105,25 @@ struct NewArgs {
     /// Environment overrides (KEY=VALUE).
     #[arg(long = "env", value_name = "KEY=VALUE")]
     env: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct AttachArgs {
+    /// Target session id.
+    #[arg(short = 't', long = "target", value_name = "ID")]
+    target: String,
+    /// Disable input forwarding.
+    #[arg(long)]
+    read_only: bool,
+    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
+    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
+    detach_key: String,
+    /// Detach timeout in milliseconds.
+    #[arg(long, value_name = "MS", default_value_t = 1000)]
+    detach_timeout_ms: u64,
+    /// Disable raw mode for debugging.
+    #[arg(long)]
+    no_raw: bool,
 }
 
 #[derive(Debug, Args)]
@@ -192,6 +222,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
                 CliError::new("connection_failed", "Missing session_id in response.")
             })?;
             println!("{session_id}");
+        }
+        Command::Attach(args) => {
+            attach_session(&overrides, args).await?;
         }
         Command::Send(args) => {
             let payload = build_input_payload(&args)?;
@@ -313,6 +346,498 @@ fn build_input_payload(args: &SendArgs) -> Result<Value, CliError> {
         return Err(CliError::new("missing_input", "Input is required."));
     }
     Ok(Value::Object(payload))
+}
+
+struct DetachSequence {
+    prefix: u8,
+    key: u8,
+    timeout: Duration,
+}
+
+struct RawModeGuard {
+    enabled: bool,
+}
+
+impl RawModeGuard {
+    fn new(enable: bool) -> Result<Self, CliError> {
+        if enable {
+            enable_raw_mode().map_err(|error| {
+                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
+            })?;
+        }
+        Ok(Self { enabled: enable })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            let _ = disable_raw_mode();
+        }
+    }
+}
+
+async fn attach_session(
+    overrides: &ConfigOverrides,
+    args: AttachArgs,
+) -> Result<(), CliError> {
+    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
+    let mut socket = connect_terminald(overrides).await?;
+    let (mut sender, mut receiver) = socket.split();
+
+    let attach_id = random_request_id();
+    let attach_request = build_terminald_request(
+        &attach_id,
+        "attach",
+        Some(args.target.clone()),
+        Some(json!({
+            "since": 0,
+            "notify_since": 0,
+        })),
+    );
+    sender
+        .send(TungsteniteMessage::Text(attach_request.to_string()))
+        .await
+        .map_err(|error| {
+            CliError::new(
+                "connection_failed",
+                format!("Failed to send attach request: {error}"),
+            )
+        })?;
+
+    let mut stdout = std::io::stdout();
+    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
+
+    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
+
+    if let Ok((cols, rows)) = terminal::size() {
+        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
+    }
+
+    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
+    let _input_handle = spawn_stdin_reader(input_tx);
+
+    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
+    spawn_resize_listener(resize_tx);
+
+    let mut prefix_deadline: Option<Instant> = None;
+
+    loop {
+        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
+        if let Some(deadline) = prefix_deadline {
+            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
+        }
+
+        tokio::select! {
+            _ = &mut sleep, if prefix_deadline.is_some() => {
+                if let Some(deadline) = prefix_deadline {
+                    if Instant::now() >= deadline {
+                        if !args.read_only {
+                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
+                        }
+                        prefix_deadline = None;
+                    }
+                }
+            }
+            maybe_input = input_rx.recv() => {
+                let Some(bytes) = maybe_input else { break; };
+                let detach = handle_input_bytes(
+                    &mut sender,
+                    &args.target,
+                    &bytes,
+                    args.read_only,
+                    &detach_sequence,
+                    &mut prefix_deadline,
+                ).await?;
+                if detach {
+                    let _ = send_detach(&mut sender, &args.target).await;
+                    break;
+                }
+            }
+            maybe_resize = resize_rx.recv() => {
+                if let Some((cols, rows)) = maybe_resize {
+                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
+                }
+            }
+            maybe_message = receiver.next() => {
+                let Some(message) = maybe_message else { break; };
+                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    if tokens.len() != 2 {
+        return Err(CliError::new(
+            "invalid_request",
+            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
+        ));
+    }
+    let prefix = parse_key_token(tokens[0])?;
+    let key = parse_key_token(tokens[1])?;
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    Ok(DetachSequence { prefix, key, timeout })
+}
+
+fn parse_key_token(token: &str) -> Result<u8, CliError> {
+    let normalized = token.trim();
+    if normalized.is_empty() {
+        return Err(CliError::new("invalid_request", "Detach key token is empty."));
+    }
+    let lower = normalized.to_lowercase();
+    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
+        let mut chars = rest.chars();
+        let Some(ch) = chars.next() else {
+            return Err(CliError::new("invalid_request", "Detach key missing character."));
+        };
+        if chars.next().is_some() {
+            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
+        }
+        let byte = ch as u32;
+        if byte > u8::MAX as u32 {
+            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
+        }
+        return Ok((byte as u8) & 0x1f);
+    }
+    let mut chars = normalized.chars();
+    let Some(ch) = chars.next() else {
+        return Err(CliError::new("invalid_request", "Detach key missing character."));
+    };
+    if chars.next().is_some() {
+        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
+    }
+    let byte = ch as u32;
+    if byte > u8::MAX as u32 {
+        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
+    }
+    Ok(byte as u8)
+}
+
+fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buffer = [0u8; 1024];
+        loop {
+            match stdin.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    if sender
+                        .blocking_send(buffer[..count].to_vec())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
+    #[cfg(unix)]
+    {
+        tokio::spawn(async move {
+            let mut signals = match signal(SignalKind::window_change()) {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            loop {
+                if signals.recv().await.is_none() {
+                    break;
+                }
+                if let Ok((cols, rows)) = terminal::size() {
+                    if sender.send((cols, rows)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = sender;
+    }
+}
+
+async fn wait_for_attach(
+    receiver: &mut TerminaldStream,
+    sender: &mut TerminaldSink,
+    attach_id: &str,
+    session_id: &str,
+    stdout: &mut dyn Write,
+) -> Result<(), CliError> {
+    while let Some(message) = receiver.next().await {
+        match message {
+            Ok(TungsteniteMessage::Text(text)) => {
+                if let Some(result) = parse_terminald_response(&text, attach_id) {
+                    return result.map(|_| ());
+                }
+                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
+                    write_terminal_payload(&payload, stdout)?;
+                } else if let Some(warning) = extract_session_warning(&text, session_id) {
+                    eprintln!("session warning: {warning}");
+                } else if let Some(error) = parse_terminald_error(&text) {
+                    eprintln!("{}: {}", error.code, error.message);
+                }
+            }
+            Ok(TungsteniteMessage::Binary(bytes)) => {
+                if let Ok(text) = String::from_utf8(bytes) {
+                    if let Some(result) = parse_terminald_response(&text, attach_id) {
+                        return result.map(|_| ());
+                    }
+                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
+                        write_terminal_payload(&payload, stdout)?;
+                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
+                        eprintln!("session warning: {warning}");
+                    } else if let Some(error) = parse_terminald_error(&text) {
+                        eprintln!("{}: {}", error.code, error.message);
+                    }
+                }
+            }
+            Ok(TungsteniteMessage::Ping(payload)) => {
+                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
+            }
+            Ok(TungsteniteMessage::Close(_)) => {
+                return Err(CliError::new(
+                    "connection_failed",
+                    "Terminal daemon closed connection.",
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    Err(CliError::new(
+        "connection_failed",
+        "Terminal daemon closed connection.",
+    ))
+}
+
+async fn handle_terminald_message(
+    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
+    session_id: &str,
+    stdout: &mut dyn Write,
+    sender: &mut TerminaldSink,
+) -> Result<bool, CliError> {
+    match message {
+        Ok(TungsteniteMessage::Text(text)) => {
+            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
+                write_terminal_payload(&payload, stdout)?;
+            } else if let Some(warning) = extract_session_warning(&text, session_id) {
+                eprintln!("session warning: {warning}");
+            } else if let Some(error) = parse_terminald_error(&text) {
+                eprintln!("{}: {}", error.code, error.message);
+            }
+        }
+        Ok(TungsteniteMessage::Binary(bytes)) => {
+            if let Ok(text) = String::from_utf8(bytes) {
+                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
+                    write_terminal_payload(&payload, stdout)?;
+                } else if let Some(warning) = extract_session_warning(&text, session_id) {
+                    eprintln!("session warning: {warning}");
+                } else if let Some(error) = parse_terminald_error(&text) {
+                    eprintln!("{}: {}", error.code, error.message);
+                }
+            }
+        }
+        Ok(TungsteniteMessage::Ping(payload)) => {
+            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
+        }
+        Ok(TungsteniteMessage::Close(_)) => {
+            return Ok(false);
+        }
+        Err(error) => {
+            return Err(CliError::new(
+                "connection_failed",
+                format!("Terminal daemon error: {error}"),
+            ));
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
+fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
+    let parsed: Value = serde_json::from_str(text).ok()?;
+    if parsed.get("type")?.as_str()? != "event" {
+        return None;
+    }
+    if parsed.get("event")?.as_str()? != "terminal_payload" {
+        return None;
+    }
+    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
+        if event_session != session_id {
+            return None;
+        }
+    }
+    parsed.get("data").cloned()
+}
+
+fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(text).ok()?;
+    if parsed.get("type")?.as_str()? != "event" {
+        return None;
+    }
+    if parsed.get("event")?.as_str()? != "session_warning" {
+        return None;
+    }
+    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
+        if event_session != session_id {
+            return None;
+        }
+    }
+    parsed
+        .get("data")
+        .and_then(|value| value.get("message"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn parse_terminald_error(text: &str) -> Option<CliError> {
+    let parsed: Value = serde_json::from_str(text).ok()?;
+    if parsed.get("type")?.as_str()? != "res" {
+        return None;
+    }
+    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    if ok {
+        return None;
+    }
+    let error = parsed.get("error")?;
+    let code = error
+        .get("code")
+        .and_then(|value| value.as_str())
+        .unwrap_or("terminal_error");
+    let message = error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Terminal daemon error.");
+    Some(CliError::new(map_error_code(code), message.to_string()))
+}
+
+fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
+    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
+        stdout
+            .write_all(snapshot.as_bytes())
+            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
+    }
+    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
+        for chunk in output {
+            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
+                stdout
+                    .write_all(data.as_bytes())
+                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
+            }
+        }
+    }
+    stdout
+        .flush()
+        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
+    Ok(())
+}
+
+async fn handle_input_bytes(
+    sender: &mut TerminaldSink,
+    session_id: &str,
+    bytes: &[u8],
+    read_only: bool,
+    detach_sequence: &DetachSequence,
+    prefix_deadline: &mut Option<Instant>,
+) -> Result<bool, CliError> {
+    let mut buffer: Vec<u8> = Vec::new();
+    for &byte in bytes {
+        if let Some(deadline) = *prefix_deadline {
+            if Instant::now() > deadline {
+                if !read_only {
+                    buffer.push(detach_sequence.prefix);
+                }
+                *prefix_deadline = None;
+            }
+        }
+        if let Some(deadline) = *prefix_deadline {
+            if Instant::now() <= deadline && byte == detach_sequence.key {
+                *prefix_deadline = None;
+                if !read_only && !buffer.is_empty() {
+                    send_input_bytes(sender, session_id, &buffer).await?;
+                }
+                return Ok(true);
+            }
+            if !read_only {
+                buffer.push(detach_sequence.prefix);
+            }
+            *prefix_deadline = None;
+        }
+        if byte == detach_sequence.prefix {
+            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
+        } else if !read_only {
+            buffer.push(byte);
+        }
+    }
+    if !read_only && !buffer.is_empty() {
+        send_input_bytes(sender, session_id, &buffer).await?;
+    }
+    Ok(false)
+}
+
+async fn send_input_bytes(
+    sender: &mut TerminaldSink,
+    session_id: &str,
+    bytes: &[u8],
+) -> Result<(), CliError> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let payload = match std::str::from_utf8(bytes) {
+        Ok(text) => json!({ "data": text }),
+        Err(_) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            json!({ "data_b64": encoded })
+        }
+    };
+    send_terminald_action(sender, "input", session_id, Some(payload)).await
+}
+
+async fn send_resize(
+    sender: &mut TerminaldSink,
+    session_id: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<(), CliError> {
+    let payload = json!({ "cols": cols, "rows": rows });
+    send_terminald_action(sender, "resize", session_id, Some(payload)).await
+}
+
+async fn send_detach(
+    sender: &mut TerminaldSink,
+    session_id: &str,
+) -> Result<(), CliError> {
+    send_terminald_action(sender, "detach", session_id, None).await
+}
+
+async fn send_terminald_action(
+    sender: &mut TerminaldSink,
+    action: &str,
+    session_id: &str,
+    payload: Option<Value>,
+) -> Result<(), CliError> {
+    let request_id = random_request_id();
+    let request = build_terminald_request(
+        &request_id,
+        action,
+        Some(session_id.to_string()),
+        payload,
+    );
+    sender
+        .send(TungsteniteMessage::Text(request.to_string()))
+        .await
+        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
+    Ok(())
 }
 
 fn extract_session_id(data: &Value) -> Option<String> {

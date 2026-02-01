@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-02 03:00:34 | run=20260201-231810-31541 | iter=11 | mode=build | story=US-011 | duration=683s | status=success
 - 2026-02-02 02:49:09 | run=20260201-231810-31541 | iter=10 | mode=build | story=US-010 | duration=1601s | status=success
 - 2026-02-02 02:22:26 | run=20260201-231810-31541 | iter=9 | mode=build | story=US-009 | duration=1166s | status=success
 - 2026-02-02 02:02:58 | run=20260201-231810-31541 | iter=8 | mode=build | story=US-008 | duration=2244s | status=success
@@ -363,3 +364,8 @@
 [2026-02-02 02:56:12] Updated vibe-ctl CLI with ls/new/send/resize/rename/stop commands and terminald client handling
 [2026-02-02 02:56:47] Ran verification: flutter test/analyze and scripts (analyze fails due to known third_party/flutter_quic build_tool deps)
 [2026-02-02 02:58:33] Updated progress log for US-011
+[2026-02-02 03:00:34] ITERATION 11 end (duration=683s)
+[2026-02-02 03:00:36] ITERATION 12 start (mode=build story=US-012)
+[2026-02-02 03:01:21] Start US-012 work: audit existing vibe-ctl attach implementation
+[2026-02-02 03:11:20] Implemented vibe-ctl attach raw mode, detach sequence, input forwarding, and resize handling
+[2026-02-02 03:11:57] Ran flutter tests and analyze (analyze failed on known third_party/flutter_quic build_tool deps)
