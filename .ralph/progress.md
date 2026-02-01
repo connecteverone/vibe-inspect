@@ -1558,3 +1558,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
   - Backpressure and buffer truncation metrics should be surfaced via debug for operators
 ---
+## [2026-02-02 03:53:34] - US-014: terminal_core unit tests
+Thread: 
+Run: 20260201-231810-31541 (iteration 14)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-14.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-14.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 857a780 test(terminal-core): add unit coverage
+- Post-commit status: clean
+- Verification:
+  - Command: cargo test -> FAIL (desktop bin compile errors in terminald/vibe-ctl/terminal)
+  - Command: cargo test --lib -> PASS (warnings in vendor/scrap)
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-14.md
+  - .ralph/.tmp/story-20260201-231810-31541-14.json
+  - .ralph/.tmp/story-20260201-231810-31541-14.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-13.log
+  - .ralph/runs/run-20260201-231810-31541-iter-13.md
+  - .ralph/runs/run-20260201-231810-31541-iter-14.log
+  - desktop/src/terminal_core.rs
+- What was implemented
+- Added terminal_core unit tests covering seq ordering, UTF-8 reassembly, buffer truncation snapshot behavior, and resize updates
+- Included malformed UTF-8 replacement coverage and resize invalid-size error validation
+- **Learnings for future iterations:**
+  - cargo test for desktop currently fails in terminald/vibe-ctl bins; use cargo test --lib to validate terminal_core unit tests
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+---
