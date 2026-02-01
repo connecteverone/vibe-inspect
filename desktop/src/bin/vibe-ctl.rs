@@ -77,6 +77,8 @@ enum Command {
     /// Stop a session.
     #[command(alias = "kill")]
     Stop(StopArgs),
+    /// Show terminald server info and metrics.
+    Debug,
     /// Print the resolved terminald endpoint.
     Defaults,
 }
@@ -260,6 +262,10 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             let action = if args.force { "kill" } else { "stop" };
             terminald_request(&overrides, action, Some(args.target), None).await?;
         }
+        Command::Debug => {
+            let data = terminald_request(&overrides, "debug", None, None).await?;
+            print_debug_info(&data)?;
+        }
     }
     Ok(())
 }
@@ -272,6 +278,66 @@ fn print_sessions(sessions: &[TerminalSessionSummary]) {
             session.id, session.label, session.status, session.last_activity
         );
     }
+}
+
+fn print_debug_info(data: &Value) -> Result<(), CliError> {
+    let server_info = data
+        .get("server_info")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| CliError::new("connection_failed", "Missing server_info in response."))?;
+    let metrics = data
+        .get("metrics")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| CliError::new("connection_failed", "Missing metrics in response."))?;
+
+    let version = server_info
+        .get("version")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let server_time = server_info
+        .get("server_time")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let capabilities = server_info
+        .get("capabilities")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let active_sessions = read_metric(metrics, "active_sessions")?;
+    let active_connections = read_metric(metrics, "active_connections")?;
+    let dropped_chunks_total = read_metric(metrics, "dropped_chunks_total")?;
+    let ws_backpressure_events_total = read_metric(metrics, "ws_backpressure_events_total")?;
+
+    println!("server_version: {version}");
+    println!("server_time: {server_time}");
+    println!("capabilities: {capabilities}");
+    println!("active_sessions: {active_sessions}");
+    println!("active_connections: {active_connections}");
+    println!("dropped_chunks_total: {dropped_chunks_total}");
+    println!("ws_backpressure_events_total: {ws_backpressure_events_total}");
+    Ok(())
+}
+
+fn read_metric(
+    metrics: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<u64, CliError> {
+    metrics
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| {
+            CliError::new(
+                "connection_failed",
+                format!("Missing metric '{key}' in response."),
+            )
+        })
 }
 
 fn build_start_payload(args: &NewArgs) -> Result<Option<Value>, CliError> {
@@ -1250,6 +1316,7 @@ fn map_error_code(code: &str) -> &'static str {
         "spawn_error" => "spawn_error",
         "payload_too_large" => "payload_too_large",
         "invalid_auth" => "invalid_auth",
+        "auth_required" => "auth_required",
         "version_mismatch" => "version_mismatch",
         "connection_failed" => "connection_failed",
         _ => "terminal_error",

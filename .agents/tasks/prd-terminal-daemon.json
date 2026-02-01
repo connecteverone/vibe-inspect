@@ -337,7 +337,7 @@
     {
       "id": "US-012",
       "title": "vibe-ctl attach raw mode and detach key",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-011",
         "US-006"
@@ -351,13 +351,13 @@
         "Negative: `--read-only` prevents input from being sent to the session"
       ],
       "startedAt": "2026-02-01T19:00:36.256206+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T19:00:36.256316+00:00"
+      "completedAt": "2026-02-01T19:19:05.135922+00:00",
+      "updatedAt": "2026-02-01T19:19:05.135831+00:00"
     },
     {
       "id": "US-013",
       "title": "Observability + vibe-ctl debug",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-004"
       ],
@@ -368,7 +368,10 @@
         "Implement `vibe-ctl debug` to print server_info and current metrics",
         "Example: `vibe-ctl debug` prints server version and active session count",
         "Negative: debug without auth returns `auth_required`"
-      ]
+      ],
+      "startedAt": "2026-02-01T19:19:07.238009+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T19:19:07.238124+00:00"
     },
     {
       "id": "US-014",

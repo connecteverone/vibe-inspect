@@ -13,6 +13,7 @@ use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -307,12 +308,17 @@ impl TerminalSession {
         };
         self.buffer_bytes = self.buffer_bytes.saturating_add(chunk.data.len());
         self.buffer.push_back(chunk);
+        let mut dropped_chunks = 0;
         while self.buffer_bytes > MAX_BUFFER_BYTES {
             if let Some(front) = self.buffer.pop_front() {
                 self.buffer_bytes = self.buffer_bytes.saturating_sub(front.data.len());
+                dropped_chunks += 1;
             } else {
                 break;
             }
+        }
+        if dropped_chunks > 0 {
+            record_dropped_chunks(dropped_chunks);
         }
         self.last_activity = now_ts();
     }
@@ -507,8 +513,34 @@ impl TerminalError {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TerminalMetricsSnapshot {
+    pub active_sessions: u64,
+    pub dropped_chunks_total: u64,
+}
+
+#[derive(Debug, Default)]
+struct TerminalMetrics {
+    dropped_chunks_total: AtomicU64,
+}
+
+impl TerminalMetrics {
+    fn record_dropped_chunks(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        self.dropped_chunks_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    fn dropped_chunks_total(&self) -> u64 {
+        self.dropped_chunks_total.load(Ordering::Relaxed)
+    }
+}
+
 static TERMINAL_MANAGER: OnceLock<Arc<Mutex<TerminalManager>>> = OnceLock::new();
 static TERMINAL_HISTORY: OnceLock<Arc<Mutex<TerminalSessionHistory>>> = OnceLock::new();
+static TERMINAL_METRICS: OnceLock<Arc<TerminalMetrics>> = OnceLock::new();
 
 struct TerminalSessionHistory {
     sessions: HashMap<String, TerminalSessionSummary>,
@@ -621,6 +653,35 @@ pub fn terminal_manager() -> &'static Arc<Mutex<TerminalManager>> {
         spawn_cleanup(manager.clone());
         manager
     })
+}
+
+fn terminal_metrics() -> &'static Arc<TerminalMetrics> {
+    TERMINAL_METRICS.get_or_init(|| Arc::new(TerminalMetrics::default()))
+}
+
+fn active_session_count() -> u64 {
+    let manager = terminal_manager();
+    let manager = match manager.lock() {
+        Ok(manager) => manager,
+        Err(_) => return 0,
+    };
+    let mut count = 0;
+    for session in manager.sessions.values() {
+        if let Ok(session) = session.lock() {
+            if !session.status.is_ended() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+pub fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
+    let metrics = terminal_metrics();
+    TerminalMetricsSnapshot {
+        active_sessions: active_session_count(),
+        dropped_chunks_total: metrics.dropped_chunks_total(),
+    }
 }
 
 fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
@@ -1131,6 +1192,18 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         persist_session_summary(&session);
     }
 
+    log_session_event(
+        "session_start",
+        "info",
+        json!({
+            "session_id": session_id.as_str(),
+            "label": label.as_str(),
+            "cols": cols,
+            "rows": rows,
+            "created_at": now,
+        }),
+    );
+
     Ok(build_session_payload(
         "start",
         &session_id,
@@ -1327,6 +1400,17 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
     session.exit_code = None;
     session.last_activity = now_ts();
     persist_session_summary(&session);
+    let reason = if request.action == "kill" { "kill" } else { "stop" };
+    log_session_event(
+        "session_stop",
+        "info",
+        json!({
+            "session_id": session.id.as_str(),
+            "label": session.label.as_str(),
+            "reason": reason,
+            "status": session.status.as_str(),
+        }),
+    );
     Ok(build_session_payload(
         "stop",
         &session.id,
@@ -1547,6 +1631,22 @@ fn truncate_message(message: &str, max_len: usize) -> String {
     truncated
 }
 
+fn record_dropped_chunks(count: u64) {
+    let metrics = terminal_metrics();
+    metrics.record_dropped_chunks(count);
+}
+
+fn log_session_event(event: &str, level: &str, data: Value) {
+    let payload = json!({
+        "ts": now_ts(),
+        "component": "terminald",
+        "event": event,
+        "level": level,
+        "data": data,
+    });
+    println!("{}", payload);
+}
+
 fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read + Send>) {
     thread::spawn(move || {
         let mut buffer = [0u8; 4096];
@@ -1569,6 +1669,17 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                     session.exit_code = exit_code;
                     session.last_activity = now_ts();
                     persist_session_summary(&session);
+                    if session.status == TerminalSessionStatus::Exited {
+                        log_session_event(
+                            "session_exit",
+                            "info",
+                            json!({
+                                "session_id": session.id.as_str(),
+                                "label": session.label.as_str(),
+                                "exit_code": session.exit_code,
+                            }),
+                        );
+                    }
                     return;
                 }
                 Ok(count) => {
@@ -1582,6 +1693,15 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
                         session.status = TerminalSessionStatus::Error;
                         session.last_activity = now_ts();
                         persist_session_summary(&session);
+                        log_session_event(
+                            "session_error",
+                            "error",
+                            json!({
+                                "session_id": session.id.as_str(),
+                                "label": session.label.as_str(),
+                                "reason": "reader_error",
+                            }),
+                        );
                     }
                     return;
                 }
@@ -1617,6 +1737,16 @@ fn spawn_cleanup(manager: Arc<Mutex<TerminalManager>>) {
                 session.status = TerminalSessionStatus::Killed;
                 session.exit_code = None;
                 session.closed_reason = Some(IDLE_TIMEOUT_REASON.to_string());
+                log_session_event(
+                    "session_stop",
+                    "info",
+                    json!({
+                        "session_id": session.id.as_str(),
+                        "label": session.label.as_str(),
+                        "reason": "idle_timeout",
+                        "status": session.status.as_str(),
+                    }),
+                );
             } else if session.closed_reason.is_none() {
                 session.closed_reason = Some(IDLE_TIMEOUT_REASON.to_string());
             }

@@ -800,6 +800,7 @@ fn map_error_code(code: &str) -> &'static str {
         "spawn_error" => "spawn_error",
         "payload_too_large" => "payload_too_large",
         "invalid_auth" => "invalid_auth",
+        "auth_required" => "auth_required",
         "version_mismatch" => "version_mismatch",
         "connection_failed" => "connection_failed",
         _ => "terminal_error",

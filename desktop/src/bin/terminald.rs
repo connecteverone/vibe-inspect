@@ -15,13 +15,15 @@ use rand::{distributions::Alphanumeric, Rng};
 
 use desktop::terminal_core::{
     build_terminal_snapshot_payload, handle_terminal_command, idle_cleanup_config,
-    list_terminal_sessions, write_discovery_file, IdleCleanupConfig, TerminalActionRequest,
-    TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH,
-    TERMINALD_PROTOCOL_VERSION,
+    list_terminal_sessions, terminal_metrics_snapshot, write_discovery_file, IdleCleanupConfig,
+    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
+    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{interval, timeout, MissedTickBehavior};
 
@@ -41,6 +43,64 @@ struct TerminaldState {
     token: String,
     version: String,
     capabilities: Vec<String>,
+    metrics: Arc<TerminaldMetrics>,
+}
+
+#[derive(Debug, Default)]
+struct TerminaldMetrics {
+    active_connections: AtomicU64,
+    ws_backpressure_events_total: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminaldMetricsSnapshot {
+    active_connections: u64,
+    ws_backpressure_events_total: u64,
+}
+
+impl TerminaldMetrics {
+    fn increment_connections(&self) {
+        self.active_connections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn decrement_connections(&self) {
+        let _ = self.active_connections.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |value| Some(value.saturating_sub(1)),
+        );
+    }
+
+    fn record_backpressure(&self) {
+        self.ws_backpressure_events_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> TerminaldMetricsSnapshot {
+        TerminaldMetricsSnapshot {
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            ws_backpressure_events_total: self
+                .ws_backpressure_events_total
+                .load(Ordering::Relaxed),
+        }
+    }
+}
+
+struct ConnectionGuard {
+    metrics: Arc<TerminaldMetrics>,
+}
+
+impl ConnectionGuard {
+    fn new(metrics: Arc<TerminaldMetrics>) -> Self {
+        metrics.increment_connections();
+        Self { metrics }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.metrics.decrement_connections();
+    }
 }
 
 type WsSender = SplitSink<WebSocket, Message>;
@@ -188,6 +248,7 @@ async fn main() {
         token,
         version: TERMINALD_PROTOCOL_VERSION.to_string(),
         capabilities,
+        metrics: Arc::new(TerminaldMetrics::default()),
     };
 
     let app = Router::new()
@@ -248,7 +309,7 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
             send_error_and_close(
                 &mut socket,
                 "",
-                "invalid_auth",
+                "auth_required",
                 "Auth required within 3 seconds.",
             )
             .await;
@@ -264,7 +325,7 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
             send_error_and_close(
                 &mut socket,
                 "",
-                "invalid_auth",
+                "auth_required",
                 "Auth required within 3 seconds.",
             )
             .await;
@@ -274,7 +335,7 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
             send_error_and_close(
                 &mut socket,
                 "",
-                "invalid_auth",
+                "auth_required",
                 "Auth required within 3 seconds.",
             )
             .await;
@@ -285,7 +346,7 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
     let parsed: Value = match serde_json::from_str(&text) {
         Ok(value) => value,
         Err(_) => {
-            send_error_and_close(&mut socket, "", "invalid_auth", "Invalid auth payload.").await;
+            send_error_and_close(&mut socket, "", "auth_required", "Invalid auth payload.").await;
             return;
         }
     };
@@ -303,7 +364,7 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
         send_error_and_close(
             &mut socket,
             request_id,
-            "invalid_auth",
+            "auth_required",
             "Auth required.",
         )
         .await;
@@ -356,21 +417,19 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
         "id": request_id,
         "ok": true,
         "data": {
-            "server_info": {
-                "version": state.version,
-                "server_time": now_ts(),
-                "capabilities": state.capabilities,
-            }
+            "server_info": build_server_info(&state),
         }
     });
     if send_json(&mut socket, response).await.is_err() {
         return;
     }
 
-    run_authenticated_socket(socket).await;
+    run_authenticated_socket(socket, state).await;
 }
 
-async fn run_authenticated_socket(socket: WebSocket) {
+async fn run_authenticated_socket(socket: WebSocket, state: TerminaldState) {
+    let metrics = state.metrics.clone();
+    let _connection_guard = ConnectionGuard::new(metrics.clone());
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions: HashMap<String, AttachmentState> = HashMap::new();
     let mut outbound = OutboundQueue::default();
@@ -408,7 +467,7 @@ async fn run_authenticated_socket(socket: WebSocket) {
                 if !subscriptions.is_empty() {
                     let batch = collect_stream_events(&mut subscriptions, idle_config);
                     for event in batch.events {
-                        match enqueue_event(&mut outbound, &mut backpressure, event) {
+                        match enqueue_event(&mut outbound, &mut backpressure, metrics.as_ref(), event) {
                             EnqueueResult::Enqueued | EnqueueResult::Dropped => {}
                             EnqueueResult::Close => {
                                 closing = true;
@@ -447,6 +506,8 @@ async fn run_authenticated_socket(socket: WebSocket) {
                             &mut subscriptions,
                             &mut outbound,
                             &mut backpressure,
+                            &state,
+                            metrics.as_ref(),
                             &text,
                             &mut last_sent_at,
                         )
@@ -469,6 +530,8 @@ async fn handle_request(
     subscriptions: &mut HashMap<String, AttachmentState>,
     outbound: &mut OutboundQueue,
     backpressure: &mut BackpressureState,
+    state: &TerminaldState,
+    metrics: &TerminaldMetrics,
     text: &str,
     last_sent_at: &mut Instant,
 ) -> bool {
@@ -540,6 +603,14 @@ async fn handle_request(
         .map(|value| value.to_string());
 
     match action.as_str() {
+        "debug" => {
+            let data = json!({
+                "server_info": build_server_info(state),
+                "metrics": build_metrics_snapshot(metrics),
+            });
+            send_ok_response(sender, request_id, data).await;
+            *last_sent_at = Instant::now();
+        }
         "list" => {
             let sessions = list_terminal_sessions();
             let data = json!({ "sessions": sessions });
@@ -669,13 +740,15 @@ async fn handle_request(
                     if summary.truncated {
                         let warning =
                             build_session_warning(&session_id, "buffer_truncated", BUFFER_TRUNCATED_MESSAGE);
-                        if enqueue_event(outbound, backpressure, warning) == EnqueueResult::Close {
+                        if enqueue_event(outbound, backpressure, metrics, warning)
+                            == EnqueueResult::Close
+                        {
                             return false;
                         }
                     }
                     let stream_payload = as_stream_payload(payload);
                     let event = build_terminal_payload_event(&session_id, stream_payload);
-                    if enqueue_event(outbound, backpressure, event) == EnqueueResult::Close {
+                    if enqueue_event(outbound, backpressure, metrics, event) == EnqueueResult::Close {
                         return false;
                     }
                 }
@@ -752,7 +825,9 @@ async fn handle_request(
                     if truncated {
                         let warning =
                             build_session_warning(&session_id, "buffer_truncated", BUFFER_TRUNCATED_MESSAGE);
-                        if enqueue_event(outbound, backpressure, warning) == EnqueueResult::Close {
+                        if enqueue_event(outbound, backpressure, metrics, warning)
+                            == EnqueueResult::Close
+                        {
                             return false;
                         }
                     }
@@ -959,6 +1034,25 @@ async fn send_terminal_error(sender: &mut WsSender, request_id: &str, error: Ter
     send_error_response(sender, request_id, error.code, &error.message).await;
 }
 
+fn build_server_info(state: &TerminaldState) -> Value {
+    json!({
+        "version": state.version.as_str(),
+        "server_time": now_ts(),
+        "capabilities": state.capabilities.as_slice(),
+    })
+}
+
+fn build_metrics_snapshot(metrics: &TerminaldMetrics) -> Value {
+    let core_metrics = terminal_metrics_snapshot();
+    let daemon_metrics = metrics.snapshot();
+    json!({
+        "active_sessions": core_metrics.active_sessions,
+        "active_connections": daemon_metrics.active_connections,
+        "dropped_chunks_total": core_metrics.dropped_chunks_total,
+        "ws_backpressure_events_total": daemon_metrics.ws_backpressure_events_total,
+    })
+}
+
 fn build_terminal_payload_event(session_id: &str, data: Value) -> Value {
     json!({
         "type": "event",
@@ -1054,6 +1148,7 @@ fn enqueue_control_event(queue: &mut OutboundQueue, value: Value) -> EnqueueResu
 fn trigger_backpressure(
     queue: &mut OutboundQueue,
     backpressure: &mut BackpressureState,
+    metrics: &TerminaldMetrics,
     session_id: Option<&str>,
 ) -> EnqueueResult {
     if let Some(session_id) = session_id {
@@ -1064,6 +1159,7 @@ fn trigger_backpressure(
         return EnqueueResult::Dropped;
     }
     backpressure.paused = true;
+    metrics.record_backpressure();
     let paused_event = build_stream_event(
         "stream_paused",
         json!({
@@ -1077,6 +1173,7 @@ fn trigger_backpressure(
 fn enqueue_event(
     queue: &mut OutboundQueue,
     backpressure: &mut BackpressureState,
+    metrics: &TerminaldMetrics,
     value: Value,
 ) -> EnqueueResult {
     let (is_terminal_payload, session_id) = event_meta(&value);
@@ -1090,7 +1187,7 @@ fn enqueue_event(
             return EnqueueResult::Dropped;
         }
         if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
-            let result = trigger_backpressure(queue, backpressure, session_id.as_deref());
+            let result = trigger_backpressure(queue, backpressure, metrics, session_id.as_deref());
             if matches!(result, EnqueueResult::Close) {
                 return result;
             }
