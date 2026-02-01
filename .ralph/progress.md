@@ -330,7 +330,7 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
 - Guardrails reviewed: yes
 - No-commit run: false
 - Commit: ea8f2ca feat(timeline): add context restore views
-- Post-commit status: clean
+- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-12.log (auto-updated)
 - Verification:
   - Command: cd mobile && flutter test -> PASS
   - Command: cd mobile && flutter analyze -> PASS
