@@ -1179,3 +1179,36 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - flutter analyze failures stem from missing third_party/flutter_quic build_tool deps and can be recorded as known external issues.
   - terminal_core can own WebSocket stream handling while terminal.rs remains a shim.
 ---
+## [2026-02-02 00:02:11] - US-003: Discovery file creation and config overrides
+Thread: 
+Run: 20260201-231810-31541 (iteration 3)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-3.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-3.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: f59dfb1 feat(terminal-config): add discovery file support
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-3.md
+  - .ralph/.tmp/story-20260201-231810-31541-3.json
+  - .ralph/.tmp/story-20260201-231810-31541-3.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-2.log
+  - .ralph/runs/run-20260201-231810-31541-iter-2.md
+  - .ralph/runs/run-20260201-231810-31541-iter-3.log
+  - desktop/src/bin/terminald.rs
+  - desktop/src/bin/vibe-ctl.rs
+  - desktop/src/terminal_core.rs
+- What was implemented: terminald now writes a discovery file with atomic temp+rename and 0600 perms, terminal_core exposes discovery path/read/write helpers, and vibe-ctl resolves config via env overrides and discovery file content.
+- **Learnings for future iterations:**
+  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
+  - Discovery writes should use temp file + rename for atomicity across restarts.
+---
