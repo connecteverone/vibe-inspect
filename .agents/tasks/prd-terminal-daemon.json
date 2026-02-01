@@ -297,7 +297,7 @@
     {
       "id": "US-010",
       "title": "Desktop agent proxy to terminald",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-006",
         "US-003"
@@ -311,13 +311,13 @@
         "Negative: if terminald is unreachable, agent returns `connection_failed`"
       ],
       "startedAt": "2026-02-01T18:22:28.805909+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T18:22:28.806021+00:00"
+      "completedAt": "2026-02-01T18:49:09.181787+00:00",
+      "updatedAt": "2026-02-01T18:49:09.181492+00:00"
     },
     {
       "id": "US-011",
       "title": "vibe-ctl CLI core commands",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-003",
         "US-004"
@@ -329,7 +329,10 @@
         "`new` supports name/cwd/cols/rows/env; `send` supports `--file`",
         "Example: `vibe-ctl ls --json` prints machine-readable JSON and exits 0",
         "Negative: `vibe-ctl new --cols 5` returns `invalid_size` and exits non-zero"
-      ]
+      ],
+      "startedAt": "2026-02-01T18:49:11.284762+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T18:49:11.284881+00:00"
     },
     {
       "id": "US-012",
