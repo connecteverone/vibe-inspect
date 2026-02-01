@@ -10648,7 +10648,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   static const int _encodingHighPerf = -313;
   static const Duration _noFrameTimeout = Duration(seconds: 8);
   static const Duration _fpsWindow = Duration(milliseconds: 1000);
-  static const double _trackpadMoreButtonSize = 40;
+  static const double _trackpadMoreButtonWidth = 84;
+  static const double _trackpadMoreButtonHeight = 36;
   static const double _trackpadMoreButtonMargin = 10;
   static const Offset _trackpadMoreAnchorDefault = Offset(0.88, 0.1);
   static const int _calibrationVersion = 2;
@@ -10704,6 +10705,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   int _roiReconnectAttempts = 0;
   int _roiRevision = 0;
   bool _debugPanelOpen = false;
+  bool _fullscreenDebugVisible = false;
   ui.Image? _frameImage;
   ui.Image? _cursorImage;
   Size _cursorSize = Size.zero;
@@ -12920,6 +12922,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (value) {
         _directInputBackup = _directInputEnabled;
         _directInputEnabled = false;
+        _fullscreenDebugVisible = false;
       } else if (_directInputBackup != null) {
         _directInputEnabled = _directInputBackup ?? false;
         _directInputBackup = null;
@@ -13126,10 +13129,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }
 
   void _updateTrackpadMoreAnchorByDelta(Offset delta, Size areaSize) {
-    final width =
-        areaSize.width - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
-    final height =
-        areaSize.height - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    final width = areaSize.width -
+        _trackpadMoreButtonWidth -
+        _trackpadMoreButtonMargin * 2;
+    final height = areaSize.height -
+        _trackpadMoreButtonHeight -
+        _trackpadMoreButtonMargin * 2;
     if (width <= 0 || height <= 0) {
       return;
     }
@@ -13156,91 +13161,139 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       builder: (context) {
         return SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE2E8F0),
-                      borderRadius: BorderRadius.circular(999),
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              void updateDebugVisibility(bool value) {
+                setState(() {
+                  _fullscreenDebugVisible = value;
+                });
+                setSheetState(() {});
+              }
+
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE2E8F0),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '更多操作',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF0F172A),
+                    const SizedBox(height: 12),
+                    Text(
+                      '更多操作',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF0F172A),
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '键盘输入、调试视图与校准操作。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF64748B),
+                          ),
+                    ),
+                    const SizedBox(height: 12),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.keyboard),
+                      title: const Text('Keyboard input'),
+                      subtitle: const Text('Send text to the remote session'),
+                      enabled: isInteractive,
+                      onTap: isInteractive
+                          ? () {
+                              Navigator.of(context).maybePop();
+                              Future.microtask(_showKeyboardInput);
+                            }
+                          : null,
+                    ),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Debug view'),
+                      subtitle: Text(
+                        _fullscreenDebugVisible ? 'Visible' : 'Hidden',
                       ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '快速校准与定位触控板操作。',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF64748B),
+                      value: _fullscreenDebugVisible,
+                      onChanged: updateDebugVisibility,
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.center_focus_strong),
+                      title: const Text('Recalibrate cursor'),
+                      subtitle: const Text('Recenter pointer alignment'),
+                      enabled: isInteractive,
+                      onTap: isInteractive
+                          ? () {
+                              Navigator.of(context).maybePop();
+                              _performLayoutRecalibration();
+                            }
+                          : null,
+                    ),
+                    const Divider(height: 16),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.center_focus_strong),
+                      title: const Text('输入校准'),
+                      subtitle: const Text('打开校准面板'),
+                      enabled: isInteractive,
+                      onTap: isInteractive
+                          ? () {
+                              Navigator.of(context).maybePop();
+                              _openCalibrationSheet(isInteractive: true);
+                            }
+                          : null,
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.auto_fix_high),
+                      title: const Text('自动校准（四点）'),
+                      enabled: isInteractive,
+                      onTap: isInteractive
+                          ? () {
+                              Navigator.of(context).maybePop();
+                              _startAutoCalibration();
+                            }
+                          : null,
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.tune),
+                      title: Text(
+                        _trackpadMoreRepositioning ? '完成定位按钮' : '拖动定位按钮',
                       ),
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        setState(() {
+                          _trackpadMoreRepositioning =
+                              !_trackpadMoreRepositioning;
+                        });
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.refresh),
+                      title: const Text('重置按钮位置'),
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        setState(() {
+                          _trackpadMoreAnchor = _trackpadMoreAnchorDefault;
+                          _trackpadMoreRepositioning = false;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.center_focus_strong),
-                  title: const Text('输入校准'),
-                  subtitle: const Text('打开校准面板'),
-                  enabled: isInteractive,
-                  onTap: isInteractive
-                      ? () {
-                          Navigator.of(context).maybePop();
-                          _openCalibrationSheet(isInteractive: true);
-                        }
-                      : null,
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.auto_fix_high),
-                  title: const Text('自动校准（四点）'),
-                  enabled: isInteractive,
-                  onTap: isInteractive
-                      ? () {
-                          Navigator.of(context).maybePop();
-                          _startAutoCalibration();
-                        }
-                      : null,
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.tune),
-                  title: Text(
-                    _trackpadMoreRepositioning ? '完成定位按钮' : '拖动定位按钮',
-                  ),
-                  onTap: () {
-                    Navigator.of(context).maybePop();
-                    setState(() {
-                      _trackpadMoreRepositioning = !_trackpadMoreRepositioning;
-                    });
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.refresh),
-                  title: const Text('重置按钮位置'),
-                  onTap: () {
-                    Navigator.of(context).maybePop();
-                    setState(() {
-                      _trackpadMoreAnchor = _trackpadMoreAnchorDefault;
-                      _trackpadMoreRepositioning = false;
-                    });
-                  },
-                ),
-                const SizedBox(height: 4),
-              ],
-            ),
+              );
+            },
           ),
         );
       },
@@ -13251,10 +13304,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     required Size areaSize,
     required bool isInteractive,
   }) {
-    final width =
-        areaSize.width - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
-    final height =
-        areaSize.height - _trackpadMoreButtonSize - _trackpadMoreButtonMargin * 2;
+    final theme = Theme.of(context);
+    final width = areaSize.width -
+        _trackpadMoreButtonWidth -
+        _trackpadMoreButtonMargin * 2;
+    final height = areaSize.height -
+        _trackpadMoreButtonHeight -
+        _trackpadMoreButtonMargin * 2;
     final safeWidth = width <= 0 ? 0.0 : width;
     final safeHeight = height <= 0 ? 0.0 : height;
     final anchor = _trackpadMoreAnchor;
@@ -13263,6 +13319,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final top =
         _trackpadMoreButtonMargin + safeHeight * anchor.dy.clamp(0.0, 1.0);
     final isDragging = _trackpadMoreRepositioning;
+    final label = isDragging ? 'Move' : 'More';
     return Positioned(
       left: left,
       top: top,
@@ -13273,19 +13330,17 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                   areaSize,
                 )
             : null,
-        onTap: isInteractive
-            ? () => _openTrackpadMoreSheet(isInteractive: isInteractive)
-            : null,
-        onLongPress: isInteractive
-            ? () {
-                setState(() {
-                  _trackpadMoreRepositioning = !_trackpadMoreRepositioning;
-                });
-              }
-            : null,
+        onTap: () => _openTrackpadMoreSheet(isInteractive: isInteractive),
+        onLongPress: () {
+          setState(() {
+            _trackpadMoreRepositioning = !_trackpadMoreRepositioning;
+          });
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.all(8),
+          width: _trackpadMoreButtonWidth,
+          height: _trackpadMoreButtonHeight,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
             color: isDragging
                 ? const Color(0xFFF59E0B)
@@ -13304,14 +13359,24 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               ),
             ],
           ),
-          child: SizedBox(
-            width: _trackpadMoreButtonSize - 16,
-            height: _trackpadMoreButtonSize - 16,
-            child: Icon(
-              isDragging ? Icons.open_with_rounded : Icons.more_horiz,
-              color: Colors.white,
-              size: 18,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isDragging ? Icons.open_with_rounded : Icons.more_horiz,
+                color: Colors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
           ),
         ),
       ),
@@ -13704,11 +13769,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     ),
                   ),
                 ),
-              Positioned(
-                left: 12 + safePadding.left,
-                bottom: 12 + safePadding.bottom,
-                child: _buildVncDebugPanel(theme: theme),
-              ),
+              if (!isFullscreen || _fullscreenDebugVisible)
+                Positioned(
+                  left: 12 + safePadding.left,
+                  bottom: 12 + safePadding.bottom,
+                  child: _buildVncDebugPanel(theme: theme),
+                ),
               if (cursorImage != null &&
                   scale > 0 &&
                   cursorSize.width > 0 &&
@@ -14214,6 +14280,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 label: 'Exit',
                 onPressed: () => _setFullscreen(false),
               ),
+            ),
+            _buildTrackpadMoreButton(
+              areaSize: areaSize,
+              isInteractive: isInteractive,
             ),
             Positioned(
               left: 12 + safePadding.left,

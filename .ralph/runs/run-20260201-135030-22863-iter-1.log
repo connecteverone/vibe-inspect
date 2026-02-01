@@ -1611,4 +1611,121 @@ thinking
 Run log modifications happen after each tool call finishes, so even committing then leaves it dirty. I'll do one final staged commit including run log changes, then avoid further tool calls to prevent more diffs, noting in the final response that the working tree may still appear dirty due to continuous run log updates.
 exec
 /bin/zsh -lc 'git add -A && git commit -m "chore(ralph): refresh run log"
-' in /Users/mac/codes/vibe-inspect
+' in /Users/mac/codes/vibe-inspect succeeded in 76ms:
+[main 31874a9] chore(ralph): refresh run log
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 142 insertions(+), 1 deletion(-)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index d15f9d97a08723c50a2eaa1a1134b126a8df5756..c914e8bbfdc6aad484317f2dfbcd7528ed89dd1b
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1054,9 +1054,9 @@
+   - .ralph/runs/run-20260131-221506-98331-iter-11.md
+   - .agents/tasks/prd-vnc-input-roi.json
+   - .codex/skills/dev-browser/profiles/
+-- What was implemented
++- What was implemented: Documented current VNC input/ROI pipelines, invariants, and zoom+edge-pan alignment scenario in docs/vnc_input_roi_context.md.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: ROI alignment depends on clamped camera center + framebuffer-size resync; keep both when refactoring.
++  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; http.server may already be bound to port 8030.
++  - Useful context: QUIC port binding errors are surfaced in desktop/src/server.rs and desktop/src/quic/mod.rs; input mapping is tied to VNC framebuffer size in desktop/src/vnc.rs.
+ ---
+
+Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)
+
+
+thinking
+**Confirming final logging and status steps**
+
+No additional git status or show commands are needed since key outputs, including the final commit hash, are already captured; major action logging is complete per instructions, so I’ll finalize the response accordingly.
+thinking
+**Noting final status constraints and response content**
+
+The working tree clean status after the final commit can't be confirmed due to run log auto-updates causing ongoing changes; final commit hash is noted from earlier output. The final response will summarize documentation additions, test results including known analyze failures and port conflicts, include a security/performance/regression review, note run log update behavior, and suggest resolving dependencies and port issues before ending with completion.
+codex
+Added a full VNC input/ROI context doc with invariants, recent-fix-sensitive areas, and the zoom=2.0 edge-pan scenario, plus updated run/progress logs. The doc is in `docs/vnc_input_roi_context.md`.
+
+**Tests**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (missing third_party/flutter_quic build_tool deps: build_tool, version, ed25519_edwards, github, toml, hex)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (same missing third_party/flutter_quic build_tool deps)
+- `cd desktop && cargo build` -> PASS (warnings from vendor/scrap cfgs)
+- `cd mobile && flutter build web` -> PASS (wasm dry-run warnings)
+- `cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1` -> FAIL (port 8030 already in use)
+
+**Review**
+- Security: doc-only change, no runtime code paths touched.
+- Performance: no runtime impact.
+- Regression: no behavior changes; doc highlights regression-sensitive areas.
+
+**Notes**
+- The run log continues to update with tool activity; the latest version was committed as of `31874a9`.
+
+**Next steps**
+1. Restore missing `third_party/flutter_quic` build_tool deps (or exclude from analyze) to unblock `flutter analyze`.
+2. Free port 8030 to complete the browser UI check.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index d15f9d97a08723c50a2eaa1a1134b126a8df5756..c914e8bbfdc6aad484317f2dfbcd7528ed89dd1b
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1054,9 +1054,9 @@
+   - .ralph/runs/run-20260131-221506-98331-iter-11.md
+   - .agents/tasks/prd-vnc-input-roi.json
+   - .codex/skills/dev-browser/profiles/
+-- What was implemented
++- What was implemented: Documented current VNC input/ROI pipelines, invariants, and zoom+edge-pan alignment scenario in docs/vnc_input_roi_context.md.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: ROI alignment depends on clamped camera center + framebuffer-size resync; keep both when refactoring.
++  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; http.server may already be bound to port 8030.
++  - Useful context: QUIC port binding errors are surfaced in desktop/src/server.rs and desktop/src/quic/mod.rs; input mapping is tied to VNC framebuffer size in desktop/src/vnc.rs.
+ ---
+
+tokens used
+132,355
+Added a full VNC input/ROI context doc with invariants, recent-fix-sensitive areas, and the zoom=2.0 edge-pan scenario, plus updated run/progress logs. The doc is in `docs/vnc_input_roi_context.md`.
+
+**Tests**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (missing third_party/flutter_quic build_tool deps: build_tool, version, ed25519_edwards, github, toml, hex)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (same missing third_party/flutter_quic build_tool deps)
+- `cd desktop && cargo build` -> PASS (warnings from vendor/scrap cfgs)
+- `cd mobile && flutter build web` -> PASS (wasm dry-run warnings)
+- `cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1` -> FAIL (port 8030 already in use)
+
+**Review**
+- Security: doc-only change, no runtime code paths touched.
+- Performance: no runtime impact.
+- Regression: no behavior changes; doc highlights regression-sensitive areas.
+
+**Notes**
+- The run log continues to update with tool activity; the latest version was committed as of `31874a9`.
+
+**Next steps**
+1. Restore missing `third_party/flutter_quic` build_tool deps (or exclude from analyze) to unblock `flutter analyze`.
+2. Free port 8030 to complete the browser UI check.
+
+<promise>COMPLETE</promise>
