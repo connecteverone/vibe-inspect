@@ -1144,3 +1144,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
 - **Learnings for future iterations:**
   - flutter analyze failures stem from missing third_party/flutter_quic build_tool deps and can be recorded as known external issues.
 ---
+## [2026-02-01 23:46:48] - US-002: Extract terminal session core into terminal_core
+Thread: 
+Run: 20260201-231810-31541 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 6409df2 refactor(terminal-core): centralize session logic
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-2.md
+  - .ralph/.tmp/story-20260201-231810-31541-2.json
+  - .ralph/.tmp/story-20260201-231810-31541-2.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-1.log
+  - .ralph/runs/run-20260201-231810-31541-iter-1.md
+  - .ralph/runs/run-20260201-231810-31541-iter-2.log
+  - desktop/src/terminal.rs
+  - desktop/src/terminal_core.rs
+- What was implemented
+  - Moved terminal session lifecycle, buffering, vt100 parsing, and payload building into terminal_core.
+  - Desktop terminal module now re-exports terminal_core APIs for compatibility.
+  - WebSocket stream handling now lives with shared terminal core logic.
+- **Learnings for future iterations:**
+  - flutter analyze failures stem from missing third_party/flutter_quic build_tool deps and can be recorded as known external issues.
+  - terminal_core can own WebSocket stream handling while terminal.rs remains a shim.
+---

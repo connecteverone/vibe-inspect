@@ -7951,4 +7951,3315 @@ thinking
 
 Confirmed terminal file is reduced to re-exports without docs or warnings, reviewed security, performance, and regression conceptually, and now staging all changes for commit.
 exec
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 43ms:
+
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Choosing local commit skill**
+
+Deciding to use the commit skill located in the repo for committing changes, prioritizing the local skill over the user one before loading its instructions.
+exec
+/bin/zsh -lc 'cat /Users/mac/codes/vibe-inspect/.codex/skills/commit/SKILL.md' in /Users/mac/codes/vibe-inspect succeeded in 20ms:
+---
+name: commit
+description: Write conventional commit messages with type, scope, and subject when the user wants to commit changes or save work.
+---
+
+# Git Commit
+
+Creates git commits following Conventional Commits format with proper type, scope, and subject.
+
+## Quick Start
+
+```bash
+# 1. Stage changes
+git add <files>  # or: git add -A
+
+# 2. Create commit (branch commit format)
+git commit -m "type(scope): subject
+
+Body explaining HOW and WHY.
+Reference: Task X.Y, Req N"
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Committing with conventional message**
+
+Preparing a conventional commit as a `refactor(terminal-core): centralize session logic` with a detailed multi-line body describing the logic move, re-exports, and backward compatibility.
+exec
+/bin/zsh -lc 'git commit -m "$(cat <<'"'EOF'
+refactor(terminal-core): centralize session logic
+
+- move session lifecycle, buffering, vt100 parsing into terminal_core
+- relocate payload building + websocket streaming helpers
+- keep desktop terminal module as re-export shim
+
+Reference: US-002
+EOF
+)\"" in /Users/mac/codes/vibe-inspect succeeded in 56ms:
+[main 6409df2] refactor(terminal-core): centralize session logic
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 11 files changed, 10237 insertions(+), 1450 deletions(-)
+ create mode 100644 .ralph/.tmp/prompt-20260201-231810-31541-2.md
+ create mode 100644 .ralph/.tmp/story-20260201-231810-31541-2.json
+ create mode 100644 .ralph/.tmp/story-20260201-231810-31541-2.md
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-1.md
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-2.log
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Verifying clean working tree**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-2.log
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+
+thinking
+**Deciding how to handle post-commit log update**
+
+The log file modified after the commit must be included in a new commit since amending is disallowed; I'll create a second commit for this update to keep the working tree clean and meet the requirement of committing all changes made during the run.
+thinking
+**Checking log file changes before committing**
+
+I'll inspect the log file's diff to understand what changed and determine if a separate commit for the update is necessary.
+exec
+/bin/zsh -lc 'git diff --stat' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
+ .ralph/runs/run-20260201-231810-31541-iter-2.log | 1208 +++++++++++++++++++++-
+ 1 file changed, 1207 insertions(+), 1 deletion(-)
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+
+thinking
+**Clarifying commit and progress log order**
+
+Discovered that all changes, including run logs and progress entries, must be committed before appending to the progress log; this means staging and committing all modifications first, then updating and committing the progress entry to comply with the instructions.
+thinking
+**Planning multi-commit workflow with progress entry**
+
+Decided to create a second commit for run log updates and the progress entry referencing the initial code commit hash, since including the final commit hash in the progress entry is impractical; this avoids amending and ensures all changes are committed before final status verification.
+exec
+/bin/zsh -lc 'tail -n 40 /Users/mac/codes/vibe-inspect/.ralph/progress.md' in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+  - Command: cargo run --bin vibe-ctl -- unknown -> PASS (expected non-zero)
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .agents/tasks/prd-vnc-input-roi.json
+  - .ralph/.tmp/prd-prompt-20260201-230415-25220.md
+  - .ralph/.tmp/prompt-20260201-231810-31541-1.md
+  - .ralph/.tmp/story-20260201-135030-22863-3.json
+  - .ralph/.tmp/story-20260201-135030-22863-3.md
+  - .ralph/.tmp/story-20260201-231551-30653-1.json
+  - .ralph/.tmp/story-20260201-231551-30653-1.md
+  - .ralph/.tmp/story-20260201-231613-30845-1.json
+  - .ralph/.tmp/story-20260201-231613-30845-1.md
+  - .ralph/.tmp/story-20260201-231810-31541-1.json
+  - .ralph/.tmp/story-20260201-231810-31541-1.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Preparing progress file entry with timestamp**
+
+I'm planning to append a new entry to the progress file using the exact format, including a current timestamp formatted as "YYYY-MM-DD HH:MM:SS" from the system date (Feb 1, 2026) and a header describing the change target.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M:%S"' in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+2026-02-01 23:46:48
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+
+thinking
+**Finalizing progress entry details**
+
+I'm preparing a progress entry referencing commit 6409df2 with test results and file changes. To list files changed this run, I'll use `git show --name-only` on that commit since there are uncommitted logs and progress updates still pending.
+thinking
+**Confirming files changed for progress entry**
+
+I'm inspecting the files changed in commit 6409df2 with `git show --name-only` to list all key code and config files, then will add newly created logs and progress files from the current uncommitted run to complete the progress entry details.
+exec
+/bin/zsh -lc 'git show --name-only --pretty="" 6409df2' in /Users/mac/codes/vibe-inspect succeeded in 42ms:
+.agents/tasks/prd-terminal-daemon.json
+.ralph/.tmp/prompt-20260201-231810-31541-2.md
+.ralph/.tmp/story-20260201-231810-31541-2.json
+.ralph/.tmp/story-20260201-231810-31541-2.md
+.ralph/activity.log
+.ralph/errors.log
+.ralph/runs/run-20260201-231810-31541-iter-1.log
+.ralph/runs/run-20260201-231810-31541-iter-1.md
+.ralph/runs/run-20260201-231810-31541-iter-2.log
+desktop/src/terminal.rs
+desktop/src/terminal_core.rs
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+
+thinking
+**Updating progress log entry**
+
+I'm preparing a detailed progress log entry with timestamps, run info, commit references, and a final clean status anticipating all changes will be committed after the next commit.
+thinking
+**Documenting flutter analyze issue and module structure in learnings**
+
+I'm detailing known flutter analyze failure due to missing third_party deps and clarifying terminal_core's role with axum streaming plus re-export in terminal.rs, noting post-commit status as clean after final commit while leaving thread ID blank.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/mac/codes/vibe-inspect/.ralph/progress.md
+## [2026-02-01 23:46:48] - US-002: Extract terminal session core into terminal_core
+Thread: 
+Run: 20260201-231810-31541 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 6409df2 refactor(terminal-core): centralize session logic
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-2.md
+  - .ralph/.tmp/story-20260201-231810-31541-2.json
+  - .ralph/.tmp/story-20260201-231810-31541-2.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-1.log
+  - .ralph/runs/run-20260201-231810-31541-iter-1.md
+  - .ralph/runs/run-20260201-231810-31541-iter-2.log
+  - desktop/src/terminal.rs
+  - desktop/src/terminal_core.rs
+- What was implemented
+  - Moved terminal session lifecycle, buffering, vt100 parsing, and payload building into terminal_core.
+  - Desktop terminal module now re-exports terminal_core APIs for compatibility.
+  - WebSocket stream handling now lives with shared terminal core logic.
+- **Learnings for future iterations:**
+  - flutter analyze failures stem from missing third_party/flutter_quic build_tool deps and can be recorded as known external issues.
+  - terminal_core can own WebSocket stream handling while terminal.rs remains a shim.
+---
+EOF
+" in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Planning to add logging after progress update**
+exec
+/bin/zsh -lc 'ralph log "Updated progress log for US-002"' in /Users/mac/codes/vibe-inspect succeeded in 101ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Noting uncommitted changes**
+
+There are uncommitted modifications to progress documentation and activity logs to review next.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 51ms:
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260201-231810-31541-iter-2.log
+file update:
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index e7fd41e116161c7cc1a1ba75d2e3232104a15779..7fff5d6560aa233924ab3874fc2aa4d055e9b713
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1,6 +1,8 @@
+ //! Shared terminal daemon core types and defaults.
+ 
++use axum::extract::ws::{Message, WebSocket};
+ use directories::ProjectDirs;
++use futures_util::{SinkExt, StreamExt};
+ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+ use rand::{distributions::Alphanumeric, Rng};
+ use serde::{Deserialize, Serialize};
+@@ -11,7 +13,8 @@
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+-use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++use tokio::time::{interval, MissedTickBehavior};
+ use vt100;
+ 
+ /// Default WebSocket URL for terminald.
+@@ -529,6 +532,255 @@
+     }
+ }
+ 
++pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
++    let session = {
++        let manager = terminal_manager();
++        manager
++            .lock()
++            .ok()
++            .and_then(|manager| manager.session(&session_id))
++    };
++
++    let Some(session) = session else {
++        let mut socket = socket;
++        let _ = socket.send(Message::Close(None)).await;
++        return;
++    };
++
++    if let Err(error) = run_terminal_stream(socket, session, session_id).await {
++        eprintln!("terminal stream error: {error}");
++    }
++}
++
++async fn run_terminal_stream(
++    socket: WebSocket,
++    session: Arc<Mutex<TerminalSession>>,
++    session_id: String,
++) -> Result<(), String> {
++    let (mut sender, mut receiver) = socket.split();
++    let mut tick = interval(Duration::from_millis(80));
++    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
++
++    let (
++        initial_output,
++        initial_status,
++        initial_next_seq,
++        initial_exit,
++        initial_first_seq,
++        initial_snapshot,
++        initial_label,
++        initial_notifications,
++        initial_notification_seq,
++    ) = {
++        let session = session
++            .lock()
++            .map_err(|_| "Terminal session unavailable.".to_string())?;
++        (
++            session.output_since(0, OUTPUT_LIMIT_DEFAULT),
++            session.status,
++            session.next_seq,
++            session.exit_code,
++            session.first_seq(),
++            session.snapshot_formatted(),
++            session.label.clone(),
++            session.notifications_since(0, NOTIFICATION_QUEUE_LIMIT),
++            session.notification_seq,
++        )
++    };
++    let initial_truncated = initial_first_seq
++        .map(|first| 1_u64 < first)
++        .unwrap_or(false);
++    let initial_payload = build_session_payload(
++        "stream",
++        &session_id,
++        initial_status,
++        initial_next_seq,
++        initial_output,
++        initial_first_seq,
++        initial_truncated,
++        if initial_truncated { initial_snapshot } else { None },
++        initial_exit,
++        now_ts(),
++        Some(initial_label.as_str()),
++        initial_notification_seq,
++        initial_notifications,
++    );
++    sender
++        .send(Message::Text(initial_payload.to_string().into()))
++        .await
++        .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
++
++    let mut last_seq = initial_next_seq;
++    let mut last_status = initial_status;
++    let mut last_exit = initial_exit;
++    let mut last_label = initial_label;
++    let mut last_notification_seq = initial_notification_seq;
++    let mut last_sent_at = Instant::now();
++
++    loop {
++        tokio::select! {
++            _ = tick.tick() => {
++                let (output, status, next_seq, exit_code, first_seq, snapshot, label, notifications, notification_seq) = {
++                    let session = session
++                        .lock()
++                        .map_err(|_| "Terminal session unavailable.".to_string())?;
++                    (
++                        session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
++                        session.status,
++                        session.next_seq,
++                        session.exit_code,
++                        session.first_seq(),
++                        session.snapshot_formatted(),
++                        session.label.clone(),
++                        session.notifications_since(last_notification_seq, NOTIFICATION_QUEUE_LIMIT),
++                        session.notification_seq,
++                    )
++                };
++
++                if output.is_empty()
++                    && status == last_status
++                    && exit_code == last_exit
++                    && label == last_label
++                    && notifications.is_empty()
++                {
++                    if last_sent_at.elapsed() > Duration::from_secs(15) {
++                        let _ = sender.send(Message::Ping(Vec::new().into())).await;
++                        last_sent_at = Instant::now();
++                    }
++                    continue;
++                }
++
++                last_seq = next_seq;
++                last_status = status;
++                last_exit = exit_code;
++                last_label = label.clone();
++                last_notification_seq = notification_seq;
++
++                let truncated = first_seq
++                    .map(|first| last_seq.saturating_add(1) < first)
++                    .unwrap_or(false);
++                let payload = build_session_payload(
++                    "stream",
++                    &session_id,
++                    status,
++                    next_seq,
++                    output,
++                    first_seq,
++                    truncated,
++                    if truncated { snapshot } else { None },
++                    exit_code,
++                    now_ts(),
++                    Some(label.as_str()),
++                    notification_seq,
++                    notifications,
++                );
++                if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
++                    break;
++                }
++                last_sent_at = Instant::now();
++
++                if status.is_ended() {
++                    break;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else {
++                    break;
++                };
++                match message {
++                    Ok(Message::Text(text)) => {
++                        let parsed: Value = match serde_json::from_str(&text) {
++                            Ok(value) => value,
++                            Err(_) => continue,
++                        };
++                        let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
++                        match action {
++                            "input" => {
++                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
++                                    let request = TerminalActionRequest {
++                                        action: "input".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: Some(input.to_string()),
++                                        cols: None,
++                                        rows: None,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "resize" => {
++                                let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                let rows = parsed.get("rows").and_then(|value| value.as_u64()).map(|value| value as u16);
++                                if cols.is_some() && rows.is_some() {
++                                    let request = TerminalActionRequest {
++                                        action: "resize".to_string(),
++                                        session_id: Some(session_id.clone()),
++                                        label: None,
++                                        input: None,
++                                        cols,
++                                        rows,
++                                        since: None,
++                                        limit: None,
++                                        notify_since: None,
++                                        working_dir: None,
++                                        env: None,
++                                    };
++                                    let _ = handle_terminal_command(request);
++                                }
++                            }
++                            "stop" => {
++                                let request = TerminalActionRequest {
++                                    action: "stop".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            "keepalive" => {
++                                let request = TerminalActionRequest {
++                                    action: "keepalive".to_string(),
++                                    session_id: Some(session_id.clone()),
++                                    label: None,
++                                    input: None,
++                                    cols: None,
++                                    rows: None,
++                                    since: None,
++                                    limit: None,
++                                    notify_since: None,
++                                    working_dir: None,
++                                    env: None,
++                                };
++                                let _ = handle_terminal_command(request);
++                            }
++                            _ => {}
++                        }
++                    }
++                    Ok(Message::Close(_)) => break,
++                    Ok(Message::Ping(payload)) => {
++                        let _ = sender.send(Message::Pong(payload)).await;
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
+ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+     let session_id = resolve_session_id(request.session_id)?;
+     let label = resolve_start_label(request.label.clone(), &session_id)?;
+
+
+thinking
+**Committing staged changes**
+
+I'm staging all changes with `git add -A` and creating a second commit to record the updates.
+exec
 /bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
