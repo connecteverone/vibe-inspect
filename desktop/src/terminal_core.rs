@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -26,6 +28,12 @@ pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
 /// Default WebSocket path for terminald.
 pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
 
+/// Protocol version for terminald clients.
+pub const TERMINALD_PROTOCOL_VERSION: &str = "1.0";
+
+/// Discovery file name for terminald.
+pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
+
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
 const MAX_BUFFER_BYTES: usize = 512 * 1024;
@@ -39,6 +47,16 @@ const TERMINAL_RESTART_REASON: &str = "Session closed because the desktop agent 
 const NOTIFICATION_RATE_LIMIT_SECS: u64 = 10;
 const NOTIFICATION_QUEUE_LIMIT: usize = 200;
 const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalDiscoveryFile {
+    pub ws_url: String,
+    pub token: String,
+    pub version: String,
+    pub pid: u32,
+    pub created_at: u64,
+    pub capabilities: Vec<String>,
+}
 
 fn resolve_shell() -> String {
     if let Ok(shell) = std::env::var("SHELL") {
@@ -78,6 +96,79 @@ fn resolve_shell() -> String {
         return "/bin/sh".to_string();
     }
     "sh".to_string()
+}
+
+pub fn terminal_discovery_path() -> Option<PathBuf> {
+    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
+    Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
+}
+
+pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io::Error> {
+    let contents = fs::read_to_string(path)?;
+    serde_json::from_str(&contents)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+pub fn write_discovery_file(
+    discovery: &TerminalDiscoveryFile,
+) -> Result<PathBuf, std::io::Error> {
+    let path = terminal_discovery_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let payload = serde_json::to_vec_pretty(discovery)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+    write_atomic_file(&path, &payload)?;
+    Ok(path)
+}
+
+fn discovery_tmp_path(path: &Path) -> PathBuf {
+    let suffix: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("terminald.json");
+    let tmp_name = format!(".{file_name}.tmp-{suffix}");
+    match path.parent() {
+        Some(parent) => parent.join(tmp_name),
+        None => PathBuf::from(tmp_name),
+    }
+}
+
+fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
+    let tmp_path = discovery_tmp_path(path);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp_path)?;
+    file.write_all(payload)?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        let permissions = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&tmp_path, permissions)?;
+    }
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                let _ = fs::remove_file(path);
+                fs::rename(&tmp_path, path)?;
+                return Ok(());
+            }
+        }
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[derive(Clone)]

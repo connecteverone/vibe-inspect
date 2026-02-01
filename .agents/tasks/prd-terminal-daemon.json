@@ -145,7 +145,7 @@
     {
       "id": "US-002",
       "title": "Extract terminal session core into terminal_core",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -157,13 +157,13 @@
         "Negative: missing session_id in a session-scoped call returns `missing_session` error"
       ],
       "startedAt": "2026-02-01T15:30:11.752350+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T15:30:11.752469+00:00"
+      "completedAt": "2026-02-01T15:51:16.257191+00:00",
+      "updatedAt": "2026-02-01T15:51:16.257098+00:00"
     },
     {
       "id": "US-003",
       "title": "Discovery file creation and config overrides",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001"
       ],
@@ -174,7 +174,10 @@
         "CLI honors overrides: `VIBE_CTL_ENDPOINT`, `VIBE_CTL_TOKEN`, `VIBE_CTL_CONFIG`",
         "Example: setting `VIBE_CTL_CONFIG` to a temp file allows vibe-ctl to connect using that endpoint",
         "Negative: unreadable config path returns `connection_failed` without crashing"
-      ]
+      ],
+      "startedAt": "2026-02-01T15:51:18.349581+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T15:51:18.349693+00:00"
     },
     {
       "id": "US-004",
