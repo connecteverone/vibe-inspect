@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "total": 9,
+  "remaining": 9,
+  "quality_gates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze",
+    "cd desktop && cargo build"
+  ],
+  "id": "US-001",
+  "title": "Re-audit VNC input + ROI code paths after recent fixes"
+}

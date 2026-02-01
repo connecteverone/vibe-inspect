@@ -273,3 +273,7 @@
 [2026-02-01 02:58:07] Ran flutter tests/analyze/build and browser check for US-010
 [2026-02-01 03:03:15] Updated progress log for US-010
 [2026-02-01 03:05:39] ITERATION 11 end (duration=2147s)
+[2026-02-01 13:50:31] ITERATION 1 start (mode=build story=US-001)
+[2026-02-01 13:51:02] Start US-001 work: audit VNC input/ROI context doc
+[2026-02-01 13:53:59] Added VNC input/ROI context doc with invariants and recent-fix notes
+[2026-02-01 13:55:36] Completed verification commands (flutter test/analyze, scripts, cargo build, flutter build web, http.server attempt)

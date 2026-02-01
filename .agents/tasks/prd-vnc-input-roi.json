@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "project": "VNC Input, Fullscreen UX, ROI Robustness",
+  "overview": "Re-audit the current VNC stack (mobile iOS/Android + desktop agent Windows/Linux/macOS) after recent bug fixes, then deliver multi-touch trackpad pass-through, fullscreen keyboard/more menu controls, debug toggle, ROI robustness with fixed QUIC port policy, zoom clarity improvements, snap-to-100% zoom, and persistent mobile logs while preserving VNC/ROI invariants.",
+  "goals": [
+    "Re-scan VNC input + ROI code paths in mobile and desktop to prevent regressions after recent fixes",
+    "Enable multi-finger trackpad gestures to reach the PC agent (pass-through where supported, defined fallbacks where not)",
+    "Provide full-screen keyboard input and a consistent 'More' menu in both portrait and landscape",
+    "Hide VNC debug view by default with an explicit toggle in full-screen",
+    "Harden ROI connectivity and enforce configured QUIC port without fallback",
+    "Improve perceived sharpness when zoomed by tuning ROI request behavior",
+    "Improve usability with zoom snap-to-100% and persistent mobile logs"
+  ],
+  "nonGoals": [
+    "Replacing the VNC protocol or changing the logical framebuffer size",
+    "Auto-selecting random ports when the configured port is busy",
+    "A full UI redesign outside the VNC view/controls",
+    "Adding new streaming transports beyond the existing VNC + ROI QUIC design"
+  ],
+  "successMetrics": [
+    "Multi-finger gestures work on macOS/Windows/Linux as specified (pass-through or fallback) without breaking single-pointer input",
+    "Keyboard input is available in full-screen portrait and landscape, and text is sent reliably",
+    "Debug panel is hidden by default and can be toggled from a full-screen More menu",
+    "ROI QUIC uses only the configured port and shows a clear startup error when busy",
+    "Zoom near 100% snaps cleanly to 1.0 and is discoverable",
+    "Mobile logs persist across sessions and are accessible/exportable"
+  ],
+  "openQuestions": [
+    "Which OS-native APIs will be used to inject multi-touch gestures on Windows/Linux, and what are the fallbacks if native injection is unavailable?",
+    "What maximum ROI tile detail/bandwidth is acceptable at high zoom on typical mobile networks?",
+    "What log retention policy (count/size/days) should be enforced by default?"
+  ],
+  "stack": {
+    "framework": "Flutter (Dart) mobile client + Rust/Tauri desktop agent",
+    "hosting": "Local desktop agent with VNC over WebSocket and ROI over QUIC (Quinn)",
+    "database": "SQLite (mobile local storage via existing sqflite)",
+    "auth": "Existing agent token + pairing model"
+  },
+  "routes": [
+    {
+      "path": "/vnc/:sessionId",
+      "name": "VNC Session",
+      "purpose": "Primary VNC view with controls and trackpad"
+    },
+    {
+      "path": "/vnc/:sessionId/fullscreen",
+      "name": "VNC Fullscreen",
+      "purpose": "Fullscreen VNC with overlay controls"
+    },
+    {
+      "path": "/vnc/:sessionId/logs",
+      "name": "VNC Logs",
+      "purpose": "View and export session logs"
+    }
+  ],
+  "uiNotes": [
+    "Fullscreen must have a 'More' button in both portrait and landscape with glass-style consistency",
+    "More menu must include: Keyboard input, Debug view toggle, Recalibrate cursor action",
+    "Debug panel is hidden by default; toggle controls visibility",
+    "Zoom controls should visibly snap to 100% when within a small threshold",
+    "Keyboard input UI should match existing VNC control styling (rounded, glass/overlay where appropriate)"
+  ],
+  "dataModel": [
+    {
+      "entity": "MobileLogEntry",
+      "fields": [
+        "id",
+        "timestamp",
+        "level",
+        "category",
+        "message",
+        "sessionId",
+        "contextJson"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Not applicable",
+    "example": {}
+  },
+  "rules": [
+    "ROI overlay must not change logical framebuffer size or input mapping",
+    "ROI QUIC must bind only to the configured port; if unavailable, startup fails with error (no fallback)",
+    "Multi-finger gestures should be passed through to the OS/agent when supported; only use defined fallbacks when OS injection is unavailable",
+    "Fallbacks: two-finger scroll maps to mouse wheel; macOS three-finger swipe switches virtual desktops",
+    "Zoom snap-to-100% must not change existing min/max zoom bounds",
+    "Logging must be low-overhead and must not block rendering or input"
+  ],
+  "qualityGates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze",
+    "cd desktop && cargo build"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Re-audit VNC input + ROI code paths after recent fixes",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a developer, I want a refreshed context doc of VNC input and ROI pipelines so new changes do not regress recent fixes.",
+      "acceptanceCriteria": [
+        "Create docs/vnc_input_roi_context.md with a summary of current input/ROI pipelines and recent-fix-sensitive areas",
+        "Explicitly reference files reviewed in both mobile and desktop (including mobile/lib/main.dart, mobile/lib/vnc_client.dart, desktop/src/vnc.rs, desktop/src/server.rs, desktop/src/quic/mod.rs)",
+        "Document invariants: logical framebuffer size is authoritative for input; ROI is visual-only; configured QUIC port only",
+        "Example: The doc contains a scenario describing zoom=2.0 + edge pan and the expected ROI alignment behavior",
+        "Negative case: If any required invariant section is missing, the story is not accepted"
+      ],
+      "startedAt": "2026-02-01T05:50:31.020857+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T05:50:31.020951+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Add fullscreen More menu with keyboard + debug toggle",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want a fullscreen More menu (portrait + landscape) to access keyboard input, debug toggle, and cursor recalibration.",
+      "acceptanceCriteria": [
+        "Fullscreen portrait and landscape show a visible 'More' button consistent with existing glass/overlay styling",
+        "More menu includes: Keyboard input, Debug view toggle, and Recalibrate cursor action",
+        "Debug view is hidden by default on entry; toggle shows/hides it without leaving fullscreen",
+        "Keyboard input opens a text entry UI and sends text to the remote session",
+        "Example: In fullscreen landscape, tapping More -> Keyboard, sending 'hello' emits a VNC text send",
+        "Negative case: Entering fullscreen without toggling debug must not show the debug panel"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Trackpad long-press drag for left/right buttons",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want long-press on left/right mouse buttons to enable drag operations from the trackpad.",
+      "acceptanceCriteria": [
+        "Long-press on left button engages a continuous button-down state until release",
+        "Long-press on right button engages a continuous button-down state until release",
+        "Pointer movement while long-press is active moves the cursor with button held",
+        "Example: Long-press left, move pointer, release -> remote drag completes and button-up is sent",
+        "Negative case: A short tap still produces a single click and does not enter drag mode"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Capture multi-finger trackpad gestures on mobile and send to agent",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want multi-finger trackpad gestures to be forwarded to the agent instead of being ignored.",
+      "acceptanceCriteria": [
+        "When 2+ pointers are active on the trackpad surface, emit a new gesture input payload to the agent",
+        "Gesture payload includes: gestureType, fingerCount, phase (start/update/end), delta or scale, and timestamp",
+        "Single-pointer behavior (move/click) remains unchanged",
+        "Example: Two-finger scroll on the trackpad emits a gesture payload with fingerCount=2 and scroll delta",
+        "Negative case: Pinch gestures must not trigger pointer movement or unintended clicks"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Map gesture payloads to OS input on desktop agent",
+      "status": "open",
+      "dependsOn": [
+        "US-004"
+      ],
+      "description": "As a user, I want the desktop agent to apply trackpad gestures to the OS (or fallbacks) reliably.",
+      "acceptanceCriteria": [
+        "Desktop agent accepts the gesture payload and validates required fields",
+        "Two-finger scroll gestures map to mouse wheel scroll on all desktop platforms",
+        "macOS three-finger swipe triggers workspace switch when native injection is unavailable",
+        "Example: A two-finger scroll payload results in OS scroll movement without affecting pointer position",
+        "Negative case: Invalid gesture payloads return a structured error and do not inject input"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Enforce ROI QUIC configured port and improve error surfacing",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a developer, I want ROI QUIC to use the configured port only and fail clearly on conflicts.",
+      "acceptanceCriteria": [
+        "Desktop agent startup fails with a clear error if the configured ROI QUIC port is in use",
+        "No automatic port fallback or port mutation occurs when binding fails",
+        "Mobile displays ROI error state with the configured port and does not auto-update to a different port",
+        "Example: Configure ROI port 4242, occupy 4242, start agent -> error message references 4242",
+        "Negative case: Binding to port 0 or changing to an ephemeral port is not allowed"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Improve ROI clarity at high zoom without changing framebuffer mapping",
+      "status": "open",
+      "dependsOn": [
+        "US-006"
+      ],
+      "description": "As a user, I want clearer text when zoomed in by improving ROI detail while keeping VNC mapping stable.",
+      "acceptanceCriteria": [
+        "When zoom exceeds a defined threshold, ROI requests increase detail (e.g., tighter tile size or higher pixel density)",
+        "Logical framebuffer size and input mapping remain unchanged",
+        "ROI debug stats reflect increased tile detail (tile count/bytes) during high zoom",
+        "Example: At zoom=2.5, ROI tiles render noticeably sharper than base scaling",
+        "Negative case: Changing VNC session width/height to achieve clarity is not permitted"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Snap zoom to 100% near default",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want the zoom control to snap to 100% when close to default for better usability.",
+      "acceptanceCriteria": [
+        "Zoom values within 0.95\u20131.05 snap to exactly 1.0",
+        "Snap behavior is applied on commit/end of drag and is reflected in the UI badge",
+        "Example: Setting zoom to 1.03 results in 1.0 and shows 100%",
+        "Negative case: Setting zoom to 1.2 must not snap to 1.0"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Add persistent mobile logs for VNC/ROI/gesture issues",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want persistent logs on mobile to diagnose VNC/ROI issues.",
+      "acceptanceCriteria": [
+        "Store logs locally with level/category/sessionId and a retention cap",
+        "Provide a VNC Logs view to inspect entries and copy/export selected logs",
+        "Log entries include ROI connect/disconnect errors and gesture forwarding failures",
+        "Example: A failed ROI connection appears in the log list and can be copied",
+        "Negative case: When logging is disabled, new entries are not stored"
+      ]
+    }
+  ]
+}
