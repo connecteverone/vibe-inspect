@@ -8708,4 +8708,1184 @@ thinking
 
 I'm staging all changes and planning the commit message as `chore(progress): log US-004 run`, including a brief mention of progress log updates but likely no detailed body.
 exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect succeeded in 59ms:
+
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 15af78662417c5680708382bdba845b35d5d6028..6066a09a15b7beff5545af9f7206cfa41d4fb0db
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,11 +1,25 @@
++use axum::{
++    extract::{
++        ws::{Message, WebSocket, WebSocketUpgrade},
++        ConnectInfo, State,
++    },
++    http::StatusCode,
++    response::IntoResponse,
++    routing::get,
++    Router,
++};
+ use clap::Parser;
++use futures_util::{SinkExt, StreamExt};
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+     write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+-use std::time::{SystemTime, UNIX_EPOCH};
++use serde_json::{json, Value};
++use std::net::SocketAddr;
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use tokio::time::timeout;
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -18,23 +32,57 @@
+     ws_path: String,
+ }
+ 
+-fn main() {
++#[derive(Clone)]
++struct TerminaldState {
++    token: String,
++    version: String,
++    capabilities: Vec<String>,
++}
++
++#[tokio::main]
++async fn main() {
+     let args = TerminaldArgs::parse();
+     let ws_path = normalize_ws_path(&args.ws_path);
+-    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let bind = args.bind.trim().to_string();
++    let ws_url = format!("ws://{bind}{ws_path}");
+     let token = random_token(32);
++    let capabilities: Vec<String> = Vec::new();
+     let discovery = TerminalDiscoveryFile {
+         ws_url,
+-        token,
++        token: token.clone(),
+         version: TERMINALD_PROTOCOL_VERSION.to_string(),
+         pid: std::process::id(),
+         created_at: now_ts(),
+-        capabilities: Vec::new(),
++        capabilities: capabilities.clone(),
+     };
+     if let Err(error) = write_discovery_file(&discovery) {
+         eprintln!("Failed to write discovery file: {error}");
+         std::process::exit(1);
+     }
++
++    let listener = match tokio::net::TcpListener::bind(&bind).await {
++        Ok(listener) => listener,
++        Err(error) => {
++            eprintln!("Failed to bind terminald on {bind}: {error}");
++            std::process::exit(1);
++        }
++    };
++
++    let state = TerminaldState {
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        capabilities,
++    };
++
++    let app = Router::new()
++        .route(ws_path.as_str(), get(handle_ws))
++        .with_state(state);
++
++    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>());
++    if let Err(error) = server.await {
++        eprintln!("terminald server error: {error}");
++        std::process::exit(1);
++    }
+ }
+ 
+ fn normalize_ws_path(path: &str) -> String {
+@@ -63,3 +111,185 @@
+         .unwrap_or_default()
+         .as_secs()
+ }
++
++async fn handle_ws(
++    ws: WebSocketUpgrade,
++    ConnectInfo(addr): ConnectInfo<SocketAddr>,
++    State(state): State<TerminaldState>,
++) -> impl IntoResponse {
++    if !addr.ip().is_loopback() {
++        return StatusCode::FORBIDDEN.into_response();
++    }
++    ws.on_upgrade(move |socket| async move {
++        handle_socket(socket, state).await;
++    })
++}
++
++async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
++    let auth_message = match timeout(Duration::from_secs(3), socket.recv()).await {
++        Ok(Some(Ok(message))) => message,
++        Ok(Some(Err(_))) | Ok(None) | Err(_) => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let text = match auth_message {
++        Message::Text(text) => text,
++        Message::Close(_) => return,
++        Message::Ping(payload) => {
++            let _ = socket.send(Message::Pong(payload)).await;
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++        _ => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let parsed: Value = match serde_json::from_str(&text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_and_close(&mut socket, "", "invalid_auth", "Invalid auth payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" || action != "auth" {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Auth required.",
++        )
++        .await;
++        return;
++    }
++
++    let payload = parsed.get("payload");
++    let token = payload
++        .and_then(|value| value.get("token"))
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if token.is_empty() || token != state.token {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Invalid auth token.",
++        )
++        .await;
++        return;
++    }
++
++    if let Some(client_version) = payload
++        .and_then(|value| value.get("version"))
++        .and_then(|value| value.as_str())
++    {
++        let server_major = parse_major_version(&state.version);
++        let client_major = parse_major_version(client_version);
++        if server_major.is_none()
++            || client_major.is_none()
++            || server_major != client_major
++        {
++            let message = format!(
++                "Protocol version mismatch. Server {}, client {}.",
++                state.version, client_version
++            );
++            send_error_and_close(
++                &mut socket,
++                request_id,
++                "version_mismatch",
++                &message,
++            )
++            .await;
++            return;
++        }
++    }
++
++    let response = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": {
++            "server_info": {
++                "version": state.version,
++                "server_time": now_ts(),
++                "capabilities": state.capabilities,
++            }
++        }
++    });
++    if send_json(&mut socket, response).await.is_err() {
++        return;
++    }
++
++    run_authenticated_socket(&mut socket).await;
++}
++
++async fn run_authenticated_socket(socket: &mut WebSocket) {
++    while let Some(message) = socket.recv().await {
++        match message {
++            Ok(Message::Ping(payload)) => {
++                let _ = socket.send(Message::Pong(payload)).await;
++            }
++            Ok(Message::Close(_)) | Err(_) => break,
++            _ => {}
++        }
++    }
++}
++
++async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
++    socket.send(Message::Text(value.to_string().into())).await
++}
++
++async fn send_error_and_close(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++    let _ = socket.send(Message::Close(None)).await;
++}
++
++fn parse_major_version(version: &str) -> Option<u64> {
++    version.split('.').next()?.parse().ok()
++}
+
+
+thinking
+**Committing changes**
+exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect commit -m "chore(progress): log US-004 run"' in /Users/mac/codes/vibe-inspect succeeded in 63ms:
+[main d91b8b2] chore(progress): log US-004 run
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 2716 insertions(+)
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 15af78662417c5680708382bdba845b35d5d6028..6066a09a15b7beff5545af9f7206cfa41d4fb0db
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,11 +1,25 @@
++use axum::{
++    extract::{
++        ws::{Message, WebSocket, WebSocketUpgrade},
++        ConnectInfo, State,
++    },
++    http::StatusCode,
++    response::IntoResponse,
++    routing::get,
++    Router,
++};
+ use clap::Parser;
++use futures_util::{SinkExt, StreamExt};
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+     write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+-use std::time::{SystemTime, UNIX_EPOCH};
++use serde_json::{json, Value};
++use std::net::SocketAddr;
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use tokio::time::timeout;
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -18,23 +32,57 @@
+     ws_path: String,
+ }
+ 
+-fn main() {
++#[derive(Clone)]
++struct TerminaldState {
++    token: String,
++    version: String,
++    capabilities: Vec<String>,
++}
++
++#[tokio::main]
++async fn main() {
+     let args = TerminaldArgs::parse();
+     let ws_path = normalize_ws_path(&args.ws_path);
+-    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let bind = args.bind.trim().to_string();
++    let ws_url = format!("ws://{bind}{ws_path}");
+     let token = random_token(32);
++    let capabilities: Vec<String> = Vec::new();
+     let discovery = TerminalDiscoveryFile {
+         ws_url,
+-        token,
++        token: token.clone(),
+         version: TERMINALD_PROTOCOL_VERSION.to_string(),
+         pid: std::process::id(),
+         created_at: now_ts(),
+-        capabilities: Vec::new(),
++        capabilities: capabilities.clone(),
+     };
+     if let Err(error) = write_discovery_file(&discovery) {
+         eprintln!("Failed to write discovery file: {error}");
+         std::process::exit(1);
+     }
++
++    let listener = match tokio::net::TcpListener::bind(&bind).await {
++        Ok(listener) => listener,
++        Err(error) => {
++            eprintln!("Failed to bind terminald on {bind}: {error}");
++            std::process::exit(1);
++        }
++    };
++
++    let state = TerminaldState {
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        capabilities,
++    };
++
++    let app = Router::new()
++        .route(ws_path.as_str(), get(handle_ws))
++        .with_state(state);
++
++    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>());
++    if let Err(error) = server.await {
++        eprintln!("terminald server error: {error}");
++        std::process::exit(1);
++    }
+ }
+ 
+ fn normalize_ws_path(path: &str) -> String {
+@@ -63,3 +111,185 @@
+         .unwrap_or_default()
+         .as_secs()
+ }
++
++async fn handle_ws(
++    ws: WebSocketUpgrade,
++    ConnectInfo(addr): ConnectInfo<SocketAddr>,
++    State(state): State<TerminaldState>,
++) -> impl IntoResponse {
++    if !addr.ip().is_loopback() {
++        return StatusCode::FORBIDDEN.into_response();
++    }
++    ws.on_upgrade(move |socket| async move {
++        handle_socket(socket, state).await;
++    })
++}
++
++async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
++    let auth_message = match timeout(Duration::from_secs(3), socket.recv()).await {
++        Ok(Some(Ok(message))) => message,
++        Ok(Some(Err(_))) | Ok(None) | Err(_) => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let text = match auth_message {
++        Message::Text(text) => text,
++        Message::Close(_) => return,
++        Message::Ping(payload) => {
++            let _ = socket.send(Message::Pong(payload)).await;
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++        _ => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let parsed: Value = match serde_json::from_str(&text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_and_close(&mut socket, "", "invalid_auth", "Invalid auth payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" || action != "auth" {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Auth required.",
++        )
++        .await;
++        return;
++    }
++
++    let payload = parsed.get("payload");
++    let token = payload
++        .and_then(|value| value.get("token"))
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if token.is_empty() || token != state.token {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Invalid auth token.",
++        )
++        .await;
++        return;
++    }
++
++    if let Some(client_version) = payload
++        .and_then(|value| value.get("version"))
++        .and_then(|value| value.as_str())
++    {
++        let server_major = parse_major_version(&state.version);
++        let client_major = parse_major_version(client_version);
++        if server_major.is_none()
++            || client_major.is_none()
++            || server_major != client_major
++        {
++            let message = format!(
++                "Protocol version mismatch. Server {}, client {}.",
++                state.version, client_version
++            );
++            send_error_and_close(
++                &mut socket,
++                request_id,
++                "version_mismatch",
++                &message,
++            )
++            .await;
++            return;
++        }
++    }
++
++    let response = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": {
++            "server_info": {
++                "version": state.version,
++                "server_time": now_ts(),
++                "capabilities": state.capabilities,
++            }
++        }
++    });
++    if send_json(&mut socket, response).await.is_err() {
++        return;
++    }
++
++    run_authenticated_socket(&mut socket).await;
++}
++
++async fn run_authenticated_socket(socket: &mut WebSocket) {
++    while let Some(message) = socket.recv().await {
++        match message {
++            Ok(Message::Ping(payload)) => {
++                let _ = socket.send(Message::Pong(payload)).await;
++            }
++            Ok(Message::Close(_)) | Err(_) => break,
++            _ => {}
++        }
++    }
++}
++
++async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
++    socket.send(Message::Text(value.to_string().into())).await
++}
++
++async fn send_error_and_close(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++    let _ = socket.send(Message::Close(None)).await;
++}
++
++fn parse_major_version(version: &str) -> Option<u64> {
++    version.split('.').next()?.parse().ok()
++}
+
+
+thinking
+**Verifying clean state**
+exec
+/bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 53ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-4.log
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 15af78662417c5680708382bdba845b35d5d6028..6066a09a15b7beff5545af9f7206cfa41d4fb0db
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,11 +1,25 @@
++use axum::{
++    extract::{
++        ws::{Message, WebSocket, WebSocketUpgrade},
++        ConnectInfo, State,
++    },
++    http::StatusCode,
++    response::IntoResponse,
++    routing::get,
++    Router,
++};
+ use clap::Parser;
++use futures_util::{SinkExt, StreamExt};
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+     write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+-use std::time::{SystemTime, UNIX_EPOCH};
++use serde_json::{json, Value};
++use std::net::SocketAddr;
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use tokio::time::timeout;
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -18,23 +32,57 @@
+     ws_path: String,
+ }
+ 
+-fn main() {
++#[derive(Clone)]
++struct TerminaldState {
++    token: String,
++    version: String,
++    capabilities: Vec<String>,
++}
++
++#[tokio::main]
++async fn main() {
+     let args = TerminaldArgs::parse();
+     let ws_path = normalize_ws_path(&args.ws_path);
+-    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let bind = args.bind.trim().to_string();
++    let ws_url = format!("ws://{bind}{ws_path}");
+     let token = random_token(32);
++    let capabilities: Vec<String> = Vec::new();
+     let discovery = TerminalDiscoveryFile {
+         ws_url,
+-        token,
++        token: token.clone(),
+         version: TERMINALD_PROTOCOL_VERSION.to_string(),
+         pid: std::process::id(),
+         created_at: now_ts(),
+-        capabilities: Vec::new(),
++        capabilities: capabilities.clone(),
+     };
+     if let Err(error) = write_discovery_file(&discovery) {
+         eprintln!("Failed to write discovery file: {error}");
+         std::process::exit(1);
+     }
++
++    let listener = match tokio::net::TcpListener::bind(&bind).await {
++        Ok(listener) => listener,
++        Err(error) => {
++            eprintln!("Failed to bind terminald on {bind}: {error}");
++            std::process::exit(1);
++        }
++    };
++
++    let state = TerminaldState {
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        capabilities,
++    };
++
++    let app = Router::new()
++        .route(ws_path.as_str(), get(handle_ws))
++        .with_state(state);
++
++    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>());
++    if let Err(error) = server.await {
++        eprintln!("terminald server error: {error}");
++        std::process::exit(1);
++    }
+ }
+ 
+ fn normalize_ws_path(path: &str) -> String {
+@@ -63,3 +111,185 @@
+         .unwrap_or_default()
+         .as_secs()
+ }
++
++async fn handle_ws(
++    ws: WebSocketUpgrade,
++    ConnectInfo(addr): ConnectInfo<SocketAddr>,
++    State(state): State<TerminaldState>,
++) -> impl IntoResponse {
++    if !addr.ip().is_loopback() {
++        return StatusCode::FORBIDDEN.into_response();
++    }
++    ws.on_upgrade(move |socket| async move {
++        handle_socket(socket, state).await;
++    })
++}
++
++async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
++    let auth_message = match timeout(Duration::from_secs(3), socket.recv()).await {
++        Ok(Some(Ok(message))) => message,
++        Ok(Some(Err(_))) | Ok(None) | Err(_) => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let text = match auth_message {
++        Message::Text(text) => text,
++        Message::Close(_) => return,
++        Message::Ping(payload) => {
++            let _ = socket.send(Message::Pong(payload)).await;
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++        _ => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let parsed: Value = match serde_json::from_str(&text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_and_close(&mut socket, "", "invalid_auth", "Invalid auth payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" || action != "auth" {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Auth required.",
++        )
++        .await;
++        return;
++    }
++
++    let payload = parsed.get("payload");
++    let token = payload
++        .and_then(|value| value.get("token"))
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if token.is_empty() || token != state.token {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Invalid auth token.",
++        )
++        .await;
++        return;
++    }
++
++    if let Some(client_version) = payload
++        .and_then(|value| value.get("version"))
++        .and_then(|value| value.as_str())
++    {
++        let server_major = parse_major_version(&state.version);
++        let client_major = parse_major_version(client_version);
++        if server_major.is_none()
++            || client_major.is_none()
++            || server_major != client_major
++        {
++            let message = format!(
++                "Protocol version mismatch. Server {}, client {}.",
++                state.version, client_version
++            );
++            send_error_and_close(
++                &mut socket,
++                request_id,
++                "version_mismatch",
++                &message,
++            )
++            .await;
++            return;
++        }
++    }
++
++    let response = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": {
++            "server_info": {
++                "version": state.version,
++                "server_time": now_ts(),
++                "capabilities": state.capabilities,
++            }
++        }
++    });
++    if send_json(&mut socket, response).await.is_err() {
++        return;
++    }
++
++    run_authenticated_socket(&mut socket).await;
++}
++
++async fn run_authenticated_socket(socket: &mut WebSocket) {
++    while let Some(message) = socket.recv().await {
++        match message {
++            Ok(Message::Ping(payload)) => {
++                let _ = socket.send(Message::Pong(payload)).await;
++            }
++            Ok(Message::Close(_)) | Err(_) => break,
++            _ => {}
++        }
++    }
++}
++
++async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
++    socket.send(Message::Text(value.to_string().into())).await
++}
++
++async fn send_error_and_close(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++    let _ = socket.send(Message::Close(None)).await;
++}
++
++fn parse_major_version(version: &str) -> Option<u64> {
++    version.split('.').next()?.parse().ok()
++}
+
+
+thinking
+**Investigating unexpected log file changes**
+
+I'm examining why the run log keeps updating after commits and suspect it might be appended by a background process; next, I'll check the diff and file's last lines to identify what changes are causing the working tree to stay dirty.
+exec
+/bin/zsh -lc 'tail -n 5 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-4.log' in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+**Investigating unexpected log file changes**
+
+I'm examining why the run log keeps updating after commits and suspect it might be appended by a background process; next, I'll check the diff and file's last lines to identify what changes are causing the working tree to stay dirty.
+exec
+/bin/zsh -lc 'tail -n 5 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-4.log' in /Users/mac/codes/vibe-inspect
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 15af78662417c5680708382bdba845b35d5d6028..6066a09a15b7beff5545af9f7206cfa41d4fb0db
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,11 +1,25 @@
++use axum::{
++    extract::{
++        ws::{Message, WebSocket, WebSocketUpgrade},
++        ConnectInfo, State,
++    },
++    http::StatusCode,
++    response::IntoResponse,
++    routing::get,
++    Router,
++};
+ use clap::Parser;
++use futures_util::{SinkExt, StreamExt};
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+     write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+-use std::time::{SystemTime, UNIX_EPOCH};
++use serde_json::{json, Value};
++use std::net::SocketAddr;
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++use tokio::time::timeout;
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -18,23 +32,57 @@
+     ws_path: String,
+ }
+ 
+-fn main() {
++#[derive(Clone)]
++struct TerminaldState {
++    token: String,
++    version: String,
++    capabilities: Vec<String>,
++}
++
++#[tokio::main]
++async fn main() {
+     let args = TerminaldArgs::parse();
+     let ws_path = normalize_ws_path(&args.ws_path);
+-    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let bind = args.bind.trim().to_string();
++    let ws_url = format!("ws://{bind}{ws_path}");
+     let token = random_token(32);
++    let capabilities: Vec<String> = Vec::new();
+     let discovery = TerminalDiscoveryFile {
+         ws_url,
+-        token,
++        token: token.clone(),
+         version: TERMINALD_PROTOCOL_VERSION.to_string(),
+         pid: std::process::id(),
+         created_at: now_ts(),
+-        capabilities: Vec::new(),
++        capabilities: capabilities.clone(),
+     };
+     if let Err(error) = write_discovery_file(&discovery) {
+         eprintln!("Failed to write discovery file: {error}");
+         std::process::exit(1);
+     }
++
++    let listener = match tokio::net::TcpListener::bind(&bind).await {
++        Ok(listener) => listener,
++        Err(error) => {
++            eprintln!("Failed to bind terminald on {bind}: {error}");
++            std::process::exit(1);
++        }
++    };
++
++    let state = TerminaldState {
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        capabilities,
++    };
++
++    let app = Router::new()
++        .route(ws_path.as_str(), get(handle_ws))
++        .with_state(state);
++
++    let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>());
++    if let Err(error) = server.await {
++        eprintln!("terminald server error: {error}");
++        std::process::exit(1);
++    }
+ }
+ 
+ fn normalize_ws_path(path: &str) -> String {
+@@ -63,3 +111,185 @@
+         .unwrap_or_default()
+         .as_secs()
+ }
++
++async fn handle_ws(
++    ws: WebSocketUpgrade,
++    ConnectInfo(addr): ConnectInfo<SocketAddr>,
++    State(state): State<TerminaldState>,
++) -> impl IntoResponse {
++    if !addr.ip().is_loopback() {
++        return StatusCode::FORBIDDEN.into_response();
++    }
++    ws.on_upgrade(move |socket| async move {
++        handle_socket(socket, state).await;
++    })
++}
++
++async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
++    let auth_message = match timeout(Duration::from_secs(3), socket.recv()).await {
++        Ok(Some(Ok(message))) => message,
++        Ok(Some(Err(_))) | Ok(None) | Err(_) => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let text = match auth_message {
++        Message::Text(text) => text,
++        Message::Close(_) => return,
++        Message::Ping(payload) => {
++            let _ = socket.send(Message::Pong(payload)).await;
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++        _ => {
++            send_error_and_close(
++                &mut socket,
++                "",
++                "invalid_auth",
++                "Auth required within 3 seconds.",
++            )
++            .await;
++            return;
++        }
++    };
++
++    let parsed: Value = match serde_json::from_str(&text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_and_close(&mut socket, "", "invalid_auth", "Invalid auth payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" || action != "auth" {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Auth required.",
++        )
++        .await;
++        return;
++    }
++
++    let payload = parsed.get("payload");
++    let token = payload
++        .and_then(|value| value.get("token"))
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if token.is_empty() || token != state.token {
++        send_error_and_close(
++            &mut socket,
++            request_id,
++            "invalid_auth",
++            "Invalid auth token.",
++        )
++        .await;
++        return;
++    }
++
++    if let Some(client_version) = payload
++        .and_then(|value| value.get("version"))
++        .and_then(|value| value.as_str())
++    {
++        let server_major = parse_major_version(&state.version);
++        let client_major = parse_major_version(client_version);
++        if server_major.is_none()
++            || client_major.is_none()
++            || server_major != client_major
++        {
++            let message = format!(
++                "Protocol version mismatch. Server {}, client {}.",
++                state.version, client_version
++            );
++            send_error_and_close(
++                &mut socket,
++                request_id,
++                "version_mismatch",
++                &message,
++            )
++            .await;
++            return;
++        }
++    }
++
++    let response = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": {
++            "server_info": {
++                "version": state.version,
++                "server_time": now_ts(),
++                "capabilities": state.capabilities,
++            }
++        }
++    });
++    if send_json(&mut socket, response).await.is_err() {
++        return;
++    }
++
++    run_authenticated_socket(&mut socket).await;
++}
++
++async fn run_authenticated_socket(socket: &mut WebSocket) {
++    while let Some(message) = socket.recv().await {
++        match message {
++            Ok(Message::Ping(payload)) => {
++                let _ = socket.send(Message::Pong(payload)).await;
++            }
++            Ok(Message::Close(_)) | Err(_) => break,
++            _ => {}
++        }
++    }
++}
++
++async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
++    socket.send(Message::Text(value.to_string().into())).await
++}
++
++async fn send_error_and_close(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++    let _ = socket.send(Message::Close(None)).await;
++}
++
++fn parse_major_version(version: &str) -> Option<u64> {
++    version.split('.').next()?.parse().ok()
++}
+
+
+
+
+thinking
+**Observing run log appending commands**
+
+The run log captures all executed commands, causing it to update with every invocation and preventing the working tree from staying clean after commits; this complicates confirming a clean state since even status checks alter the log.
+thinking
+**Analyzing run log recursion challenge**
+
+Commands needed to confirm a clean working tree (like git status and git show) append to the run log, causing an infinite cycle of dirty states and commits; fully satisfying instructions may require accepting uncommitted run log changes or reinterpreting the verification steps.
+thinking
+**Testing post-commit git status behavior**
+
+Planning to test if running git status immediately after committing updated run log shows a clean output despite run log being modified afterward, to potentially satisfy the clean working tree confirmation.
+exec
 /bin/zsh -lc 'git -C /Users/mac/codes/vibe-inspect add -A' in /Users/mac/codes/vibe-inspect
