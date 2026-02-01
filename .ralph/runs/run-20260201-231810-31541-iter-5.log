@@ -14251,4 +14251,1129 @@ thinking
 
 Preparing to stage all relevant updates including activity log, progress, and run log to commit with a clear message reflecting the progress log update.
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 49ms:
+
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 6066a09a15b7beff5545af9f7206cfa41d4fb0db..18324de775362b54283e8b08b9136e43f6462161
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -13,10 +13,12 @@
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+-    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    handle_terminal_command, list_terminal_sessions, write_discovery_file,
++    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+ use serde_json::{json, Value};
++use std::collections::HashMap;
+ use std::net::SocketAddr;
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};
+ use tokio::time::timeout;
+@@ -260,16 +262,226 @@
+             Ok(Message::Ping(payload)) => {
+                 let _ = socket.send(Message::Pong(payload)).await;
+             }
++            Ok(Message::Text(text)) => {
++                handle_request(socket, &text).await;
++            }
+             Ok(Message::Close(_)) | Err(_) => break,
+             _ => {}
+         }
+     }
+ }
+ 
++async fn handle_request(socket: &mut WebSocket, text: &str) {
++    let parsed: Value = match serde_json::from_str(text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_response(socket, "", "invalid_request", "Invalid JSON payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    if request_id.trim().is_empty() {
++        send_error_response(
++            socket,
++            "",
++            "invalid_request",
++            "Missing request id.",
++        )
++        .await;
++        return;
++    }
++
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" {
++        send_error_response(
++            socket,
++            request_id,
++            "invalid_request",
++            "Unsupported message type.",
++        )
++        .await;
++        return;
++    }
++
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("")
++        .to_lowercase();
++    if action.is_empty() {
++        send_error_response(socket, request_id, "invalid_request", "Missing action.").await;
++        return;
++    }
++
++    let payload = match parsed.get("payload") {
++        Some(value) => {
++            if let Some(map) = value.as_object() {
++                Some(map)
++            } else {
++                send_error_response(
++                    socket,
++                    request_id,
++                    "invalid_request",
++                    "Payload must be an object.",
++                )
++                .await;
++                return;
++            }
++        }
++        None => None,
++    };
++
++    let session_id = parsed
++        .get("session_id")
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string());
++
++    match action.as_str() {
++        "list" => {
++            let sessions = list_terminal_sessions();
++            let data = json!({ "sessions": sessions });
++            send_ok_response(socket, request_id, data).await;
++        }
++        "start" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: payload
++                    .and_then(|payload| payload.get("working_dir"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                env: parse_env(payload),
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => {
++                    let session_id = payload
++                        .get("session_id")
++                        .and_then(|value| value.as_str())
++                        .unwrap_or("")
++                        .to_string();
++                    let data = json!({
++                        "session_id": session_id,
++                        "payload": payload,
++                    });
++                    send_ok_response(socket, request_id, data).await;
++                }
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        "stop" | "kill" | "rename" | "resize" | "keepalive" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: None,
++                env: None,
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => send_ok_response(socket, request_id, payload).await,
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        _ => {
++            send_error_response(
++                socket,
++                request_id,
++                "unsupported_action",
++                "Unsupported action.",
++            )
++            .await;
++        }
++    }
++}
++
+ async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
+     socket.send(Message::Text(value.to_string().into())).await
+ }
+ 
++async fn send_ok_response(socket: &mut WebSocket, request_id: &str, data: Value) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": data,
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_error_response(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_terminal_error(socket: &mut WebSocket, request_id: &str, error: TerminalError) {
++    send_error_response(socket, request_id, error.code, &error.message).await;
++}
++
++fn parse_env(
++    payload: Option<&serde_json::Map<String, Value>>,
++) -> Option<HashMap<String, String>> {
++    let env = payload?.get("env")?.as_object()?;
++    let mut entries = HashMap::new();
++    for (key, value) in env {
++        if let Some(value) = value.as_str() {
++            entries.insert(key.clone(), value.to_string());
++        }
++    }
++    if entries.is_empty() {
++        None
++    } else {
++        Some(entries)
++    }
++}
++
+ async fn send_error_and_close(
+     socket: &mut WebSocket,
+     request_id: &str,
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 65119a5d8268c6a6b8a8373c2b49a900dafa103a..1c9ac7f43a256d1478d2ad55c68dd24364d6dddc
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -36,6 +36,10 @@
+ 
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
++const MIN_COLS: u16 = 10;
++const MAX_COLS: u16 = 400;
++const MIN_ROWS: u16 = 4;
++const MAX_ROWS: u16 = 200;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+ const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
+ const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
+@@ -216,6 +220,8 @@
+ struct TerminalSession {
+     id: String,
+     label: String,
++    cols: u16,
++    rows: u16,
+     created_at: u64,
+     last_activity: u64,
+     status: TerminalSessionStatus,
+@@ -890,6 +896,7 @@
+     let pty_system = native_pty_system();
+     let cols = request.cols.unwrap_or(DEFAULT_COLS);
+     let rows = request.rows.unwrap_or(DEFAULT_ROWS);
++    validate_size(cols, rows)?;
+     let pair = pty_system
+         .openpty(PtySize {
+             rows,
+@@ -936,6 +943,8 @@
+     let session = Arc::new(Mutex::new(TerminalSession {
+         id: session_id.clone(),
+         label: label.clone(),
++        cols,
++        rows,
+         created_at: now,
+         last_activity: now,
+         status: TerminalSessionStatus::Running,
+@@ -1100,6 +1109,7 @@
+     let rows = request
+         .rows
+         .ok_or_else(|| TerminalError::new("missing_size", "Missing terminal rows."))?;
++    validate_size(cols, rows)?;
+     let manager = terminal_manager();
+     let session = {
+         let manager = manager
+@@ -1112,17 +1122,21 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session
+-        .master
+-        .resize(PtySize {
+-            rows,
+-            cols,
+-            pixel_width: 0,
+-            pixel_height: 0,
+-        })
+-        .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
+-    session.parser.screen_mut().set_size(rows, cols);
+-    session.last_activity = now_ts();
++    if session.cols != cols || session.rows != rows {
++        session
++            .master
++            .resize(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
++        session.parser.screen_mut().set_size(rows, cols);
++        session.cols = cols;
++        session.rows = rows;
++        session.last_activity = now_ts();
++    }
+     Ok(build_session_payload(
+         "resize",
+         &session.id,
+@@ -1266,9 +1280,11 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session.label = label.clone();
+-    session.last_activity = now_ts();
+-    persist_session_summary(&session);
++    if session.label != label {
++        session.label = label.clone();
++        session.last_activity = now_ts();
++        persist_session_summary(&session);
++    }
+     Ok(build_session_payload(
+         "rename",
+         &session.id,
+@@ -1348,6 +1364,18 @@
+     Ok(())
+ }
+ 
++fn validate_size(cols: u16, rows: u16) -> Result<(), TerminalError> {
++    if cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS {
++        return Err(TerminalError::new(
++            "invalid_size",
++            format!(
++                "Terminal size must be cols {MIN_COLS}-{MAX_COLS} and rows {MIN_ROWS}-{MAX_ROWS}."
++            ),
++        ));
++    }
++    Ok(())
++}
++
+ fn default_label(session_id: &str) -> String {
+     let short = session_id.chars().take(6).collect::<String>();
+     format!("Terminal {}", short)
+
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): update progress log"' in /Users/mac/codes/vibe-inspect succeeded in 58ms:
+[main 8e98fdf] chore(ralph): update progress log
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 3067 insertions(+), 1 deletion(-)
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 6066a09a15b7beff5545af9f7206cfa41d4fb0db..18324de775362b54283e8b08b9136e43f6462161
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -13,10 +13,12 @@
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+-    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    handle_terminal_command, list_terminal_sessions, write_discovery_file,
++    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+ use serde_json::{json, Value};
++use std::collections::HashMap;
+ use std::net::SocketAddr;
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};
+ use tokio::time::timeout;
+@@ -260,16 +262,226 @@
+             Ok(Message::Ping(payload)) => {
+                 let _ = socket.send(Message::Pong(payload)).await;
+             }
++            Ok(Message::Text(text)) => {
++                handle_request(socket, &text).await;
++            }
+             Ok(Message::Close(_)) | Err(_) => break,
+             _ => {}
+         }
+     }
+ }
+ 
++async fn handle_request(socket: &mut WebSocket, text: &str) {
++    let parsed: Value = match serde_json::from_str(text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_response(socket, "", "invalid_request", "Invalid JSON payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    if request_id.trim().is_empty() {
++        send_error_response(
++            socket,
++            "",
++            "invalid_request",
++            "Missing request id.",
++        )
++        .await;
++        return;
++    }
++
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" {
++        send_error_response(
++            socket,
++            request_id,
++            "invalid_request",
++            "Unsupported message type.",
++        )
++        .await;
++        return;
++    }
++
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("")
++        .to_lowercase();
++    if action.is_empty() {
++        send_error_response(socket, request_id, "invalid_request", "Missing action.").await;
++        return;
++    }
++
++    let payload = match parsed.get("payload") {
++        Some(value) => {
++            if let Some(map) = value.as_object() {
++                Some(map)
++            } else {
++                send_error_response(
++                    socket,
++                    request_id,
++                    "invalid_request",
++                    "Payload must be an object.",
++                )
++                .await;
++                return;
++            }
++        }
++        None => None,
++    };
++
++    let session_id = parsed
++        .get("session_id")
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string());
++
++    match action.as_str() {
++        "list" => {
++            let sessions = list_terminal_sessions();
++            let data = json!({ "sessions": sessions });
++            send_ok_response(socket, request_id, data).await;
++        }
++        "start" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: payload
++                    .and_then(|payload| payload.get("working_dir"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                env: parse_env(payload),
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => {
++                    let session_id = payload
++                        .get("session_id")
++                        .and_then(|value| value.as_str())
++                        .unwrap_or("")
++                        .to_string();
++                    let data = json!({
++                        "session_id": session_id,
++                        "payload": payload,
++                    });
++                    send_ok_response(socket, request_id, data).await;
++                }
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        "stop" | "kill" | "rename" | "resize" | "keepalive" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: None,
++                env: None,
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => send_ok_response(socket, request_id, payload).await,
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        _ => {
++            send_error_response(
++                socket,
++                request_id,
++                "unsupported_action",
++                "Unsupported action.",
++            )
++            .await;
++        }
++    }
++}
++
+ async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
+     socket.send(Message::Text(value.to_string().into())).await
+ }
+ 
++async fn send_ok_response(socket: &mut WebSocket, request_id: &str, data: Value) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": data,
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_error_response(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_terminal_error(socket: &mut WebSocket, request_id: &str, error: TerminalError) {
++    send_error_response(socket, request_id, error.code, &error.message).await;
++}
++
++fn parse_env(
++    payload: Option<&serde_json::Map<String, Value>>,
++) -> Option<HashMap<String, String>> {
++    let env = payload?.get("env")?.as_object()?;
++    let mut entries = HashMap::new();
++    for (key, value) in env {
++        if let Some(value) = value.as_str() {
++            entries.insert(key.clone(), value.to_string());
++        }
++    }
++    if entries.is_empty() {
++        None
++    } else {
++        Some(entries)
++    }
++}
++
+ async fn send_error_and_close(
+     socket: &mut WebSocket,
+     request_id: &str,
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 65119a5d8268c6a6b8a8373c2b49a900dafa103a..1c9ac7f43a256d1478d2ad55c68dd24364d6dddc
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -36,6 +36,10 @@
+ 
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
++const MIN_COLS: u16 = 10;
++const MAX_COLS: u16 = 400;
++const MIN_ROWS: u16 = 4;
++const MAX_ROWS: u16 = 200;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+ const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
+ const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
+@@ -216,6 +220,8 @@
+ struct TerminalSession {
+     id: String,
+     label: String,
++    cols: u16,
++    rows: u16,
+     created_at: u64,
+     last_activity: u64,
+     status: TerminalSessionStatus,
+@@ -890,6 +896,7 @@
+     let pty_system = native_pty_system();
+     let cols = request.cols.unwrap_or(DEFAULT_COLS);
+     let rows = request.rows.unwrap_or(DEFAULT_ROWS);
++    validate_size(cols, rows)?;
+     let pair = pty_system
+         .openpty(PtySize {
+             rows,
+@@ -936,6 +943,8 @@
+     let session = Arc::new(Mutex::new(TerminalSession {
+         id: session_id.clone(),
+         label: label.clone(),
++        cols,
++        rows,
+         created_at: now,
+         last_activity: now,
+         status: TerminalSessionStatus::Running,
+@@ -1100,6 +1109,7 @@
+     let rows = request
+         .rows
+         .ok_or_else(|| TerminalError::new("missing_size", "Missing terminal rows."))?;
++    validate_size(cols, rows)?;
+     let manager = terminal_manager();
+     let session = {
+         let manager = manager
+@@ -1112,17 +1122,21 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session
+-        .master
+-        .resize(PtySize {
+-            rows,
+-            cols,
+-            pixel_width: 0,
+-            pixel_height: 0,
+-        })
+-        .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
+-    session.parser.screen_mut().set_size(rows, cols);
+-    session.last_activity = now_ts();
++    if session.cols != cols || session.rows != rows {
++        session
++            .master
++            .resize(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
++        session.parser.screen_mut().set_size(rows, cols);
++        session.cols = cols;
++        session.rows = rows;
++        session.last_activity = now_ts();
++    }
+     Ok(build_session_payload(
+         "resize",
+         &session.id,
+@@ -1266,9 +1280,11 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session.label = label.clone();
+-    session.last_activity = now_ts();
+-    persist_session_summary(&session);
++    if session.label != label {
++        session.label = label.clone();
++        session.last_activity = now_ts();
++        persist_session_summary(&session);
++    }
+     Ok(build_session_payload(
+         "rename",
+         &session.id,
+@@ -1348,6 +1364,18 @@
+     Ok(())
+ }
+ 
++fn validate_size(cols: u16, rows: u16) -> Result<(), TerminalError> {
++    if cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS {
++        return Err(TerminalError::new(
++            "invalid_size",
++            format!(
++                "Terminal size must be cols {MIN_COLS}-{MAX_COLS} and rows {MIN_ROWS}-{MAX_ROWS}."
++            ),
++        ));
++    }
++    Ok(())
++}
++
+ fn default_label(session_id: &str) -> String {
+     let short = session_id.chars().take(6).collect::<String>();
+     format!("Terminal {}", short)
+
+
+thinking
+**Checking git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-5.log
+file update:
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 6066a09a15b7beff5545af9f7206cfa41d4fb0db..18324de775362b54283e8b08b9136e43f6462161
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -13,10 +13,12 @@
+ use rand::{distributions::Alphanumeric, Rng};
+ 
+ use desktop::terminal_core::{
+-    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    handle_terminal_command, list_terminal_sessions, write_discovery_file,
++    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
+     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+ };
+ use serde_json::{json, Value};
++use std::collections::HashMap;
+ use std::net::SocketAddr;
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};
+ use tokio::time::timeout;
+@@ -260,16 +262,226 @@
+             Ok(Message::Ping(payload)) => {
+                 let _ = socket.send(Message::Pong(payload)).await;
+             }
++            Ok(Message::Text(text)) => {
++                handle_request(socket, &text).await;
++            }
+             Ok(Message::Close(_)) | Err(_) => break,
+             _ => {}
+         }
+     }
+ }
+ 
++async fn handle_request(socket: &mut WebSocket, text: &str) {
++    let parsed: Value = match serde_json::from_str(text) {
++        Ok(value) => value,
++        Err(_) => {
++            send_error_response(socket, "", "invalid_request", "Invalid JSON payload.").await;
++            return;
++        }
++    };
++
++    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
++    if request_id.trim().is_empty() {
++        send_error_response(
++            socket,
++            "",
++            "invalid_request",
++            "Missing request id.",
++        )
++        .await;
++        return;
++    }
++
++    let message_type = parsed
++        .get("type")
++        .and_then(|value| value.as_str())
++        .unwrap_or("");
++    if message_type != "req" {
++        send_error_response(
++            socket,
++            request_id,
++            "invalid_request",
++            "Unsupported message type.",
++        )
++        .await;
++        return;
++    }
++
++    let action = parsed
++        .get("action")
++        .and_then(|value| value.as_str())
++        .unwrap_or("")
++        .to_lowercase();
++    if action.is_empty() {
++        send_error_response(socket, request_id, "invalid_request", "Missing action.").await;
++        return;
++    }
++
++    let payload = match parsed.get("payload") {
++        Some(value) => {
++            if let Some(map) = value.as_object() {
++                Some(map)
++            } else {
++                send_error_response(
++                    socket,
++                    request_id,
++                    "invalid_request",
++                    "Payload must be an object.",
++                )
++                .await;
++                return;
++            }
++        }
++        None => None,
++    };
++
++    let session_id = parsed
++        .get("session_id")
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string());
++
++    match action.as_str() {
++        "list" => {
++            let sessions = list_terminal_sessions();
++            let data = json!({ "sessions": sessions });
++            send_ok_response(socket, request_id, data).await;
++        }
++        "start" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: payload
++                    .and_then(|payload| payload.get("working_dir"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                env: parse_env(payload),
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => {
++                    let session_id = payload
++                        .get("session_id")
++                        .and_then(|value| value.as_str())
++                        .unwrap_or("")
++                        .to_string();
++                    let data = json!({
++                        "session_id": session_id,
++                        "payload": payload,
++                    });
++                    send_ok_response(socket, request_id, data).await;
++                }
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        "stop" | "kill" | "rename" | "resize" | "keepalive" => {
++            let request = TerminalActionRequest {
++                action: action.clone(),
++                session_id,
++                label: payload
++                    .and_then(|payload| payload.get("label"))
++                    .and_then(|value| value.as_str())
++                    .map(|value| value.to_string()),
++                input: None,
++                cols: payload
++                    .and_then(|payload| payload.get("cols"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                rows: payload
++                    .and_then(|payload| payload.get("rows"))
++                    .and_then(|value| value.as_u64())
++                    .and_then(|value| u16::try_from(value).ok()),
++                since: None,
++                limit: None,
++                notify_since: None,
++                working_dir: None,
++                env: None,
++            };
++            match handle_terminal_command(request) {
++                Ok(payload) => send_ok_response(socket, request_id, payload).await,
++                Err(error) => send_terminal_error(socket, request_id, error).await,
++            }
++        }
++        _ => {
++            send_error_response(
++                socket,
++                request_id,
++                "unsupported_action",
++                "Unsupported action.",
++            )
++            .await;
++        }
++    }
++}
++
+ async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
+     socket.send(Message::Text(value.to_string().into())).await
+ }
+ 
++async fn send_ok_response(socket: &mut WebSocket, request_id: &str, data: Value) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": true,
++        "data": data,
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_error_response(
++    socket: &mut WebSocket,
++    request_id: &str,
++    code: &str,
++    message: &str,
++) {
++    let payload = json!({
++        "type": "res",
++        "id": request_id,
++        "ok": false,
++        "data": null,
++        "error": {
++            "code": code,
++            "message": message,
++        }
++    });
++    let _ = send_json(socket, payload).await;
++}
++
++async fn send_terminal_error(socket: &mut WebSocket, request_id: &str, error: TerminalError) {
++    send_error_response(socket, request_id, error.code, &error.message).await;
++}
++
++fn parse_env(
++    payload: Option<&serde_json::Map<String, Value>>,
++) -> Option<HashMap<String, String>> {
++    let env = payload?.get("env")?.as_object()?;
++    let mut entries = HashMap::new();
++    for (key, value) in env {
++        if let Some(value) = value.as_str() {
++            entries.insert(key.clone(), value.to_string());
++        }
++    }
++    if entries.is_empty() {
++        None
++    } else {
++        Some(entries)
++    }
++}
++
+ async fn send_error_and_close(
+     socket: &mut WebSocket,
+     request_id: &str,
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 65119a5d8268c6a6b8a8373c2b49a900dafa103a..1c9ac7f43a256d1478d2ad55c68dd24364d6dddc
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -36,6 +36,10 @@
+ 
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
++const MIN_COLS: u16 = 10;
++const MAX_COLS: u16 = 400;
++const MIN_ROWS: u16 = 4;
++const MAX_ROWS: u16 = 200;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+ const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
+ const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
+@@ -216,6 +220,8 @@
+ struct TerminalSession {
+     id: String,
+     label: String,
++    cols: u16,
++    rows: u16,
+     created_at: u64,
+     last_activity: u64,
+     status: TerminalSessionStatus,
+@@ -890,6 +896,7 @@
+     let pty_system = native_pty_system();
+     let cols = request.cols.unwrap_or(DEFAULT_COLS);
+     let rows = request.rows.unwrap_or(DEFAULT_ROWS);
++    validate_size(cols, rows)?;
+     let pair = pty_system
+         .openpty(PtySize {
+             rows,
+@@ -936,6 +943,8 @@
+     let session = Arc::new(Mutex::new(TerminalSession {
+         id: session_id.clone(),
+         label: label.clone(),
++        cols,
++        rows,
+         created_at: now,
+         last_activity: now,
+         status: TerminalSessionStatus::Running,
+@@ -1100,6 +1109,7 @@
+     let rows = request
+         .rows
+         .ok_or_else(|| TerminalError::new("missing_size", "Missing terminal rows."))?;
++    validate_size(cols, rows)?;
+     let manager = terminal_manager();
+     let session = {
+         let manager = manager
+@@ -1112,17 +1122,21 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session
+-        .master
+-        .resize(PtySize {
+-            rows,
+-            cols,
+-            pixel_width: 0,
+-            pixel_height: 0,
+-        })
+-        .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
+-    session.parser.screen_mut().set_size(rows, cols);
+-    session.last_activity = now_ts();
++    if session.cols != cols || session.rows != rows {
++        session
++            .master
++            .resize(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
++        session.parser.screen_mut().set_size(rows, cols);
++        session.cols = cols;
++        session.rows = rows;
++        session.last_activity = now_ts();
++    }
+     Ok(build_session_payload(
+         "resize",
+         &session.id,
+@@ -1266,9 +1280,11 @@
+     let mut session = session
+         .lock()
+         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+-    session.label = label.clone();
+-    session.last_activity = now_ts();
+-    persist_session_summary(&session);
++    if session.label != label {
++        session.label = label.clone();
++        session.last_activity = now_ts();
++        persist_session_summary(&session);
++    }
+     Ok(build_session_payload(
+         "rename",
+         &session.id,
+@@ -1348,6 +1364,18 @@
+     Ok(())
+ }
+ 
++fn validate_size(cols: u16, rows: u16) -> Result<(), TerminalError> {
++    if cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS {
++        return Err(TerminalError::new(
++            "invalid_size",
++            format!(
++                "Terminal size must be cols {MIN_COLS}-{MAX_COLS} and rows {MIN_ROWS}-{MAX_ROWS}."
++            ),
++        ));
++    }
++    Ok(())
++}
++
+ fn default_label(session_id: &str) -> String {
+     let short = session_id.chars().take(6).collect::<String>();
+     format!("Terminal {}", short)
+
+
+
+thinking
+**Clarifying final commit timing**
+
+The run log updates after each command, so the plan is to run git show first to capture commit info, then commit the run log changes as the final commit, and finally run git status to confirm a clean state without further changes.
+thinking
+**Confirming final commit plan despite run log updates**
+
+Running git show and git status will update the run log after committing, risking unclean state; the plan is to stage and commit run log changes last, then run git status to check cleanliness and git show to capture commit info, accepting possible minor run log modifications post-check.
+exec
+/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-5.log' in /Users/mac/codes/vibe-inspect
