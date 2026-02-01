@@ -59,7 +59,7 @@ We will build a dedicated terminal daemon (`terminald`) that owns PTY session li
 ## WebSocket Protocol (Primary)
 
 ### Connection Discovery
-terminald writes a discovery file in the OS config directory so any client can find it:
+terminald writes a discovery file in the OS config directory so any client can find it. The intent is to avoid manual configuration while keeping the auth token local to the machine.
 
 Path (examples):
 - macOS: `~/Library/Application Support/VibeInspect/terminald.json`
@@ -78,9 +78,17 @@ Schema:
 }
 ```
 
-Clients may override this via environment variables:
-- `VIBE_CTL_ENDPOINT` (WS URL)
-- `VIBE_CTL_TOKEN` (auth token)
+Field notes:
+- `ws_url`: WebSocket endpoint. By default terminald binds to localhost only (`127.0.0.1`) and rejects non-localhost connections unless explicitly configured otherwise.
+- `token`: Auth token required on every connection.
+- `version`: Protocol version for compatibility checks.
+- `pid`: terminald process ID for basic health verification.
+- `created_at`: Unix timestamp (seconds) when the discovery file was created.
+- `capabilities`: Feature flags for clients (attach, poll, notifications, etc).
+
+Clients may override discovery via environment variables (useful for CI or alternate configs):
+- `VIBE_CTL_ENDPOINT` (WS URL override)
+- `VIBE_CTL_TOKEN` (auth token override)
 - `VIBE_CTL_CONFIG` (path to discovery file)
 
 ### Connection
@@ -955,13 +963,19 @@ Transitions:
 5) Persisted summaries:
    - Restart daemon, ensure `list` contains previous summaries marked exited.
 
-### End-to-End (Manual)
-1) Desktop agent restart while session active:
-   - Session keeps running; `vibe-ctl attach` works.
-2) Mobile view:
-   - Start via mobile, output appears, resize works.
+### Manual Test Checklist
+Why: these checks confirm sessions survive desktop agent restarts and that the mobile UI remains compatible with the existing payload schema.
+
+1) Desktop agent restart (session continuity):
+   - Start a session via `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40` and attach.
+   - Restart the desktop agent process/app while the session is active.
+   - Expected: `vibe-ctl ls` shows the same session id, `vibe-ctl attach -t <id>` resumes output, and the session keeps running in terminald.
+2) Mobile compatibility (payload + controls):
+   - Start a session from the mobile UI and verify output streaming.
+   - Resize the terminal and send input; ensure output continues without UI errors.
+   - Expected: no schema-related warnings, and the session id matches the one listed by `vibe-ctl ls`.
 3) CLI raw mode:
-   - Verify detach key and window resize handling.
+   - Verify detach key (`Ctrl-b d`) returns to shell and SIGWINCH resize updates the session.
 
 ## Acceptance Checklist (Ship Gate)
 - [ ] WS protocol matches schema; auth required on all connections.

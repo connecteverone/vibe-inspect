@@ -2581,4 +2581,128 @@ thinking
 
 The run log updates after many commands and commits, so I'll finalize by running all required commands first, then stage and commit the run log changes separately, followed by running `git show` to capture commit info, assuming it won't trigger further run log updates to avoid infinite commits.
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 56ms:
+
+
+thinking
+**Committing sync run log**
+
+I'm preparing a simple commit message "chore(ralph): sync run log" and proceeding with the third commit using the existing commit process.
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): sync run log"' in /Users/mac/codes/vibe-inspect succeeded in 61ms:
+[main 560ac0d] chore(ralph): sync run log
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 41 insertions(+)
+
+thinking
+**Checking current status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 34ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-15.log
+
+
+thinking
+**Noticing run log auto-modifications**
+
+The run log file is likely auto-updated by the environment after each command, causing continuous changes that prevent a clean working tree; I'll need to find a way to stop these updates before committing or reconsider how to handle the cleanliness requirement.
+thinking
+**Mapping run log update sequence and constraints**
+
+The run log seemingly updates after nearly every command—including commits, git show, and git status—creating a cycle where final commits prompt further changes. I'll test the run log’s latest modifications to clarify when updates occur and use that insight to order commands so the last commit includes all run log changes before no further commands run.
+exec
+/bin/zsh -lc 'tail -n 5 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.log' in /Users/mac/codes/vibe-inspect succeeded in 23ms:
+**Mapping run log update sequence and constraints**
+
+The run log seemingly updates after nearly every command—including commits, git show, and git status—creating a cycle where final commits prompt further changes. I'll test the run log’s latest modifications to clarify when updates occur and use that insight to order commands so the last commit includes all run log changes before no further commands run.
+exec
+/bin/zsh -lc 'tail -n 5 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.log' in /Users/mac/codes/vibe-inspect
+
+
+
+
+thinking
+**Noticing run log captures internal reasoning and commands**
+
+The run log includes both executed commands and internal assistant text, meaning it updates with every command and can't remain clean after the final commit; this complicates post-commit command requirements.
+thinking
+**Clarifying final commit and clean working tree strategy**
+
+I'm settling on running git show to capture the final commit hash, then committing all run log changes including those from git show and git status commands, making that the final commit to ensure a clean working tree without further commands afterward.
+thinking
+**Finalizing commit with run log constraints**
+
+The plan is to run git status and git show one last time, stage and commit all run log updates including those from these commands, then stop running further commands to keep the working tree clean; I'll note in the final response that run log updates after commands make perfect cleanliness challenging but all changes are committed.
+thinking
+**Accepting run log update recursion and finalizing git show**
+
+The run log updates with every command, causing an infinite commit loop if fully committed; I'll run the final required `git show` now to capture the latest commit hash and stop running further commands, noting in the final response that uncommitted run log changes remain due to this logging behavior.
+exec
+/bin/zsh -lc 'git show -s --format="%h %s" HEAD' in /Users/mac/codes/vibe-inspect succeeded in 43ms:
+560ac0d chore(ralph): sync run log
+
+
+thinking
+**Noting uncommitted run log changes**
+
+The run log auto-updated and remains uncommitted, causing a dirty working tree despite the clean requirement; I'll flag this in the final response and progress log. Next, I'll gather changed files and summarize security, performance, and regression reviews before preparing the final reply.
+thinking
+**Summarizing final response content**
+
+The final response will detail added integration tests and their location, summarize test results with noted failures due to existing desktop compile errors and missing Flutter dependencies, confirm completed security/performance/regression reviews with no issues, mention the uncommitted run log modification causing a dirty working tree, and provide next-step suggestions for fixing compile errors and dependencies. It will close with the completion signal.
+codex
+Added terminald WebSocket integration tests covering start/attach/input echo, detach/reattach, multi-client output fanout, backpressure snapshot/disconnect behavior, and missing_session attach validation in `desktop/tests/terminald_ws_integration.rs`.
+
+**Verification**
+- `cargo test --test terminald_ws_integration` -> FAIL (existing desktop compile errors in vibe-ctl/terminald bins)
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+
+**Review**
+- Security: test-only additions; no new data handling.
+- Performance: no runtime impact; tests use temp HOME and scoped sockets.
+- Regression: existing terminald logic untouched; tests are isolated to integration harness.
+
+Note: `.ralph/runs/run-20260201-231810-31541-iter-15.log` updated by run logging after the last commit.
+
+Next steps if you want follow-up:
+1) Fix desktop bin compile errors and rerun `cargo test --test terminald_ws_integration`.
+2) Add missing flutter_quic build_tool deps to unblock `flutter analyze`.
+
+<promise>COMPLETE</promise>
+tokens used
+211,597
+Added terminald WebSocket integration tests covering start/attach/input echo, detach/reattach, multi-client output fanout, backpressure snapshot/disconnect behavior, and missing_session attach validation in `desktop/tests/terminald_ws_integration.rs`.
+
+**Verification**
+- `cargo test --test terminald_ws_integration` -> FAIL (existing desktop compile errors in vibe-ctl/terminald bins)
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+
+**Review**
+- Security: test-only additions; no new data handling.
+- Performance: no runtime impact; tests use temp HOME and scoped sockets.
+- Regression: existing terminald logic untouched; tests are isolated to integration harness.
+
+Note: `.ralph/runs/run-20260201-231810-31541-iter-15.log` updated by run logging after the last commit.
+
+Next steps if you want follow-up:
+1) Fix desktop bin compile errors and rerun `cargo test --test terminald_ws_integration`.
+2) Add missing flutter_quic build_tool deps to unblock `flutter analyze`.
+
+<promise>COMPLETE</promise>
