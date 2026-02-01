@@ -1521,3 +1521,40 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
   - Attach requires raw mode + detach handling to restore terminal cleanly
 ---
+## [2026-02-02 03:35:11] - US-013: Observability + vibe-ctl debug
+Thread: 
+Run: 20260201-231810-31541 (iteration 13)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-13.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-13.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: d61d2b3 feat(terminald): add metrics and debug logs
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-13.md
+  - .ralph/.tmp/story-20260201-231810-31541-13.json
+  - .ralph/.tmp/story-20260201-231810-31541-13.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-12.log
+  - .ralph/runs/run-20260201-231810-31541-iter-12.md
+  - .ralph/runs/run-20260201-231810-31541-iter-13.log
+  - desktop/src/bin/terminald.rs
+  - desktop/src/bin/vibe-ctl.rs
+  - desktop/src/terminal.rs
+  - desktop/src/terminal_core.rs
+- What was implemented
+- Added structured session lifecycle logs plus dropped chunk tracking in terminal_core
+- Added terminald metrics for active connections/backpressure and a debug action returning server_info + counters
+- Added vibe-ctl debug output and auth_required error mapping
+- **Learnings for future iterations:**
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+  - Backpressure and buffer truncation metrics should be surfaced via debug for operators
+---
