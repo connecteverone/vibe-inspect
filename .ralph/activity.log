@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-02 03:38:38 | run=20260201-231810-31541 | iter=13 | mode=build | story=US-013 | duration=1171s | status=success
 - 2026-02-02 03:19:05 | run=20260201-231810-31541 | iter=12 | mode=build | story=US-012 | duration=1108s | status=success
 - 2026-02-02 03:00:34 | run=20260201-231810-31541 | iter=11 | mode=build | story=US-011 | duration=683s | status=success
 - 2026-02-02 02:49:09 | run=20260201-231810-31541 | iter=10 | mode=build | story=US-010 | duration=1601s | status=success
@@ -378,3 +379,9 @@
 [2026-02-02 03:30:55] Implemented terminald observability metrics/logging and vibe-ctl debug command
 [2026-02-02 03:32:32] Completed verification commands (flutter test/analyze + scripts)
 [2026-02-02 03:36:05] Updated progress log for US-013
+[2026-02-02 03:38:38] ITERATION 13 end (duration=1171s)
+[2026-02-02 03:38:40] ITERATION 14 start (mode=build story=US-014)
+[2026-02-02 03:39:20] Start US-014 terminal_core unit tests
+[2026-02-02 03:47:30] Added terminal_core unit tests for truncation, sequencing, UTF-8 handling, and resize
+[2026-02-02 03:49:01] Ran verification: cargo test (failed in existing bins), flutter tests, flutter analyze (known third_party failures)
+[2026-02-02 03:50:06] Ran cargo test --lib for desktop (unit tests pass)
