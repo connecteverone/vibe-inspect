@@ -416,7 +416,7 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
 - Guardrails reviewed: yes
 - No-commit run: false
 - Commit: 66667c9 feat(api): add agent-backed api explorer
-- Post-commit status: clean
+- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-16.log
 - Verification:
   - Command: cd mobile && flutter test -> PASS
   - Command: cd mobile && flutter analyze -> PASS
