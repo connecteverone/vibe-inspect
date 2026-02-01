@@ -7982,7 +7982,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       final payload = await agentClient.sendTerminalAction(
         action: 'poll',
         sessionId: active.session.id,
-        since: active.nextSeq,
+        since: _terminalSince(active.nextSeq),
         limit: _maxOutputEntries,
         notifySince: active.notificationSeq,
       );
@@ -8881,12 +8881,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         _parseNotificationSeq(payload, fallback: view.notificationSeq);
     final firstSeq =
         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
-    final expectedNext = view.nextSeq + 1;
+    final lastDelivered = _terminalSince(view.nextSeq);
+    final expectedNext = view.nextSeq;
     final truncated = payload['truncated'] == true;
     final hasGap = truncated ||
         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
-    final missingHistory = (truncated && view.nextSeq == 0) ||
-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
+    final missingHistory = (truncated && view.nextSeq <= 1) ||
+        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
     final shouldReset =
         action == 'start' || nextSeq < view.nextSeq || hasGap;
     final parsedExitCode = _parseExitCode(payload);
@@ -8899,7 +8900,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final outputEntries = _parseTerminalChunks(
       payload['output'],
       DateTime.now(),
-      minSeq: shouldReset ? 0 : view.nextSeq,
+      minSeq: shouldReset ? 0 : lastDelivered,
     );
     final mergedOutput = shouldReset
         ? outputEntries
@@ -9198,6 +9199,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       }
     }
     return fallback;
+  }
+
+  int _terminalSince(int nextSeq) {
+    if (nextSeq <= 0) {
+      return 0;
+    }
+    return nextSeq - 1;
   }
 
   String _notificationTitle(String level) {

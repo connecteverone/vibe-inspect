@@ -1977,8 +1977,9 @@
       async function pollTerminalOutput() {
         if (!activeTerminalSessionId || terminalPollInFlight) return;
         terminalPollInFlight = true;
+        const since = Math.max(0, Number(terminalNextSeq) - 1);
         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
-          since: terminalNextSeq,
+          since,
           limit: 200,
         });
         terminalPollInFlight = false;

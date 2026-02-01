@@ -44,6 +44,11 @@ struct TerminaldState {
 
 type WsSender = SplitSink<WebSocket, Message>;
 
+const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
+const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
+const PAYLOAD_TOO_LARGE_MESSAGE: &str =
+    "Terminal snapshot too large to send; reduce output volume and retry.";
+
 #[derive(Debug, Clone)]
 struct AttachmentState {
     last_seq: u64,
@@ -51,6 +56,7 @@ struct AttachmentState {
     last_status: String,
     last_exit_code: Option<i64>,
     last_label: String,
+    last_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +69,12 @@ struct PayloadSummary {
     output_len: usize,
     notifications_len: usize,
     truncated: bool,
+}
+
+struct StreamEventBatch {
+    events: Vec<Value>,
+    detached: Vec<String>,
+    close: bool,
 }
 
 #[tokio::main]
@@ -295,15 +307,19 @@ async fn run_authenticated_socket(socket: WebSocket) {
         tokio::select! {
             _ = tick.tick() => {
                 if !subscriptions.is_empty() {
-                    let (events, detached) = collect_stream_events(&mut subscriptions);
-                    for event in events {
+                    let batch = collect_stream_events(&mut subscriptions);
+                    for event in batch.events {
                         if send_json_sender(&mut sender, event).await.is_err() {
                             return;
                         }
                         last_sent_at = Instant::now();
                     }
-                    for session_id in detached {
+                    for session_id in batch.detached {
                         subscriptions.remove(&session_id);
+                    }
+                    if batch.close {
+                        let _ = sender.send(Message::Close(None)).await;
+                        return;
                     }
                 }
 
@@ -494,16 +510,44 @@ async fn handle_request(
             };
             match handle_terminal_command(request) {
                 Ok(payload) => {
+                    if snapshot_too_large(&payload) {
+                        let _ = send_session_warning(
+                            sender,
+                            &session_id,
+                            "payload_too_large",
+                            PAYLOAD_TOO_LARGE_MESSAGE,
+                        )
+                        .await;
+                        send_error_response(
+                            sender,
+                            request_id,
+                            "payload_too_large",
+                            "Snapshot exceeds payload limits.",
+                        )
+                        .await;
+                        let _ = sender.send(Message::Close(None)).await;
+                        return false;
+                    }
                     let summary = summarize_payload(&payload);
                     let attachment = AttachmentState {
-                        last_seq: summary.next_seq,
+                        last_seq: summary.next_seq.saturating_sub(1),
                         last_notification_seq: summary.notification_next_seq,
                         last_status: summary.status.clone(),
                         last_exit_code: summary.exit_code,
                         last_label: summary.label.clone(),
+                        last_truncated: summary.truncated,
                     };
                     subscriptions.insert(session_id.clone(), attachment);
                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
+                    if summary.truncated {
+                        let _ = send_session_warning(
+                            sender,
+                            &session_id,
+                            "buffer_truncated",
+                            BUFFER_TRUNCATED_MESSAGE,
+                        )
+                        .await;
+                    }
                     let stream_payload = as_stream_payload(payload);
                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
                         .await
@@ -560,7 +604,37 @@ async fn handle_request(
                 env: None,
             };
             match handle_terminal_command(request) {
-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
+                Ok(payload) => {
+                    if snapshot_too_large(&payload) {
+                        let _ = send_session_warning(
+                            sender,
+                            &session_id,
+                            "payload_too_large",
+                            PAYLOAD_TOO_LARGE_MESSAGE,
+                        )
+                        .await;
+                        send_error_response(
+                            sender,
+                            request_id,
+                            "payload_too_large",
+                            "Snapshot exceeds payload limits.",
+                        )
+                        .await;
+                        let _ = sender.send(Message::Close(None)).await;
+                        return false;
+                    }
+                    let truncated = payload_truncated(&payload);
+                    send_ok_response(sender, request_id, payload).await;
+                    if truncated {
+                        let _ = send_session_warning(
+                            sender,
+                            &session_id,
+                            "buffer_truncated",
+                            BUFFER_TRUNCATED_MESSAGE,
+                        )
+                        .await;
+                    }
+                }
                 Err(error) => send_terminal_error(sender, request_id, error).await,
             }
             *last_sent_at = Instant::now();
@@ -727,6 +801,29 @@ async fn send_event(
     send_json_sender(sender, payload).await
 }
 
+fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
+    json!({
+        "type": "event",
+        "event": "session_warning",
+        "session_id": session_id,
+        "data": {
+            "reason": reason,
+            "message": message,
+            "session_id": session_id,
+            "ts": now_ts(),
+        }
+    })
+}
+
+async fn send_session_warning(
+    sender: &mut WsSender,
+    session_id: &str,
+    reason: &str,
+    message: &str,
+) -> Result<(), axum::Error> {
+    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
+}
+
 fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
     let session_id = session_id
         .ok_or_else(|| TerminalError {
@@ -781,6 +878,21 @@ fn summarize_payload(payload: &Value) -> PayloadSummary {
     }
 }
 
+fn payload_truncated(payload: &Value) -> bool {
+    payload
+        .get("truncated")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn snapshot_too_large(payload: &Value) -> bool {
+    payload
+        .get("snapshot")
+        .and_then(|value| value.as_str())
+        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
+        .unwrap_or(false)
+}
+
 fn as_stream_payload(mut payload: Value) -> Value {
     if let Some(map) = payload.as_object_mut() {
         map.insert("action".to_string(), json!("stream"));
@@ -788,11 +900,10 @@ fn as_stream_payload(mut payload: Value) -> Value {
     payload
 }
 
-fn collect_stream_events(
-    subscriptions: &mut HashMap<String, AttachmentState>,
-) -> (Vec<Value>, Vec<String>) {
+fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
     let mut events = Vec::new();
     let mut detached = Vec::new();
+    let mut close = false;
 
     for (session_id, state) in subscriptions.iter_mut() {
         let request = TerminalActionRequest {
@@ -811,9 +922,20 @@ fn collect_stream_events(
         };
         match handle_terminal_command(request) {
             Ok(payload) => {
+                if snapshot_too_large(&payload) {
+                    events.push(build_session_warning(
+                        session_id,
+                        "payload_too_large",
+                        PAYLOAD_TOO_LARGE_MESSAGE,
+                    ));
+                    close = true;
+                    continue;
+                }
                 let summary = summarize_payload(&payload);
-                let seq_changed = summary.next_seq != state.last_seq
+                let summary_last_seq = summary.next_seq.saturating_sub(1);
+                let seq_changed = summary_last_seq != state.last_seq
                     || summary.notification_next_seq != state.last_notification_seq;
+                let was_truncated = state.last_truncated;
                 let should_send = summary.output_len > 0
                     || summary.notifications_len > 0
                     || summary.truncated
@@ -822,11 +944,19 @@ fn collect_stream_events(
                     || summary.label != state.last_label
                     || seq_changed;
                 if should_send {
-                    state.last_seq = summary.next_seq;
+                    if summary.truncated && !was_truncated {
+                        events.push(build_session_warning(
+                            session_id,
+                            "buffer_truncated",
+                            BUFFER_TRUNCATED_MESSAGE,
+                        ));
+                    }
+                    state.last_seq = summary_last_seq;
                     state.last_notification_seq = summary.notification_next_seq;
                     state.last_status = summary.status;
                     state.last_exit_code = summary.exit_code;
                     state.last_label = summary.label;
+                    state.last_truncated = summary.truncated;
                     let stream_payload = as_stream_payload(payload);
                     events.push(json!({
                         "type": "event",
@@ -834,13 +964,19 @@ fn collect_stream_events(
                         "session_id": session_id,
                         "data": stream_payload,
                     }));
+                } else if state.last_truncated {
+                    state.last_truncated = false;
                 }
             }
             Err(_) => detached.push(session_id.clone()),
         }
     }
 
-    (events, detached)
+    StreamEventBatch {
+        events,
+        detached,
+        close,
+    }
 }
 
 fn decode_base64(value: &str) -> Result<Vec<u8>, String> {

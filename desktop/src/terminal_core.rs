@@ -239,6 +239,14 @@ struct TerminalSession {
     writer: Box<dyn Write + Send>,
 }
 
+fn next_expected_seq(current: u64) -> u64 {
+    current.saturating_add(1)
+}
+
+fn last_delivered_seq(next_seq: u64) -> u64 {
+    next_seq.saturating_sub(1)
+}
+
 impl TerminalSession {
     fn push_output(&mut self, data: String) {
         if data.is_empty() {
@@ -676,7 +684,7 @@ async fn run_terminal_stream(
         (
             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
             session.status,
-            session.next_seq,
+            next_expected_seq(session.next_seq),
             session.exit_code,
             session.first_seq(),
             session.snapshot_formatted(),
@@ -685,8 +693,9 @@ async fn run_terminal_stream(
             session.notification_seq,
         )
     };
+    let initial_last_seq = last_delivered_seq(initial_next_seq);
     let initial_truncated = initial_first_seq
-        .map(|first| 1_u64 < first)
+        .map(|first| initial_last_seq.saturating_add(1) < first)
         .unwrap_or(false);
     let initial_payload = build_session_payload(
         "stream",
@@ -708,7 +717,7 @@ async fn run_terminal_stream(
         .await
         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
 
-    let mut last_seq = initial_next_seq;
+    let mut last_seq = initial_last_seq;
     let mut last_status = initial_status;
     let mut last_exit = initial_exit;
     let mut last_label = initial_label;
@@ -725,7 +734,7 @@ async fn run_terminal_stream(
                     (
                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
                         session.status,
-                        session.next_seq,
+                        next_expected_seq(session.next_seq),
                         session.exit_code,
                         session.first_seq(),
                         session.snapshot_formatted(),
@@ -748,7 +757,6 @@ async fn run_terminal_stream(
                     continue;
                 }
 
-                last_seq = next_seq;
                 last_status = status;
                 last_exit = exit_code;
                 last_label = label.clone();
@@ -775,6 +783,7 @@ async fn run_terminal_stream(
                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
                     break;
                 }
+                last_seq = last_delivered_seq(next_seq);
                 last_sent_at = Instant::now();
 
                 if status.is_ended() {
@@ -998,7 +1007,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         "start",
         &session_id,
         TerminalSessionStatus::Running,
-        0,
+        next_expected_seq(0),
         Vec::new(),
         None,
         false,
@@ -1044,7 +1053,7 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         "poll",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         output,
         first_seq,
         truncated,
@@ -1106,7 +1115,7 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         "input",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
@@ -1159,7 +1168,7 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         "resize",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
@@ -1195,7 +1204,7 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         "stop",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
@@ -1236,7 +1245,7 @@ fn keepalive_session(request: TerminalActionRequest) -> Result<Value, TerminalEr
         "keepalive",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
@@ -1270,7 +1279,7 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         "status",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
@@ -1307,7 +1316,7 @@ fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         "rename",
         &session.id,
         session.status,
-        session.next_seq,
+        next_expected_seq(session.next_seq),
         Vec::new(),
         session.first_seq(),
         false,
