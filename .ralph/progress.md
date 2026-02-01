@@ -1628,3 +1628,37 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - cargo test for desktop fails due to existing vibe-ctl/terminald compile errors; focus on targeted test runs when possible
   - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
 ---
+## [2026-02-02 04:26] - US-016: Documentation updates and manual test checklist
+Thread: 
+Run: 20260201-231810-31541 (iteration 16)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-16.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-16.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: b7ab0c0 docs(terminald): add discovery notes and checklist
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm dry run + FlutterLoader deprecation warnings)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-16.md
+  - .ralph/.tmp/story-20260201-231810-31541-16.json
+  - .ralph/.tmp/story-20260201-231810-31541-16.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-15.log
+  - .ralph/runs/run-20260201-231810-31541-iter-15.md
+  - .ralph/runs/run-20260201-231810-31541-iter-16.log
+  - docs/terminal_daemon_plan.md
+- What was implemented
+- Added discovery schema annotations, env override rationale, and explicit localhost-only default binding notes
+- Expanded the manual test checklist with desktop agent restart and mobile compatibility steps plus expected outcomes
+- **Learnings for future iterations:**
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+  - flutter build web emits wasm dry run warnings for dart:ffi-heavy deps; use --no-wasm-dry-run or ignore when not targeting wasm
+---
