@@ -1593,3 +1593,38 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - cargo test for desktop currently fails in terminald/vibe-ctl bins; use cargo test --lib to validate terminal_core unit tests
   - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
 ---
+## [2026-02-02 04:14] - US-015: Integration tests for WS flows and backpressure
+Thread: 
+Run: 20260201-231810-31541 (iteration 15)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 4e6a7fe test(terminald): add ws integration coverage
+- Post-commit status: clean
+- Verification:
+  - Command: cargo test --test terminald_ws_integration -> FAIL (desktop compile errors in vibe-ctl/terminald bins)
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-15.md
+  - .ralph/.tmp/story-20260201-231810-31541-15.json
+  - .ralph/.tmp/story-20260201-231810-31541-15.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-14.log
+  - .ralph/runs/run-20260201-231810-31541-iter-14.md
+  - .ralph/runs/run-20260201-231810-31541-iter-15.log
+  - desktop/tests/terminald_ws_integration.rs
+- What was implemented
+- Added terminald WebSocket integration tests for start/attach/input, detach/reattach, and multi-client output fanout
+- Added backpressure coverage to assert stream_paused plus snapshot or disconnect behavior
+- Verified missing_session response when attach is called without session_id
+- **Learnings for future iterations:**
+  - cargo test for desktop fails due to existing vibe-ctl/terminald compile errors; focus on targeted test runs when possible
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+---

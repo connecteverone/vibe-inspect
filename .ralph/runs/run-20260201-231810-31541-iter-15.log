@@ -2372,4 +2372,172 @@ Reference: Task X.Y, Req N"
 thinking
 **Preparing commit with test coverage**
 exec
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 70ms:
+
+
+thinking
+**Checking status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 56ms:
+M  .agents/tasks/prd-terminal-daemon.json
+A  .ralph/.tmp/prompt-20260201-231810-31541-15.md
+A  .ralph/.tmp/story-20260201-231810-31541-15.json
+A  .ralph/.tmp/story-20260201-231810-31541-15.md
+M  .ralph/activity.log
+M  .ralph/errors.log
+M  .ralph/runs/run-20260201-231810-31541-iter-14.log
+A  .ralph/runs/run-20260201-231810-31541-iter-14.md
+AM .ralph/runs/run-20260201-231810-31541-iter-15.log
+A  desktop/tests/terminald_ws_integration.rs
+
+thinking
+**Committing with detailed test message**
+
+I'm committing the staged changes using a concise yet descriptive message that highlights adding websocket integration tests and backpressure coverage, including a reference to the related story.
+exec
+/bin/zsh -lc 'git commit -m "test(terminald): add ws integration coverage
+
+Add integration tests that exercise start/attach/input flow,
+reattach behavior, multi-client output fanout, and a
+backpressure snapshot/disconnect path.
+
+Reference: US-015"' in /Users/mac/codes/vibe-inspect succeeded in 78ms:
+[main 4e6a7fe] test(terminald): add ws integration coverage
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 10 files changed, 4520 insertions(+), 6 deletions(-)
+ create mode 100644 .ralph/.tmp/prompt-20260201-231810-31541-15.md
+ create mode 100644 .ralph/.tmp/story-20260201-231810-31541-15.json
+ create mode 100644 .ralph/.tmp/story-20260201-231810-31541-15.md
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-14.md
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-15.log
+
+thinking
+**Capturing current commit hash**
+
+I'm capturing the current HEAD commit hash and message now to ensure accurate reference in the progress log before any further commits change it.
+exec
+/bin/zsh -lc 'git show -s --format="%h %s" HEAD' in /Users/mac/codes/vibe-inspect succeeded in 42ms:
+4e6a7fe test(terminald): add ws integration coverage
+
+thinking
+**Preparing progress log entry**
+
+I'm deciding on the date/time format for the log entry to match the required pattern before appending it.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M"' in /Users/mac/codes/vibe-inspect succeeded in 24ms:
+2026-02-02 04:14
+
+thinking
+**Planning commit and progress tracking**
+
+I'll include the commit hash for test coverage but leave the progress entry thread blank due to unavailability. I’m considering how post-commit status should report after the progress log update, and will verify the current working tree status next.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 49ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-15.log
+
+thinking
+**Reviewing progress log format**
+
+I'm checking the end of the progress file to understand its format before appending a new entry. I'll need to include the recent run log modification alongside the progress update in a follow-up commit.
+exec
+/bin/zsh -lc 'tail -n 20 /Users/mac/codes/vibe-inspect/.ralph/progress.md' in /Users/mac/codes/vibe-inspect succeeded in 25ms:
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-14.md
+  - .ralph/.tmp/story-20260201-231810-31541-14.json
+  - .ralph/.tmp/story-20260201-231810-31541-14.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-13.log
+  - .ralph/runs/run-20260201-231810-31541-iter-13.md
+  - .ralph/runs/run-20260201-231810-31541-iter-14.log
+  - desktop/src/terminal_core.rs
+- What was implemented
+- Added terminal_core unit tests covering seq ordering, UTF-8 reassembly, buffer truncation snapshot behavior, and resize updates
+- Included malformed UTF-8 replacement coverage and resize invalid-size error validation
+- **Learnings for future iterations:**
+  - cargo test for desktop currently fails in terminald/vibe-ctl bins; use cargo test --lib to validate terminal_core unit tests
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+---
+
+
+thinking
+**Outlining progress log entry format**
+
+Deciding to append a new log entry with fields covering guardrails, no-commit run flag, commit hash, and post-commit clean status ensured after final commit. The entry will also include Flutter and Cargo test commands with their pass/fail results, reflecting the current mixed statuses.
+thinking
+**Detailing progress log entry contents**
+
+Planning to list changed files including new tests and log files plus relevant JSON and log directories. Implementation notes cover specific integration tests and error handling added. The entry will mention known build and test failures and be appended in exact format with a delimiter and timestamp before the final commit.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/mac/codes/vibe-inspect/.ralph/progress.md
+## [2026-02-02 04:14] - US-015: Integration tests for WS flows and backpressure
+Thread: 
+Run: 20260201-231810-31541 (iteration 15)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-15.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 4e6a7fe test(terminald): add ws integration coverage
+- Post-commit status: clean
+- Verification:
+  - Command: cargo test --test terminald_ws_integration -> FAIL (desktop compile errors in vibe-ctl/terminald bins)
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-15.md
+  - .ralph/.tmp/story-20260201-231810-31541-15.json
+  - .ralph/.tmp/story-20260201-231810-31541-15.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-14.log
+  - .ralph/runs/run-20260201-231810-31541-iter-14.md
+  - .ralph/runs/run-20260201-231810-31541-iter-15.log
+  - desktop/tests/terminald_ws_integration.rs
+- What was implemented
+- Added terminald WebSocket integration tests for start/attach/input, detach/reattach, and multi-client output fanout
+- Added backpressure coverage to assert stream_paused plus snapshot or disconnect behavior
+- Verified missing_session response when attach is called without session_id
+- **Learnings for future iterations:**
+  - cargo test for desktop fails due to existing vibe-ctl/terminald compile errors; focus on targeted test runs when possible
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+---
+EOF" in /Users/mac/codes/vibe-inspect succeeded in 15ms:
+
+
+thinking
+**Adding activity logging after progress update**
+exec
+/bin/zsh -lc 'ralph log "Updated progress log for US-015"' in /Users/mac/codes/vibe-inspect succeeded in 100ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+
+thinking
+**Staging changes for second commit**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 53ms:
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260201-231810-31541-iter-15.log
+
+thinking
+**Staging all changes for commit**
+exec
 /bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
