@@ -2954,7 +2954,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
               authToken: _activeAgent.token,
               clientId: widget.clientId,
               clientName: widget.clientName,
-              agentId: widget.agent.id,
+              agentId: _activeAgent.id,
               initialSession: session,
             ),
           ),
@@ -7622,7 +7622,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         for (final session in terminalSessions) {
           final remote = remoteById.remove(session.id);
           if (remote == null) {
-            if (_isTerminalClosed(session.status.toLowerCase())) {
+            final status = session.status.toLowerCase();
+            if (_isTerminalClosed(status) || !_shouldCloseMissingRemote(status)) {
               merged.add(session);
             } else {
               final closedSession = _sessionWithStatus(session, 'closed');
@@ -8407,6 +8408,16 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     return status == 'closed' ||
         status == 'killed' ||
         status == 'exited';
+  }
+
+  bool _shouldCloseMissingRemote(String status) {
+    switch (status) {
+      case 'running':
+      case 'connected':
+        return true;
+      default:
+        return false;
+    }
   }
 
   void _handleTerminalInput(String sessionId, String data) {
@@ -10667,16 +10678,18 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   VncColorDepth _colorDepth = VncColorDepth.full;
   bool _dataSaverEnabled = false;
   bool _highPerfEnabled = false;
-  int _highPerfIntervalMs = 100;
+  int _highPerfIntervalMs = 10;
   VncViewMode _viewMode = VncViewMode.fit;
   bool _isConnecting = false;
   bool _isResizing = false;
   String? _connectionError;
   Timer? _clickTimer;
   Timer? _focusTimer;
+  Timer? _pinchCommitTimer;
   bool _showFocusPulse = false;
   bool _showClickPulse = false;
   double _swipeDistance = 0;
+  Offset? _lastHoverPosition;
   late DateTime _lastUpdatedAt;
   http.Client? _httpClient;
   AgentCommandClient? _agentClient;
@@ -10686,6 +10699,11 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   RoiSessionInfo? _roiSession;
   StreamSubscription<RoiTilePayload>? _roiSubscription;
   final Map<RoiTileKey, ui.Image> _roiImages = {};
+  final Map<RoiTileKey, ui.Image> _roiPendingImages = {};
+  final Map<RoiTileKey, int> _roiPendingSizes = {};
+  int _roiPendingCount = 0;
+  int _roiPendingBytes = 0;
+  Timer? _roiBatchTimer;
   RoiRenderer? _roiRenderer;
   Timer? _roiRequestTimer;
   Timer? _roiReconnectTimer;
@@ -10774,6 +10792,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool _lastLayoutFullscreen = false;
   bool _pendingPointerReset = false;
   double _scrollAccumulator = 0;
+  double _scrollAccumulatorX = 0;
 
   @override
   void initState() {
@@ -10801,6 +10820,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _isDisposed = true;
     _clickTimer?.cancel();
     _focusTimer?.cancel();
+    _pinchCommitTimer?.cancel();
     _calibrationSaveTimer?.cancel();
     _autoResizeTimer?.cancel();
     _noFrameTimer?.cancel();
@@ -10877,6 +10897,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _roiReconnectTimer = null;
     _roiResyncTimer?.cancel();
     _roiResyncTimer = null;
+    _roiBatchTimer?.cancel();
+    _roiBatchTimer = null;
     _roiPendingResyncSize = null;
     _roiSession = null;
     _roiLastTileAt = null;
@@ -10890,6 +10912,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _roiReconnectAttempts = 0;
     _roiSubscription?.cancel();
     _roiSubscription = null;
+    for (final image in _roiPendingImages.values) {
+      image.dispose();
+    }
+    _roiPendingImages.clear();
+    _roiPendingSizes.clear();
+    _roiPendingCount = 0;
+    _roiPendingBytes = 0;
     for (final image in _roiImages.values) {
       image.dispose();
     }
@@ -11105,6 +11134,79 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
   }
 
+  void _scheduleRoiBatchFlush() {
+    if (_roiBatchTimer != null) {
+      return;
+    }
+    _roiBatchTimer = Timer(const Duration(milliseconds: 16), _flushRoiBatch);
+  }
+
+  void _flushRoiBatch() {
+    _roiBatchTimer = null;
+    if (_roiPendingImages.isEmpty) {
+      return;
+    }
+    if (!mounted || _isDisposed) {
+      for (final image in _roiPendingImages.values) {
+        image.dispose();
+      }
+      _roiPendingImages.clear();
+      _roiPendingSizes.clear();
+      _roiPendingCount = 0;
+      _roiPendingBytes = 0;
+      return;
+    }
+    final pendingImages = Map<RoiTileKey, ui.Image>.from(_roiPendingImages);
+    final pendingCount = _roiPendingCount;
+    final pendingBytes = _roiPendingBytes;
+    _roiPendingImages.clear();
+    _roiPendingSizes.clear();
+    _roiPendingCount = 0;
+    _roiPendingBytes = 0;
+    setState(() {
+      _roiTileCount += pendingCount;
+      _roiTileBytes += pendingBytes;
+      if (_roiTileCount > 1000000) {
+        _roiTileCount = 0;
+        _roiTileBytes = 0;
+      }
+      for (final entry in pendingImages.entries) {
+        _roiImages.remove(entry.key)?.dispose();
+        _roiImages[entry.key] = entry.value;
+      }
+      _roiRevision += 1;
+      _trimRoiCache();
+    });
+  }
+
+  int _roiCacheLimit() {
+    if (_zoom >= 2.0) {
+      return 640;
+    }
+    if (_zoom >= 1.5) {
+      return 480;
+    }
+    if (_zoom >= 1.2) {
+      return 320;
+    }
+    return 256;
+  }
+
+  void _trimRoiCache() {
+    final limit = _roiCacheLimit();
+    if (_roiImages.length <= limit) {
+      return;
+    }
+    final overflow = _roiImages.length - limit;
+    for (var i = 0; i < overflow; i += 1) {
+      if (_roiImages.isEmpty) {
+        break;
+      }
+      final firstKey = _roiImages.keys.first;
+      _roiImages.remove(firstKey)?.dispose();
+    }
+  }
+
   void _handleRoiTile(RoiTilePayload payload) {
     if (!mounted || _isDisposed) {
       return;
@@ -11137,22 +11239,25 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         image.dispose();
         return;
       }
-      setState(() {
-        _roiLastTileAt = receivedAt;
-        _roiTileCount += 1;
-        _roiTileBytes += payload.pixels.length;
-        if (_roiTileCount > 1000000) {
-          _roiTileCount = 0;
-          _roiTileBytes = 0;
+      final key = payload.key;
+      final existing = _roiPendingImages.remove(key);
+      if (existing != null) {
+        existing.dispose();
+        final prevSize = _roiPendingSizes.remove(key) ?? 0;
+        _roiPendingBytes -= prevSize;
+        if (_roiPendingBytes < 0) {
+          _roiPendingBytes = 0;
         }
-        _roiImages.remove(payload.key)?.dispose();
-        _roiImages[payload.key] = image;
-        _roiRevision += 1;
-          if (_roiImages.length > 256) {
-            final firstKey = _roiImages.keys.first;
-            _roiImages.remove(firstKey)?.dispose();
-          }
-        });
+        _roiPendingCount -= 1;
+        if (_roiPendingCount < 0) {
+          _roiPendingCount = 0;
+        }
+      }
+      _roiPendingImages[key] = image;
+      _roiPendingSizes[key] = payload.pixels.length;
+      _roiPendingCount += 1;
+      _roiPendingBytes += payload.pixels.length;
+      _scheduleRoiBatchFlush();
       },
       rowBytes: payload.pixelWidth * 4,
     );
@@ -12240,6 +12345,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _updateZoomValue(value, commit: true);
     if (before != _zoomValue) {
       _requestStreamRefresh(resetAutoResize: true);
+      if (_isFullscreen && _lastLayoutLandscape == true) {
+        _schedulePointerReset();
+      }
     }
   }
 
@@ -12775,9 +12883,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _triggerClickPulse();
   }
 
-  void _sendScrollStep(double direction) {
+  void _sendScrollStep({double dx = 0, double dy = 0}) {
     final client = _vncClient;
     if (client == null || _connectionError != null || _isConnecting) {
+      return;
+    }
+    if (dx == 0 && dy == 0) {
       return;
     }
     _markInputActivity();
@@ -12786,19 +12897,31 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     final maxY = _maxPointerY();
     final x = adjusted.dx.round().clamp(0, maxX).toInt();
     final y = adjusted.dy.round().clamp(0, maxY).toInt();
-    client.sendScroll(x: x, y: y, delta: direction.isNegative ? -1 : 1);
+    final stepX = dx == 0 ? 0 : (dx.isNegative ? -1 : 1);
+    final stepY = dy == 0 ? 0 : (dy.isNegative ? -1 : 1);
+    client.sendScroll(x: x, y: y, deltaX: stepX, deltaY: stepY);
     client.requestIncrementalFrame();
   }
 
   void _handleScrollDelta(Offset delta) {
-    if (delta.dy == 0) {
+    if (delta == Offset.zero) {
       return;
     }
-    _scrollAccumulator += -delta.dy;
-    while (_scrollAccumulator.abs() >= _scrollStep) {
-      final direction = _scrollAccumulator.isNegative ? -1 : 1;
-      _sendScrollStep(direction.toDouble());
-      _scrollAccumulator -= direction * _scrollStep;
+    if (delta.dy != 0) {
+      _scrollAccumulator += -delta.dy;
+      while (_scrollAccumulator.abs() >= _scrollStep) {
+        final direction = _scrollAccumulator.isNegative ? -1 : 1;
+        _sendScrollStep(dy: direction.toDouble());
+        _scrollAccumulator -= direction * _scrollStep;
+      }
+    }
+    if (delta.dx != 0) {
+      _scrollAccumulatorX += -delta.dx;
+      while (_scrollAccumulatorX.abs() >= _scrollStep) {
+        final direction = _scrollAccumulatorX.isNegative ? -1 : 1;
+        _sendScrollStep(dx: direction.toDouble());
+        _scrollAccumulatorX -= direction * _scrollStep;
+      }
     }
   }
 
@@ -12817,6 +12940,19 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     }
     if (event.panDelta != Offset.zero) {
       _handleScrollDelta(event.panDelta);
+    }
+    if (event.scale != 1.0) {
+      final nextZoom = _clampZoom(_zoom * event.scale);
+      if (nextZoom != _zoom) {
+        _updateZoomValue(nextZoom);
+        _pinchCommitTimer?.cancel();
+        _pinchCommitTimer = Timer(const Duration(milliseconds: 160), () {
+          if (!mounted || _isDisposed) {
+            return;
+          }
+          _commitZoomValue(_zoom);
+        });
+      }
     }
   }
 
@@ -12893,6 +13029,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _directDragActive = false;
       _isDragging = false;
       _buttonMask = 0;
+      _scrollAccumulator = 0;
+      _scrollAccumulatorX = 0;
+      _lastHoverPosition = null;
     });
     if (sendPointer && shouldRelease) {
       _sendPointerEvent();
@@ -12920,6 +13059,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (_connectionError != null || _isConnecting) {
       return;
     }
+    _lastHoverPosition = null;
     _activePointers[event.pointer] = event.position;
     if (_activePointers.length == 1) {
       _primaryDownPosition = event.position;
@@ -12936,7 +13076,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     if (!_activePointers.containsKey(event.pointer)) {
-      return;
+      if (_isFullscreen && _lastLayoutLandscape == true && event.kind == PointerDeviceKind.touch) {
+        _activePointers[event.pointer] = event.position;
+        _primaryDownPosition = event.position;
+        _primaryDownTime = DateTime.now();
+        _lastPrimaryPosition = event.position;
+        _lastMultiFingerPosition = null;
+      } else {
+        return;
+      }
     }
     _activePointers[event.pointer] = event.position;
     if (_activePointers.length >= 2) {
@@ -12945,7 +13093,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (last != null) {
         final delta = average - last;
         if (delta.distance != 0) {
-          _handleScrollDelta(Offset(0, delta.dy));
+          _handleScrollDelta(delta);
         }
       }
       _lastMultiFingerPosition = average;
@@ -13006,12 +13154,29 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     } else {
       _lastMultiFingerPosition = _averagePointerPosition();
     }
+    _lastHoverPosition = null;
   }
 
   void _handleTrackpadPointerCancel(PointerCancelEvent event) {
     _activePointers.remove(event.pointer);
     _endDrag();
     _resetPointerTracking();
+    _lastHoverPosition = null;
+  }
+
+  void _handleTrackpadPointerHover(PointerHoverEvent event) {
+    if (_connectionError != null || _isConnecting) {
+      return;
+    }
+    final last = _lastHoverPosition;
+    _lastHoverPosition = event.position;
+    if (last == null) {
+      return;
+    }
+    final delta = event.position - last;
+    if (delta.distance != 0) {
+      _movePointerBy(delta);
+    }
   }
 
   void _sendKeyPress(int keysym) {
@@ -14369,6 +14534,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                           _directInputEnabled ? 'Direct touch enabled' : null,
                       onPointerDown: _handleTrackpadPointerDown,
                       onPointerMove: _handleTrackpadPointerMove,
+                      onPointerHover: _handleTrackpadPointerHover,
                       onPointerUp: _handleTrackpadPointerUp,
                       onPointerCancel: _handleTrackpadPointerCancel,
                       onPointerSignal: _handleTrackpadPointerSignal,
@@ -14529,16 +14695,19 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             if (trackpadEnabled)
               Positioned.fill(
                 child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: trackpadEnabled ? (_) {} : null,
+                  onPanUpdate: trackpadEnabled ? (_) {} : null,
                   onDoubleTap: () {
                     _lastGestureDoubleTapAt = DateTime.now();
                     _sendClick(1);
                   },
                   onSecondaryTap: () => _sendClick(2),
                   child: Listener(
-                    behavior: HitTestBehavior.translucent,
+                    behavior: HitTestBehavior.opaque,
                     onPointerDown: _handleTrackpadPointerDown,
                     onPointerMove: _handleTrackpadPointerMove,
+                    onPointerHover: _handleTrackpadPointerHover,
                     onPointerUp: _handleTrackpadPointerUp,
                     onPointerCancel: _handleTrackpadPointerCancel,
                     onPointerSignal: _handleTrackpadPointerSignal,
@@ -14722,6 +14891,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                                 : null,
                             onPointerDown: _handleTrackpadPointerDown,
                             onPointerMove: _handleTrackpadPointerMove,
+                            onPointerHover: _handleTrackpadPointerHover,
                             onPointerUp: _handleTrackpadPointerUp,
                             onPointerCancel: _handleTrackpadPointerCancel,
                             onPointerSignal: _handleTrackpadPointerSignal,
@@ -14915,29 +15085,29 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
               ),
               SwitchListTile.adaptive(
                 title: const Text('高性能模式'),
-                subtitle: Text('空闲时也每 ${_highPerfIntervalMs}ms 推送一帧'),
+                subtitle: Text('空闲时也保持高帧率（${_highPerfIntervalMs}ms）'),
                 value: _highPerfEnabled,
                 onChanged: isInteractive ? _setHighPerfMode : null,
               ),
               if (_highPerfEnabled)
                 _CalibrationSlider(
-                  label: '高性能采样间隔 (${_highPerfIntervalMs}ms)',
+                  label: '高性能采样间隔 (${_highPerfIntervalMs}ms，越小越快)',
                   value: _highPerfIntervalMs.toDouble(),
-                  min: 10,
-                  max: 100,
-                  divisions: 9,
+                  min: 5,
+                  max: 10,
+                  divisions: 5,
                   enabled: isInteractive,
                   labelColor: glassStyle ? Colors.white70 : null,
                   onChanged: (value) {
                     setState(() {
-                      _highPerfIntervalMs = value.round().clamp(10, 100);
+                      _highPerfIntervalMs = value.round().clamp(5, 10);
                     });
                   },
                   onChangeEnd: (value) {
                     if (!isInteractive || !_highPerfEnabled) {
                       return;
                     }
-                    final next = value.round().clamp(10, 100);
+                    final next = value.round().clamp(5, 10);
                     if (next != _highPerfIntervalMs) {
                       setState(() {
                         _highPerfIntervalMs = next;
@@ -16592,6 +16762,7 @@ class _VncTrackpadSurface extends StatelessWidget {
     this.disabledMessage,
     required this.onPointerDown,
     required this.onPointerMove,
+    required this.onPointerHover,
     required this.onPointerUp,
     required this.onPointerCancel,
     this.onPointerSignal,
@@ -16605,6 +16776,7 @@ class _VncTrackpadSurface extends StatelessWidget {
   final String? disabledMessage;
   final ValueChanged<PointerDownEvent> onPointerDown;
   final ValueChanged<PointerMoveEvent> onPointerMove;
+  final ValueChanged<PointerHoverEvent> onPointerHover;
   final ValueChanged<PointerUpEvent> onPointerUp;
   final ValueChanged<PointerCancelEvent> onPointerCancel;
   final ValueChanged<PointerSignalEvent>? onPointerSignal;
@@ -16632,6 +16804,7 @@ class _VncTrackpadSurface extends StatelessWidget {
       child: Listener(
         onPointerDown: enabled ? onPointerDown : null,
         onPointerMove: enabled ? onPointerMove : null,
+        onPointerHover: enabled ? onPointerHover : null,
         onPointerUp: enabled ? onPointerUp : null,
         onPointerCancel: enabled ? onPointerCancel : null,
         onPointerSignal: enabled ? onPointerSignal : null,

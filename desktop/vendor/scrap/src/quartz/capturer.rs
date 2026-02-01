@@ -28,10 +28,12 @@ impl Capturer {
         handler: F
     ) -> Result<Capturer, CGError> {
         let handler: FrameAvailableHandler =
-            ConcreteBlock::new(move |status, _, surface, _| {
+            ConcreteBlock::new(move |status, _, surface: IOSurfaceRef, _| {
                 use self::CGDisplayStreamFrameStatus::*;
-                if status == FrameComplete {
-                    handler(unsafe { Frame::new(surface) });
+                if status == FrameComplete && !surface.is_null() {
+                    if let Some(frame) = unsafe { Frame::new(surface) } {
+                        handler(frame);
+                    }
                 }
             }).copy();
 

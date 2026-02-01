@@ -7,7 +7,10 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub unsafe fn new(surface: IOSurfaceRef) -> Frame {
+    pub unsafe fn new(surface: IOSurfaceRef) -> Option<Frame> {
+        if surface.is_null() {
+            return None;
+        }
         CFRetain(surface);
         IOSurfaceIncrementUseCount(surface);
 
@@ -17,12 +20,21 @@ impl Frame {
             ptr::null_mut()
         );
 
-        let inner = slice::from_raw_parts(
-            IOSurfaceGetBaseAddress(surface) as *const u8,
-            IOSurfaceGetAllocSize(surface)
-        );
+        let base = IOSurfaceGetBaseAddress(surface) as *const u8;
+        let size = IOSurfaceGetAllocSize(surface);
+        if base.is_null() || size == 0 {
+            IOSurfaceUnlock(
+                surface,
+                SURFACE_LOCK_READ_ONLY,
+                ptr::null_mut()
+            );
+            IOSurfaceDecrementUseCount(surface);
+            CFRelease(surface);
+            return None;
+        }
+        let inner = slice::from_raw_parts(base, size);
 
-        Frame { surface, inner }
+        Some(Frame { surface, inner })
     }
 }
 

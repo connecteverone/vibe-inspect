@@ -86,6 +86,9 @@ class VncRfbClient {
   Uint8List _framebuffer = Uint8List(0);
   List<int> _preferredEncodings = const [];
   int _lastUpdateRequestAtMs = 0;
+  int _framebufferUpdateId = 0;
+  final Map<int, int> _pendingJpegCounts = {};
+  final Map<int, int?> _pendingJpegLatencies = {};
   static const int _outputBytesPerPixel = 4;
 
   static const int _encodingRaw = 0;
@@ -181,10 +184,22 @@ class VncRfbClient {
     _sendBinary(payload);
   }
 
-  void sendScroll({required int x, required int y, required int delta}) {
-    final mask = delta < 0 ? 0x20 : 0x10;
-    sendPointer(x: x, y: y, mask: mask);
-    sendPointer(x: x, y: y, mask: 0);
+  void sendScroll({
+    required int x,
+    required int y,
+    int deltaX = 0,
+    int deltaY = 0,
+  }) {
+    if (deltaY != 0) {
+      final mask = deltaY < 0 ? 0x20 : 0x10;
+      sendPointer(x: x, y: y, mask: mask);
+      sendPointer(x: x, y: y, mask: 0);
+    }
+    if (deltaX != 0) {
+      final mask = deltaX < 0 ? 0x40 : 0x80;
+      sendPointer(x: x, y: y, mask: mask);
+      sendPointer(x: x, y: y, mask: 0);
+    }
   }
 
   void sendText(String text) {
@@ -312,6 +327,8 @@ class VncRfbClient {
         return;
       }
       final rectCount = (_buffer[2] << 8) | _buffer[3];
+      final updateId = ++_framebufferUpdateId;
+      final requestLatency = _computeLatencyMs();
       var offset = 4;
       var updated = false;
       var hasAsyncUpdate = false;
@@ -432,6 +449,8 @@ class VncRfbClient {
             y,
             width,
             height,
+            updateId,
+            requestLatency,
           );
           if (nextOffset == null) {
             return;
@@ -494,14 +513,13 @@ class VncRfbClient {
       }
       _buffer.removeRange(0, offset);
       if (updated && !hasAsyncUpdate) {
-        final latencyMs = _computeLatencyMs();
         onFrame(
           VncFrame(
             width: _width,
             height: _height,
             pixels: _framebuffer,
             format: _format,
-            latencyMs: latencyMs,
+            latencyMs: requestLatency,
           ),
         );
       }
@@ -582,6 +600,8 @@ class VncRfbClient {
     int y,
     int width,
     int height,
+    int updateId,
+    int? requestLatency,
   ) {
     var cursor = offset;
     if (_buffer.length < cursor + 1) {
@@ -622,7 +642,8 @@ class VncRfbClient {
         _buffer.sublist(cursor, cursor + lengthResult.length),
       );
       cursor += lengthResult.length;
-      _decodeTightJpegRect(jpegData, x, y, width, height);
+      _registerPendingJpeg(updateId, requestLatency);
+      _decodeTightJpegRect(jpegData, x, y, width, height, updateId);
       return _TightDecodeResult(cursor, true);
     }
 
@@ -783,14 +804,16 @@ class VncRfbClient {
     int y,
     int width,
     int height,
+    int updateId,
   ) {
     if (_closed) {
+      _completePendingJpeg(updateId);
       return;
     }
-    final requestLatency = _computeLatencyMs();
     ui.decodeImageFromList(jpegData, (image) async {
       if (_closed) {
         image.dispose();
+        _completePendingJpeg(updateId);
         return;
       }
       final byteData = await image.toByteData(
@@ -798,6 +821,7 @@ class VncRfbClient {
       );
       if (byteData == null) {
         image.dispose();
+        _completePendingJpeg(updateId);
         return;
       }
       final rgba = byteData.buffer.asUint8List();
@@ -825,17 +849,39 @@ class VncRfbClient {
         height,
         inputBytesPerPixel: _outputBytesPerPixel,
       );
+      _completePendingJpeg(updateId);
+      image.dispose();
+    });
+  }
+
+  void _registerPendingJpeg(int updateId, int? requestLatency) {
+    final count = _pendingJpegCounts[updateId] ?? 0;
+    _pendingJpegCounts[updateId] = count + 1;
+    _pendingJpegLatencies.putIfAbsent(updateId, () => requestLatency);
+  }
+
+  void _completePendingJpeg(int updateId) {
+    final count = _pendingJpegCounts[updateId];
+    if (count == null) {
+      return;
+    }
+    if (count > 1) {
+      _pendingJpegCounts[updateId] = count - 1;
+      return;
+    }
+    _pendingJpegCounts.remove(updateId);
+    final latency = _pendingJpegLatencies.remove(updateId);
+    if (!_closed) {
       onFrame(
         VncFrame(
           width: _width,
           height: _height,
           pixels: _framebuffer,
           format: _format,
-          latencyMs: requestLatency,
+          latencyMs: latency,
         ),
       );
-      image.dispose();
-    });
+    }
   }
 
   Uint8List _decodeZrleRect(Uint8List data, int width, int height) {

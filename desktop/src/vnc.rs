@@ -22,9 +22,9 @@ const VNC_NAME: &str = "Vibe Inspect Agent";
 const MAX_FRAME_RATE_MS: u64 = 33;
 const DEFAULT_IDLE_FRAME_RATE_MS: u64 = 120;
 const DEFAULT_KEEPALIVE_MS: u64 = 250;
-const DEFAULT_HIGH_PERF_FRAME_INTERVAL_MS: u64 = 100;
-const HIGH_PERF_INTERVAL_MIN_MS: u64 = 10;
-const HIGH_PERF_INTERVAL_MAX_MS: u64 = 100;
+const DEFAULT_HIGH_PERF_FRAME_INTERVAL_MS: u64 = 10;
+const HIGH_PERF_INTERVAL_MIN_MS: u64 = 5;
+const HIGH_PERF_INTERVAL_MAX_MS: u64 = 10;
 const ACTIVE_INPUT_WINDOW_MS: u64 = 250;
 const VNC_IDLE_POLL_MS: u64 = 5;
 const ENCODING_RAW: i32 = 0;
@@ -471,7 +471,7 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     let running = Arc::new(AtomicBool::new(true));
     let copyrect_supported = Arc::new(AtomicBool::new(false));
     let cursor_supported = Arc::new(AtomicBool::new(false));
-    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(2);
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(4);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
     let last_input_at = Arc::new(AtomicU64::new(current_millis()));
     let data_saver_enabled = Arc::new(AtomicBool::new(false));
@@ -1757,6 +1757,7 @@ fn spawn_capture_thread(
             .checked_sub(active_interval)
             .unwrap_or_else(Instant::now);
         let mut last_sent = Instant::now();
+        let mut send_backoff = Duration::from_millis(0);
         loop {
             if !running.load(Ordering::SeqCst)
                 || guard.load(Ordering::SeqCst) != generation
@@ -1767,11 +1768,16 @@ fn spawn_capture_thread(
                 thread::sleep(idle_poll);
                 continue;
             }
+            if send_backoff > Duration::from_millis(0) {
+                thread::sleep(send_backoff);
+                send_backoff = Duration::from_millis(0);
+                continue;
+            }
             let input_age = current_millis()
                 .saturating_sub(last_input_at.load(Ordering::Relaxed));
             let high_perf = high_perf_enabled.load(Ordering::Relaxed);
             let frame_interval = if high_perf {
-                high_perf_interval
+                high_perf_interval.min(active_interval)
             } else if input_age <= ACTIVE_INPUT_WINDOW_MS {
                 active_interval
             } else if data_saver_enabled.load(Ordering::Relaxed) {
@@ -1785,8 +1791,6 @@ fn spawn_capture_thread(
                 continue;
             }
             last_capture = Instant::now();
-            let mut sent_update = false;
-
             #[cfg(target_os = "macos")]
             if cursor_supported.load(Ordering::Relaxed) {
                 if let Some(cursor) = capture_cursor() {
@@ -1852,33 +1856,35 @@ fn spawn_capture_thread(
                 if let Some(update) = update {
                     if sender.try_send(update).is_ok() {
                         last_sent = Instant::now();
-                        sent_update = true;
+                        send_backoff = Duration::from_millis(0);
+                    } else if sender.is_closed() {
+                        break;
+                    } else {
+                        send_backoff = if send_backoff == Duration::from_millis(0) {
+                            Duration::from_millis(2)
+                        } else {
+                            (send_backoff + Duration::from_millis(2))
+                                .min(Duration::from_millis(12))
+                        };
                     }
-                } else if !high_perf && last_sent.elapsed() >= keepalive_interval {
+                } else if last_sent.elapsed() >= keepalive_interval {
                     if sender.try_send(Vec::new()).is_ok() {
                         last_sent = Instant::now();
-                        sent_update = true;
+                        send_backoff = Duration::from_millis(0);
+                    } else if sender.is_closed() {
+                        break;
+                    } else {
+                        send_backoff = if send_backoff == Duration::from_millis(0) {
+                            Duration::from_millis(2)
+                        } else {
+                            (send_backoff + Duration::from_millis(2))
+                                .min(Duration::from_millis(12))
+                        };
                     }
                 }
             } else if vnc_debug_enabled() && last_success.elapsed() > Duration::from_secs(5) {
                 last_success = Instant::now();
                 vnc_log("vnc capture stalled: no frames ready");
-            }
-
-            if !sent_update
-                && high_perf_enabled.load(Ordering::Relaxed)
-                && last_sent.elapsed() >= high_perf_interval
-            {
-                if let Some(frame) = last_frame.as_ref() {
-                    let update = build_full_update(
-                        frame,
-                        session.width as usize,
-                        session.height as usize,
-                    );
-                    if sender.try_send(update).is_ok() {
-                        last_sent = Instant::now();
-                    }
-                }
             }
         }
     })
@@ -2072,6 +2078,12 @@ fn handle_pointer_event(
     }
     if mask & 0b0010_0000 != 0 {
         enigo.mouse_scroll_y(-40);
+    }
+    if mask & 0b0100_0000 != 0 {
+        enigo.mouse_scroll_x(-40);
+    }
+    if mask & 0b1000_0000 != 0 {
+        enigo.mouse_scroll_x(40);
     }
 
     *last_buttons = mask;
