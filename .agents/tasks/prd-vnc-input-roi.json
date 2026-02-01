@@ -112,7 +112,7 @@
     {
       "id": "US-002",
       "title": "Add fullscreen More menu with keyboard + debug toggle",
-      "status": "open",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -124,7 +124,10 @@
         "Keyboard input opens a text entry UI and sends text to the remote session",
         "Example: In fullscreen landscape, tapping More -> Keyboard, sending 'hello' emits a VNC text send",
         "Negative case: Entering fullscreen without toggling debug must not show the debug panel"
-      ]
+      ],
+      "updatedAt": "2026-02-01T06:49:24.953105+00:00",
+      "completedAt": "2026-02-01T06:49:24.953393+00:00",
+      "startedAt": "2026-02-01T06:49:24.953395+00:00"
     },
     {
       "id": "US-003",

@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "project": "Terminal Daemon + vibe-ctl",
+  "overview": "Implement a dedicated terminal daemon (terminald) with a WebSocket-first protocol, plus a tmux-like CLI (vibe-ctl) and a desktop agent proxy that preserves existing desktop/mobile payload compatibility. Sessions must survive desktop agent restarts and follow the protocol and limits defined in docs/terminal_daemon_plan.md.",
+  "goals": [
+    "Terminal sessions survive desktop agent restarts by moving PTY ownership to terminald",
+    "Provide a WebSocket protocol that matches the specified envelope, actions, events, and compatibility payload",
+    "Deliver a tmux-like CLI (vibe-ctl) for listing, attaching, sending input, resizing, renaming, and stopping sessions",
+    "Maintain existing payload schema compatibility for desktop/mobile UIs",
+    "Cross-platform support for macOS, Windows, and Linux"
+  ],
+  "nonGoals": [
+    "Multi-pane terminal support",
+    "Remote (non-localhost) terminald access by default",
+    "Recording/replay or long-term output persistence",
+    "UI redesigns beyond optional warning/status surfaces",
+    "Multi-user access control beyond single token auth"
+  ],
+  "successMetrics": [
+    "Sessions remain active after desktop agent restart (verified by attach and output continuity)",
+    "Existing desktop/mobile terminal views render output correctly without schema changes",
+    "Median stream update latency < 100ms and p95 < 250ms under moderate load",
+    "Sustains 5 MB/s aggregated output with deterministic truncation recovery",
+    "No unbounded memory growth over 24h with idle sessions at max limits"
+  ],
+  "openQuestions": [],
+  "stack": {
+    "framework": "Rust (desktop crate with new terminald and vibe-ctl binaries)",
+    "hosting": "Local daemon on localhost WebSocket (optional UDS where supported)",
+    "database": "None (JSON file for session summaries)",
+    "auth": "Token-based auth via discovery file with localhost-only binding"
+  },
+  "routes": [
+    {
+      "path": "ws://127.0.0.1:7078/ws",
+      "name": "terminald WebSocket",
+      "purpose": "Control + streaming (req/res + events)"
+    },
+    {
+      "path": "terminald.json (OS config dir)",
+      "name": "Discovery file",
+      "purpose": "Endpoint/token discovery for CLI and agent"
+    }
+  ],
+  "uiNotes": [
+    "Keep existing terminal payload schema unchanged for desktop/mobile",
+    "If warnings are surfaced in UI, follow the plan\u2019s banner/toast/status-pill guidance and a11y notes",
+    "Do not block input when showing session warnings or stream pause indicators"
+  ],
+  "dataModel": [
+    {
+      "entity": "TerminalSession",
+      "fields": [
+        "id",
+        "label",
+        "status",
+        "created_at",
+        "last_activity",
+        "exit_code",
+        "buffer_bytes",
+        "next_seq",
+        "notification_next_seq"
+      ]
+    },
+    {
+      "entity": "TerminalOutputChunk",
+      "fields": [
+        "seq",
+        "data",
+        "ts"
+      ]
+    },
+    {
+      "entity": "TerminalNotification",
+      "fields": [
+        "id",
+        "session_id",
+        "message",
+        "level",
+        "created_at",
+        "source",
+        "seq"
+      ]
+    },
+    {
+      "entity": "DiscoveryFile",
+      "fields": [
+        "ws_url",
+        "token",
+        "version",
+        "pid",
+        "created_at",
+        "capabilities"
+      ]
+    },
+    {
+      "entity": "SessionSummary",
+      "fields": [
+        "id",
+        "label",
+        "status",
+        "created_at",
+        "last_activity"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Not applicable. Clients discover endpoint/token via discovery file or VIBE_CTL_* env overrides.",
+    "example": {}
+  },
+  "rules": [
+    "Auth request must be received within 3 seconds; otherwise return auth error and close",
+    "Reject non-localhost connections by default",
+    "Protocol uses semantic versioning; major mismatch must fail",
+    "Session-scoped actions require session_id in the envelope",
+    "Output seq is strictly monotonic per session; truncation must include snapshot",
+    "If payload exceeds limits, emit session_warning and follow truncation/close rules",
+    "Backpressure triggers stream_paused, then snapshot, then stream_resumed or disconnect",
+    "Unknown fields in requests/events must be ignored for forward compatibility"
+  ],
+  "qualityGates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze",
+    "./scripts/flutter_test.sh",
+    "./scripts/flutter_analyze.sh"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold terminald + vibe-ctl binaries and shared terminal_core module",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a developer, I want dedicated binaries and a shared module so daemon/CLI/agent can reuse terminal logic without duplicating code.",
+      "acceptanceCriteria": [
+        "Add `desktop/src/bin/terminald.rs` and `desktop/src/bin/vibe-ctl.rs` with minimal main functions and argument parsing hooks",
+        "Add `desktop/src/terminal_core.rs` and export it from the desktop crate without changing existing desktop runtime behavior",
+        "Install CLI deps: `cargo add clap --features derive`, `cargo add tokio-tungstenite`, `cargo add crossterm`",
+        "Example: `cargo run --bin vibe-ctl -- --help` prints usage and exits 0",
+        "Negative: `cargo run --bin vibe-ctl -- unknown` exits non-zero and prints a helpful error"
+      ],
+      "startedAt": "2026-02-01T15:18:10.101326+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T15:18:10.101477+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Extract terminal session core into terminal_core",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a developer, I want session lifecycle, buffering, and payload building centralized so both terminald and the desktop agent use identical logic.",
+      "acceptanceCriteria": [
+        "Move PTY lifecycle, buffer management, vt100 parsing, and payload building from `desktop/src/terminal.rs` into `terminal_core`",
+        "Desktop agent code uses terminal_core functions and preserves payload schema compatibility",
+        "Example: existing desktop terminal start/poll responses match the current payload fields and values",
+        "Negative: missing session_id in a session-scoped call returns `missing_session` error"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Discovery file creation and config overrides",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a client, I want a discovery file to locate terminald and authenticate without manual configuration.",
+      "acceptanceCriteria": [
+        "terminald writes a discovery file at OS config dir with fields ws_url, token, version, pid, created_at, capabilities",
+        "Discovery file write is atomic and file permissions are user-only",
+        "CLI honors overrides: `VIBE_CTL_ENDPOINT`, `VIBE_CTL_TOKEN`, `VIBE_CTL_CONFIG`",
+        "Example: setting `VIBE_CTL_CONFIG` to a temp file allows vibe-ctl to connect using that endpoint",
+        "Negative: unreadable config path returns `connection_failed` without crashing"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "terminald WebSocket server + auth handshake",
+      "status": "open",
+      "dependsOn": [
+        "US-003"
+      ],
+      "description": "As a client, I want a stable WebSocket server that authenticates and advertises server capabilities before I send commands.",
+      "acceptanceCriteria": [
+        "terminald listens on localhost (default ws://127.0.0.1:7078/ws) and rejects non-localhost connections",
+        "Server requires `auth` within 3 seconds and responds with server_info (version, server_time, capabilities)",
+        "Major protocol version mismatch returns an error and closes the socket",
+        "Example: valid token yields `ok: true` auth response with server_info",
+        "Negative: missing or invalid token yields `invalid_auth` and connection close"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Implement list/start/stop/rename/resize/keepalive actions",
+      "status": "open",
+      "dependsOn": [
+        "US-002",
+        "US-004"
+      ],
+      "description": "As a client, I want core session management actions so I can create and manage terminal sessions via terminald.",
+      "acceptanceCriteria": [
+        "Implement `list`, `start`, `stop`, `rename`, `resize`, and `keepalive` actions per the protocol",
+        "`start` returns session_id and initial terminal_payload; `list` returns session summaries",
+        "`rename` and `resize` are idempotent when unchanged",
+        "Example: `start` with label \"\" and default size returns a running session with auto-generated label",
+        "Negative: `resize` with cols < 10 or rows < 4 returns `invalid_size`"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Attach/poll/input streaming + compatibility payloads",
+      "status": "open",
+      "dependsOn": [
+        "US-005"
+      ],
+      "description": "As a client, I want attach/poll/input so I can stream output and send input while keeping payload compatibility.",
+      "acceptanceCriteria": [
+        "Implement `attach`, `detach`, `poll`, and `input` actions with the specified envelope",
+        "Attach adds a subscription and immediately emits a terminal_payload event with output since `since`",
+        "`poll` returns terminal_payload with output since `since` and notifications since `notify_since`",
+        "Example: `input` of \"ls -la\\n\" results in output chunks with incremented seq",
+        "Negative: providing both `data` and `data_b64` yields `invalid_request`"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Sequencing, truncation, snapshot, and session_warning",
+      "status": "open",
+      "dependsOn": [
+        "US-006"
+      ],
+      "description": "As a client, I need deterministic sequencing and truncation recovery so output remains consistent under high volume.",
+      "acceptanceCriteria": [
+        "Output seq is strictly monotonic per session; next_seq equals last delivered + 1",
+        "When buffer is truncated, responses/events set `truncated: true` and include `snapshot`",
+        "Emit `session_warning` with reason `buffer_truncated` when truncation occurs",
+        "Example: writing > 512 KB to a session yields `truncated: true` with a snapshot on next poll",
+        "Negative: if snapshot alone exceeds max payload, emit `payload_too_large` warning and close connection"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Backpressure handling + stream pause/resume + subscription limits",
+      "status": "open",
+      "dependsOn": [
+        "US-006"
+      ],
+      "description": "As a server, I need bounded queues and backpressure so slow consumers do not cause memory growth.",
+      "acceptanceCriteria": [
+        "Per-connection send queue is bounded by bytes; exceeding triggers `stream_paused`",
+        "On backpressure, drop intermediate payloads and send a snapshot with `truncated: true`",
+        "Emit `stream_resumed` when queue falls below low-water mark",
+        "Example: a slow client triggers `stream_paused` and later receives a snapshot before resuming",
+        "Negative: attaching more than 4 sessions on one socket returns `state_locked`"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Session summary persistence and idle cleanup",
+      "status": "open",
+      "dependsOn": [
+        "US-005"
+      ],
+      "description": "As a client, I want session summaries persisted so I can list sessions after daemon restart.",
+      "acceptanceCriteria": [
+        "Persist session summaries to JSON with atomic write (tmp + fsync + rename)",
+        "On startup, load summaries and mark stale entries as exited",
+        "Idle sessions are cleaned after the configured TTL, with warning lead time",
+        "Example: restart terminald and `list` shows previous sessions with status exited",
+        "Negative: corrupted summaries file is ignored with a warning and does not crash"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Desktop agent proxy to terminald",
+      "status": "open",
+      "dependsOn": [
+        "US-006",
+        "US-003"
+      ],
+      "description": "As a mobile/desktop client, I want the desktop agent to proxy terminald while keeping existing payload schemas intact.",
+      "acceptanceCriteria": [
+        "Desktop agent no longer owns PTY; it uses a terminald WS client for start/poll/input/resize/rename/stop",
+        "Proxy preserves existing payload shape for mobile/desktop UI compatibility",
+        "Agent can auto-start terminald when unreachable (configurable)",
+        "Example: start a session via mobile, restart desktop agent, and attach continues with same session_id",
+        "Negative: if terminald is unreachable, agent returns `connection_failed`"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "vibe-ctl CLI core commands",
+      "status": "open",
+      "dependsOn": [
+        "US-003",
+        "US-004"
+      ],
+      "description": "As a user, I want a tmux-like CLI to list and manage sessions without attaching.",
+      "acceptanceCriteria": [
+        "Implement commands: `ls`, `new`, `send`, `resize`, `rename`, `stop` with documented flags",
+        "Global overrides: `--endpoint`, `--token`, `--config`, and `--json` for `ls`",
+        "`new` supports name/cwd/cols/rows/env; `send` supports `--file`",
+        "Example: `vibe-ctl ls --json` prints machine-readable JSON and exits 0",
+        "Negative: `vibe-ctl new --cols 5` returns `invalid_size` and exits non-zero"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "vibe-ctl attach raw mode and detach key",
+      "status": "open",
+      "dependsOn": [
+        "US-011",
+        "US-006"
+      ],
+      "description": "As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.",
+      "acceptanceCriteria": [
+        "Attach enters raw mode, streams output, forwards keystrokes as `input`",
+        "Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY",
+        "Handle SIGWINCH to send resize events automatically",
+        "Example: attach, type commands, then detach and return to shell prompt without corruption",
+        "Negative: `--read-only` prevents input from being sent to the session"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Observability + vibe-ctl debug",
+      "status": "open",
+      "dependsOn": [
+        "US-004"
+      ],
+      "description": "As an operator, I want basic logs and metrics to diagnose terminald behavior.",
+      "acceptanceCriteria": [
+        "Add structured logs for session lifecycle events (start/stop/exit/error)",
+        "Expose metrics counters (active_sessions, active_connections, dropped_chunks_total, ws_backpressure_events_total)",
+        "Implement `vibe-ctl debug` to print server_info and current metrics",
+        "Example: `vibe-ctl debug` prints server version and active session count",
+        "Negative: debug without auth returns `auth_required`"
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "terminal_core unit tests",
+      "status": "open",
+      "dependsOn": [
+        "US-002"
+      ],
+      "description": "As a developer, I want unit tests to validate buffering, sequencing, UTF-8 handling, and resizing.",
+      "acceptanceCriteria": [
+        "Add unit tests for buffer truncation, seq ordering, UTF-8 chunk reassembly, and resize behavior",
+        "Tests run in the desktop crate\u2019s test suite",
+        "Example: writing > 512 KB triggers truncated=true and snapshot present in payload",
+        "Negative: malformed UTF-8 across chunks does not panic and produces replacement characters"
+      ]
+    },
+    {
+      "id": "US-015",
+      "title": "Integration tests for WS flows and backpressure",
+      "status": "open",
+      "dependsOn": [
+        "US-006",
+        "US-008"
+      ],
+      "description": "As a developer, I want integration tests for start/attach/detach and backpressure behavior.",
+      "acceptanceCriteria": [
+        "Add integration tests covering start->attach->input->output echo, detach->reattach, and multi-attach",
+        "Add backpressure test that triggers snapshot or disconnect deterministically",
+        "Example: two clients attached to the same session both receive output",
+        "Negative: calling attach without session_id returns `missing_session`"
+      ]
+    },
+    {
+      "id": "US-016",
+      "title": "Documentation updates and manual test checklist",
+      "status": "open",
+      "dependsOn": [
+        "US-010",
+        "US-011"
+      ],
+      "description": "As a user, I want accurate docs for discovery, CLI usage, and manual validation steps.",
+      "acceptanceCriteria": [
+        "Update docs to include discovery file schema, env overrides, and CLI examples",
+        "Add manual test checklist for desktop agent restart and mobile compatibility",
+        "Example: docs show `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40`",
+        "Negative: docs must explicitly state localhost-only binding by default"
+      ]
+    }
+  ]
+}

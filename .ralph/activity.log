@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-01 14:49:24 | run=20260201-135030-22863 | iter=2 | mode=build | story=US-002 | duration=2774s | status=success
 - 2026-02-01 14:03:08 | run=20260201-135030-22863 | iter=1 | mode=build | story=US-001 | duration=758s | status=success
 - 2026-02-01 03:05:39 | run=20260131-221506-98331 | iter=11 | mode=build | story=US-010 | duration=2147s | status=success
 - 2026-02-01 02:29:50 | run=20260131-221506-98331 | iter=10 | mode=build | story=US-009 | duration=1209s | status=success
@@ -285,3 +286,8 @@
 [2026-02-01 14:15:51] Implemented fullscreen More menu button updates and debug toggle
 [2026-02-01 14:39:48] Completed tests and browser UI verification
 [2026-02-01 14:45:45] Updated progress log
+[2026-02-01 14:49:24] ITERATION 2 end (duration=2774s)
+[2026-02-01 23:18:10] ITERATION 1 start (mode=build story=US-001)
+[2026-02-01 23:19:02] Start US-001 scaffold terminald + vibe-ctl binaries
+[2026-02-01 23:22:10] Added terminal_core module and terminald/vibe-ctl binaries
+[2026-02-01 23:23:35] Ran verification (flutter test/analyze, flutter scripts, vibe-ctl checks)
