@@ -130,6 +130,7 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
                     session_id: payload.session_id.clone(),
                     label: payload.label.clone(),
                     input: resolve_terminal_input(&payload),
+                    input_bytes: None,
                     cols: payload.cols,
                     rows: payload.rows,
                     since: payload.since,

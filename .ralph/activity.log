@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-02 00:35:56 | run=20260201-231810-31541 | iter=5 | mode=build | story=US-005 | duration=878s | status=success
 - 2026-02-02 00:21:16 | run=20260201-231810-31541 | iter=4 | mode=build | story=US-004 | duration=887s | status=success
 - 2026-02-02 00:06:27 | run=20260201-231810-31541 | iter=3 | mode=build | story=US-003 | duration=909s | status=success
 - 2026-02-01 23:51:16 | run=20260201-231810-31541 | iter=2 | mode=build | story=US-002 | duration=1265s | status=success
@@ -321,3 +322,8 @@
 [2026-02-02 00:27:49] Implemented terminald request handling and size/idempotency validation
 [2026-02-02 00:29:02] Completed required verification commands (flutter test/analyze + scripts)
 [2026-02-02 00:33:26] Updated progress log for US-005
+[2026-02-02 00:35:56] ITERATION 5 end (duration=878s)
+[2026-02-02 00:35:58] ITERATION 6 start (mode=build story=US-006)
+[2026-02-02 00:41:41] US-006 start: implementing attach/poll/input streaming + compatibility payloads
+[2026-02-02 00:47:59] US-006: implemented attach/detach/poll/input handling with streaming subscriptions and base64 input support
+[2026-02-02 00:48:36] US-006: ran flutter tests/analyze (analyze failed on known third_party/flutter_quic build_tool deps)

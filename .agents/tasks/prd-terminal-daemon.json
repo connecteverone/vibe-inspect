@@ -201,7 +201,7 @@
     {
       "id": "US-005",
       "title": "Implement list/start/stop/rename/resize/keepalive actions",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-002",
         "US-004"
@@ -215,13 +215,13 @@
         "Negative: `resize` with cols < 10 or rows < 4 returns `invalid_size`"
       ],
       "startedAt": "2026-02-01T16:21:18.295240+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T16:21:18.295371+00:00"
+      "completedAt": "2026-02-01T16:35:56.770109+00:00",
+      "updatedAt": "2026-02-01T16:35:56.770016+00:00"
     },
     {
       "id": "US-006",
       "title": "Attach/poll/input streaming + compatibility payloads",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-005"
       ],
@@ -232,7 +232,10 @@
         "`poll` returns terminal_payload with output since `since` and notifications since `notify_since`",
         "Example: `input` of \"ls -la\\n\" results in output chunks with incremented seq",
         "Negative: providing both `data` and `data_b64` yields `invalid_request`"
-      ]
+      ],
+      "startedAt": "2026-02-01T16:35:58.868424+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T16:35:58.868537+00:00"
     },
     {
       "id": "US-007",

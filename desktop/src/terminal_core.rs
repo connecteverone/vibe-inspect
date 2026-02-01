@@ -415,6 +415,7 @@ pub struct TerminalActionRequest {
     pub session_id: Option<String>,
     pub label: Option<String>,
     pub input: Option<String>,
+    pub input_bytes: Option<Vec<u8>>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub since: Option<u64>,
@@ -799,6 +800,7 @@ async fn run_terminal_stream(
                                         session_id: Some(session_id.clone()),
                                         label: None,
                                         input: Some(input.to_string()),
+                                        input_bytes: None,
                                         cols: None,
                                         rows: None,
                                         since: None,
@@ -819,6 +821,7 @@ async fn run_terminal_stream(
                                         session_id: Some(session_id.clone()),
                                         label: None,
                                         input: None,
+                                        input_bytes: None,
                                         cols,
                                         rows,
                                         since: None,
@@ -836,6 +839,7 @@ async fn run_terminal_stream(
                                     session_id: Some(session_id.clone()),
                                     label: None,
                                     input: None,
+                                    input_bytes: None,
                                     cols: None,
                                     rows: None,
                                     since: None,
@@ -852,6 +856,7 @@ async fn run_terminal_stream(
                                     session_id: Some(session_id.clone()),
                                     label: None,
                                     input: None,
+                                    input_bytes: None,
                                     cols: None,
                                     rows: None,
                                     since: None,
@@ -1054,9 +1059,22 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
 
 fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
     let session_id = required_session_id(request.session_id)?;
-    let input = request
-        .input
-        .ok_or_else(|| TerminalError::new("missing_input", "Missing terminal input."))?;
+    let input_bytes = match (request.input, request.input_bytes) {
+        (Some(input), None) => input.into_bytes(),
+        (None, Some(bytes)) => bytes,
+        (Some(_), Some(_)) => {
+            return Err(TerminalError::new(
+                "invalid_request",
+                "Provide either data or data_b64, not both.",
+            ))
+        }
+        (None, None) => {
+            return Err(TerminalError::new(
+                "missing_input",
+                "Missing terminal input.",
+            ))
+        }
+    };
     let manager = terminal_manager();
     let session = {
         let manager = manager
@@ -1077,7 +1095,7 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
     }
     session
         .writer
-        .write_all(input.as_bytes())
+        .write_all(&input_bytes)
         .map_err(|error| TerminalError::new("write_failed", error.to_string()))?;
     session
         .writer
