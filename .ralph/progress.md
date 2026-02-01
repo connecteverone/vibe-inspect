@@ -1457,3 +1457,36 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
   - Useful context: auto-start uses VIBE_TERMINALD_AUTOSTART and VIBE_TERMINALD_BIN overrides.
 ---
+## [2026-02-02 02:58:05] - US-011: vibe-ctl CLI core commands
+Thread: 
+Run: 20260201-231810-31541 (iteration 11)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-11.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-11.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: b7c4fbd feat(cli): implement vibe-ctl core commands
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-11.md
+  - .ralph/.tmp/story-20260201-231810-31541-11.json
+  - .ralph/.tmp/story-20260201-231810-31541-11.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260201-231810-31541-iter-10.log
+  - .ralph/runs/run-20260201-231810-31541-iter-10.md
+  - .ralph/runs/run-20260201-231810-31541-iter-11.log
+  - desktop/src/bin/vibe-ctl.rs
+- What was implemented
+- Added vibe-ctl subcommands (ls/new/send/resize/rename/stop) with CLI flags, JSON list output, and session id printing
+- Implemented terminald WS auth + request handling with config overrides and autostart retry
+- Added file-backed input payloads and env parsing for new sessions
+- **Learnings for future iterations:**
+  - Flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; treat as known external issue
+  - Use VIBE_CTL_* overrides and discovery file parsing for CLI configuration
+---
