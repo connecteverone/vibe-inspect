@@ -374,7 +374,7 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260128-012433-59985
 - Guardrails reviewed: yes
 - No-commit run: false
 - Commit: cd572e6 feat(command-bar): add intent parsing and routing
-- Post-commit status: clean
+- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-14.log (updated by tool logging)
 - Verification:
   - Command: cd mobile && flutter test -> PASS
   - Command: cd mobile && flutter analyze -> PASS
