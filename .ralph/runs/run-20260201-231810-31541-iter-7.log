@@ -38464,4 +38464,4084 @@ thinking
 
 I'm staging the updated run log file and preparing a concise commit message to ensure all changes, including logs, are properly committed before proceeding.
 exec
-/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.log' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.log' in /Users/mac/codes/vibe-inspect succeeded in 41ms:
+
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+thinking
+**Committing changes**
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): update run log"' in /Users/mac/codes/vibe-inspect succeeded in 51ms:
+[main b0bdf53] chore(ralph): update run log
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 2555 insertions(+), 1 deletion(-)
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+thinking
+**Checking git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 53ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-7.log
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+
+
+thinking
+**Analyzing run log auto-updates**
+
+I confirmed the run log updates with every command, causing repeated log modifications that complicate verifying a clean git state after commit. This suggests avoiding commands post-commit except essential ones, but even those might alter the log, so I'll need a strategy to handle this auto-updating log issue.
+thinking
+**Mapping run log update and commit sequencing**
+
+I've mapped how each command—including `git show` and `git status`—triggers run log updates, complicating keeping a clean working tree after final commit. To address this, all necessary commands and progress log updates must happen before the final commit that includes the run log, then no further tool calls should run to preserve cleanliness.
+thinking
+**Planning progress log update and final commit sequencing**
+
+I'm preparing to append the progress entry referencing the main code commit while acknowledging multiple commits exist, then stage and commit both progress log and run log updates together. I'll run necessary commands (including date and git show) before the final commit to minimize run log changes afterward and aim for a clean working tree at the end.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M:%S"' in /Users/mac/codes/vibe-inspect succeeded in 21ms:
+2026-02-02 01:21:20
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+
+thinking
+**Deciding progress entry details**
+
+I'm settling on referencing the main code commit only for the progress entry and planning to record the post-commit clean status after the final commit, updating the progress log accordingly.
+thinking
+**Planning detailed progress log entry**
+
+I'm outlining a comprehensive progress entry including verification commands with pass/fail, changed files list, a summary of implemented features, and learnings, plus noting the timing and formatting for appending to progress.md after reviewing its current format.
+exec
+/bin/zsh -lc 'tail -n 40 /Users/mac/codes/vibe-inspect/.ralph/progress.md' in /Users/mac/codes/vibe-inspect succeeded in 26ms:
+  - Patterns discovered
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies
+  - Useful context
+---
+## [2026-02-02 00:52] - US-006: Attach/poll/input streaming + compatibility payloads
+Thread: 
+Run: 20260201-231810-31541 (iteration 6)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-6.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-6.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: cafd50f feat(terminald): add attach poll input
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+
+thinking
+**Establishing progress log format**
+
+The progress log will use hyphen bullets and append new entries after the last separator, including the current date/time and run details for consistency.
+thinking
+**Drafting detailed progress log entry**
+
+I'm preparing a comprehensive log entry including run identifiers, commands tested with results, file changes, implemented features, and key learnings; I'll mention the run summary path as instructed despite the file's absence and omit the screenshot since it was removed by cleanup.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/mac/codes/vibe-inspect/.ralph/progress.md
+## [2026-02-02 01:21] - US-007: Sequencing, truncation, snapshot, and session_warning
+Thread: 
+Run: 20260201-231810-31541 (iteration 7)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ef87a96 feat(terminal): enforce seq and truncation warnings
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm/loader warnings)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-6.log
+  - .ralph/runs/run-20260201-231810-31541-iter-6.md
+  - .ralph/runs/run-20260201-231810-31541-iter-7.log
+  - desktop/frontend/index.html
+  - desktop/src/bin/terminald.rs
+  - desktop/src/terminal_core.rs
+  - mobile/lib/main.dart
+- What was implemented
+  - Adjusted terminal_core payloads to report next_seq as next expected and updated stream tracking.
+  - Added buffer_truncated/payload_too_large session_warning events and snapshot size guard in terminald streams/polls.
+  - Updated mobile + desktop web polling to request since = next_seq - 1 and keep gap detection consistent.
+- **Learnings for future iterations:**
+  - Patterns discovered: track last-delivered seq separately from next_seq in stream state.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: browser check validated mobile web build on http://127.0.0.1:8030.
+---
+EOF" in /Users/mac/codes/vibe-inspect succeeded in 23ms:
+
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+thinking
+**Preparing to log activity**
+
+Next, I'll add a ralph log message command to record activity following the progress log update, anticipating additional run log changes.
+exec
+/bin/zsh -lc 'ralph log "Updated progress log for US-007"' in /Users/mac/codes/vibe-inspect succeeded in 108ms:
+Using local templates: /Users/mac/codes/vibe-inspect/.agents/ralph
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+thinking
+**Staging progress and logs**
+
+I'm staging progress.md and updated activity logs but will hold final staging until after running commands to capture any additional log updates. Checking git status next.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 56ms:
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260201-231810-31541-iter-7.log
+file update:
+diff --git a/desktop/frontend/index.html b/desktop/frontend/index.html
+index d83b6a890d451fd45c8be465c505945600f6942e..525ed05a38287539c6e635c4693b3224217d4819
+--- a/desktop/frontend/index.html
++++ b/desktop/frontend/index.html
+@@ -1977,8 +1977,9 @@
+       async function pollTerminalOutput() {
+         if (!activeTerminalSessionId || terminalPollInFlight) return;
+         terminalPollInFlight = true;
++        const since = Math.max(0, Number(terminalNextSeq) - 1);
+         const payload = await sendTerminalAction("poll", activeTerminalSessionId, {
+-          since: terminalNextSeq,
++          since,
+           limit: 200,
+         });
+         terminalPollInFlight = false;
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index 65897a86a75d39f5c65491655d3332c45217973d..9b142c7bc5a5b41bd518fd290b5ea7057a6622f7
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -44,6 +44,11 @@
+ 
+ type WsSender = SplitSink<WebSocket, Message>;
+ 
++const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
++const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
++const PAYLOAD_TOO_LARGE_MESSAGE: &str =
++    "Terminal snapshot too large to send; reduce output volume and retry.";
++
+ #[derive(Debug, Clone)]
+ struct AttachmentState {
+     last_seq: u64,
+@@ -51,6 +56,7 @@
+     last_status: String,
+     last_exit_code: Option<i64>,
+     last_label: String,
++    last_truncated: bool,
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -65,6 +71,12 @@
+     truncated: bool,
+ }
+ 
++struct StreamEventBatch {
++    events: Vec<Value>,
++    detached: Vec<String>,
++    close: bool,
++}
++
+ #[tokio::main]
+ async fn main() {
+     let args = TerminaldArgs::parse();
+@@ -295,16 +307,20 @@
+         tokio::select! {
+             _ = tick.tick() => {
+                 if !subscriptions.is_empty() {
+-                    let (events, detached) = collect_stream_events(&mut subscriptions);
+-                    for event in events {
++                    let batch = collect_stream_events(&mut subscriptions);
++                    for event in batch.events {
+                         if send_json_sender(&mut sender, event).await.is_err() {
+                             return;
+                         }
+                         last_sent_at = Instant::now();
+                     }
+-                    for session_id in detached {
++                    for session_id in batch.detached {
+                         subscriptions.remove(&session_id);
+                     }
++                    if batch.close {
++                        let _ = sender.send(Message::Close(None)).await;
++                        return;
++                    }
+                 }
+ 
+                 if last_sent_at.elapsed() > Duration::from_secs(15) {
+@@ -494,16 +510,44 @@
+             };
+             match handle_terminal_command(request) {
+                 Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
+                     let summary = summarize_payload(&payload);
+                     let attachment = AttachmentState {
+-                        last_seq: summary.next_seq,
++                        last_seq: summary.next_seq.saturating_sub(1),
+                         last_notification_seq: summary.notification_next_seq,
+                         last_status: summary.status.clone(),
+                         last_exit_code: summary.exit_code,
+                         last_label: summary.label.clone(),
++                        last_truncated: summary.truncated,
+                     };
+                     subscriptions.insert(session_id.clone(), attachment);
+                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
++                    if summary.truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
+                     let stream_payload = as_stream_payload(payload);
+                     if send_event(sender, "terminal_payload", &session_id, stream_payload)
+                         .await
+@@ -560,7 +604,37 @@
+                 env: None,
+             };
+             match handle_terminal_command(request) {
+-                Ok(payload) => send_ok_response(sender, request_id, payload).await,
++                Ok(payload) => {
++                    if snapshot_too_large(&payload) {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "payload_too_large",
++                            PAYLOAD_TOO_LARGE_MESSAGE,
++                        )
++                        .await;
++                        send_error_response(
++                            sender,
++                            request_id,
++                            "payload_too_large",
++                            "Snapshot exceeds payload limits.",
++                        )
++                        .await;
++                        let _ = sender.send(Message::Close(None)).await;
++                        return false;
++                    }
++                    let truncated = payload_truncated(&payload);
++                    send_ok_response(sender, request_id, payload).await;
++                    if truncated {
++                        let _ = send_session_warning(
++                            sender,
++                            &session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        )
++                        .await;
++                    }
++                }
+                 Err(error) => send_terminal_error(sender, request_id, error).await,
+             }
+             *last_sent_at = Instant::now();
+@@ -727,6 +801,29 @@
+     send_json_sender(sender, payload).await
+ }
+ 
++fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
++    json!({
++        "type": "event",
++        "event": "session_warning",
++        "session_id": session_id,
++        "data": {
++            "reason": reason,
++            "message": message,
++            "session_id": session_id,
++            "ts": now_ts(),
++        }
++    })
++}
++
++async fn send_session_warning(
++    sender: &mut WsSender,
++    session_id: &str,
++    reason: &str,
++    message: &str,
++) -> Result<(), axum::Error> {
++    send_json_sender(sender, build_session_warning(session_id, reason, message)).await
++}
++
+ fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
+     let session_id = session_id
+         .ok_or_else(|| TerminalError {
+@@ -781,6 +878,21 @@
+     }
+ }
+ 
++fn payload_truncated(payload: &Value) -> bool {
++    payload
++        .get("truncated")
++        .and_then(|value| value.as_bool())
++        .unwrap_or(false)
++}
++
++fn snapshot_too_large(payload: &Value) -> bool {
++    payload
++        .get("snapshot")
++        .and_then(|value| value.as_str())
++        .map(|snapshot| snapshot.as_bytes().len() > MAX_TERMINAL_PAYLOAD_BYTES)
++        .unwrap_or(false)
++}
++
+ fn as_stream_payload(mut payload: Value) -> Value {
+     if let Some(map) = payload.as_object_mut() {
+         map.insert("action".to_string(), json!("stream"));
+@@ -788,11 +900,10 @@
+     payload
+ }
+ 
+-fn collect_stream_events(
+-    subscriptions: &mut HashMap<String, AttachmentState>,
+-) -> (Vec<Value>, Vec<String>) {
++fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+     let mut events = Vec::new();
+     let mut detached = Vec::new();
++    let mut close = false;
+ 
+     for (session_id, state) in subscriptions.iter_mut() {
+         let request = TerminalActionRequest {
+@@ -811,9 +922,20 @@
+         };
+         match handle_terminal_command(request) {
+             Ok(payload) => {
++                if snapshot_too_large(&payload) {
++                    events.push(build_session_warning(
++                        session_id,
++                        "payload_too_large",
++                        PAYLOAD_TOO_LARGE_MESSAGE,
++                    ));
++                    close = true;
++                    continue;
++                }
+                 let summary = summarize_payload(&payload);
+-                let seq_changed = summary.next_seq != state.last_seq
++                let summary_last_seq = summary.next_seq.saturating_sub(1);
++                let seq_changed = summary_last_seq != state.last_seq
+                     || summary.notification_next_seq != state.last_notification_seq;
++                let was_truncated = state.last_truncated;
+                 let should_send = summary.output_len > 0
+                     || summary.notifications_len > 0
+                     || summary.truncated
+@@ -822,11 +944,19 @@
+                     || summary.label != state.last_label
+                     || seq_changed;
+                 if should_send {
+-                    state.last_seq = summary.next_seq;
++                    if summary.truncated && !was_truncated {
++                        events.push(build_session_warning(
++                            session_id,
++                            "buffer_truncated",
++                            BUFFER_TRUNCATED_MESSAGE,
++                        ));
++                    }
++                    state.last_seq = summary_last_seq;
+                     state.last_notification_seq = summary.notification_next_seq;
+                     state.last_status = summary.status;
+                     state.last_exit_code = summary.exit_code;
+                     state.last_label = summary.label;
++                    state.last_truncated = summary.truncated;
+                     let stream_payload = as_stream_payload(payload);
+                     events.push(json!({
+                         "type": "event",
+@@ -834,13 +964,19 @@
+                         "session_id": session_id,
+                         "data": stream_payload,
+                     }));
++                } else if state.last_truncated {
++                    state.last_truncated = false;
+                 }
+             }
+             Err(_) => detached.push(session_id.clone()),
+         }
+     }
+ 
+-    (events, detached)
++    StreamEventBatch {
++        events,
++        detached,
++        close,
++    }
+ }
+ 
+ fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index d6c5574679362c1121b10355ed42614dedd2d522..7411888a144d0f5175d168e590b1418253743d6d
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -239,6 +239,14 @@
+     writer: Box<dyn Write + Send>,
+ }
+ 
++fn next_expected_seq(current: u64) -> u64 {
++    current.saturating_add(1)
++}
++
++fn last_delivered_seq(next_seq: u64) -> u64 {
++    next_seq.saturating_sub(1)
++}
++
+ impl TerminalSession {
+     fn push_output(&mut self, data: String) {
+         if data.is_empty() {
+@@ -676,7 +684,7 @@
+         (
+             session.output_since(0, OUTPUT_LIMIT_DEFAULT),
+             session.status,
+-            session.next_seq,
++            next_expected_seq(session.next_seq),
+             session.exit_code,
+             session.first_seq(),
+             session.snapshot_formatted(),
+@@ -685,8 +693,9 @@
+             session.notification_seq,
+         )
+     };
++    let initial_last_seq = last_delivered_seq(initial_next_seq);
+     let initial_truncated = initial_first_seq
+-        .map(|first| 1_u64 < first)
++        .map(|first| initial_last_seq.saturating_add(1) < first)
+         .unwrap_or(false);
+     let initial_payload = build_session_payload(
+         "stream",
+@@ -708,7 +717,7 @@
+         .await
+         .map_err(|error| format!("Failed to send terminal snapshot: {error}"))?;
+ 
+-    let mut last_seq = initial_next_seq;
++    let mut last_seq = initial_last_seq;
+     let mut last_status = initial_status;
+     let mut last_exit = initial_exit;
+     let mut last_label = initial_label;
+@@ -725,7 +734,7 @@
+                     (
+                         session.output_since(last_seq, OUTPUT_LIMIT_DEFAULT),
+                         session.status,
+-                        session.next_seq,
++                        next_expected_seq(session.next_seq),
+                         session.exit_code,
+                         session.first_seq(),
+                         session.snapshot_formatted(),
+@@ -748,7 +757,6 @@
+                     continue;
+                 }
+ 
+-                last_seq = next_seq;
+                 last_status = status;
+                 last_exit = exit_code;
+                 last_label = label.clone();
+@@ -775,6 +783,7 @@
+                 if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                     break;
+                 }
++                last_seq = last_delivered_seq(next_seq);
+                 last_sent_at = Instant::now();
+ 
+                 if status.is_ended() {
+@@ -998,7 +1007,7 @@
+         "start",
+         &session_id,
+         TerminalSessionStatus::Running,
+-        0,
++        next_expected_seq(0),
+         Vec::new(),
+         None,
+         false,
+@@ -1044,7 +1053,7 @@
+         "poll",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         output,
+         first_seq,
+         truncated,
+@@ -1106,7 +1115,7 @@
+         "input",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1159,7 +1168,7 @@
+         "resize",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1195,7 +1204,7 @@
+         "stop",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1236,7 +1245,7 @@
+         "keepalive",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1270,7 +1279,7 @@
+         "status",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+@@ -1307,7 +1316,7 @@
+         "rename",
+         &session.id,
+         session.status,
+-        session.next_seq,
++        next_expected_seq(session.next_seq),
+         Vec::new(),
+         session.first_seq(),
+         false,
+diff --git a/mobile/lib/main.dart b/mobile/lib/main.dart
+index 6b85ad01effbfacb5f82f560128496c1e5c08c5c..ecd0fbb207bb6319f5eaab162ccc4ea549464575
+--- a/mobile/lib/main.dart
++++ b/mobile/lib/main.dart
+@@ -7982,7 +7982,7 @@
+       final payload = await agentClient.sendTerminalAction(
+         action: 'poll',
+         sessionId: active.session.id,
+-        since: active.nextSeq,
++        since: _terminalSince(active.nextSeq),
+         limit: _maxOutputEntries,
+         notifySince: active.notificationSeq,
+       );
+@@ -8881,12 +8881,13 @@
+         _parseNotificationSeq(payload, fallback: view.notificationSeq);
+     final firstSeq =
+         _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+-    final expectedNext = view.nextSeq + 1;
++    final lastDelivered = _terminalSince(view.nextSeq);
++    final expectedNext = view.nextSeq;
+     final truncated = payload['truncated'] == true;
+     final hasGap = truncated ||
+         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
+-    final missingHistory = (truncated && view.nextSeq == 0) ||
+-        (view.nextSeq == 0 && firstSeq != null && firstSeq > 1);
++    final missingHistory = (truncated && view.nextSeq <= 1) ||
++        (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
+     final shouldReset =
+         action == 'start' || nextSeq < view.nextSeq || hasGap;
+     final parsedExitCode = _parseExitCode(payload);
+@@ -8899,7 +8900,7 @@
+     final outputEntries = _parseTerminalChunks(
+       payload['output'],
+       DateTime.now(),
+-      minSeq: shouldReset ? 0 : view.nextSeq,
++      minSeq: shouldReset ? 0 : lastDelivered,
+     );
+     final mergedOutput = shouldReset
+         ? outputEntries
+@@ -9200,6 +9201,13 @@
+     return fallback;
+   }
+ 
++  int _terminalSince(int nextSeq) {
++    if (nextSeq <= 0) {
++      return 0;
++    }
++    return nextSeq - 1;
++  }
++
+   String _notificationTitle(String level) {
+     switch (level.toLowerCase()) {
+       case 'warning':
+
+
+thinking
+**Preparing final commit and verification steps**
+
+I'm staging the remaining files to commit, planning to commit before running git show and git status to check for any run log changes and ensure a clean state. I'll test if these commands modify the run log to decide if additional commits are needed.
+exec
+/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/activity.log /Users/mac/codes/vibe-inspect/.ralph/progress.md /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.log' in /Users/mac/codes/vibe-inspect

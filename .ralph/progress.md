@@ -1314,3 +1314,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
   - Useful context: terminal_core input_bytes plumbing keeps binary input support localized.
 ---
+## [2026-02-02 01:21] - US-007: Sequencing, truncation, snapshot, and session_warning
+Thread: 
+Run: 20260201-231810-31541 (iteration 7)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-7.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ef87a96 feat(terminal): enforce seq and truncation warnings
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd mobile && flutter build web -> PASS (wasm/loader warnings)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-6.log
+  - .ralph/runs/run-20260201-231810-31541-iter-6.md
+  - .ralph/runs/run-20260201-231810-31541-iter-7.log
+  - desktop/frontend/index.html
+  - desktop/src/bin/terminald.rs
+  - desktop/src/terminal_core.rs
+  - mobile/lib/main.dart
+- What was implemented
+  - Adjusted terminal_core payloads to report next_seq as next expected and updated stream tracking.
+  - Added buffer_truncated/payload_too_large session_warning events and snapshot size guard in terminald streams/polls.
+  - Updated mobile + desktop web polling to request since = next_seq - 1 and keep gap detection consistent.
+- **Learnings for future iterations:**
+  - Patterns discovered: track last-delivered seq separately from next_seq in stream state.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: browser check validated mobile web build on http://127.0.0.1:8030.
+---
