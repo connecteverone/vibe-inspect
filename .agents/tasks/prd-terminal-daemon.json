@@ -278,7 +278,7 @@
     {
       "id": "US-009",
       "title": "Session summary persistence and idle cleanup",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-005"
       ],
@@ -291,13 +291,13 @@
         "Negative: corrupted summaries file is ignored with a warning and does not crash"
       ],
       "startedAt": "2026-02-01T18:03:00.612376+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T18:03:00.612489+00:00"
+      "completedAt": "2026-02-01T18:22:26.706246+00:00",
+      "updatedAt": "2026-02-01T18:22:26.706154+00:00"
     },
     {
       "id": "US-010",
       "title": "Desktop agent proxy to terminald",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-006",
         "US-003"
@@ -309,7 +309,10 @@
         "Agent can auto-start terminald when unreachable (configurable)",
         "Example: start a session via mobile, restart desktop agent, and attach continues with same session_id",
         "Negative: if terminald is unreachable, agent returns `connection_failed`"
-      ]
+      ],
+      "startedAt": "2026-02-01T18:22:28.805909+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T18:22:28.806021+00:00"
     },
     {
       "id": "US-011",

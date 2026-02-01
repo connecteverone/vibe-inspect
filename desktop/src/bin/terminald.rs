@@ -761,6 +761,57 @@ async fn handle_request(
             }
             *last_sent_at = Instant::now();
         }
+        "status" => {
+            let session_id = match ensure_session_id(session_id) {
+                Ok(session_id) => session_id,
+                Err(error) => {
+                    send_terminal_error(sender, request_id, error).await;
+                    *last_sent_at = Instant::now();
+                    return true;
+                }
+            };
+            let request = TerminalActionRequest {
+                action: "status".to_string(),
+                session_id: Some(session_id),
+                label: None,
+                input: None,
+                input_bytes: None,
+                cols: None,
+                rows: None,
+                since: None,
+                limit: None,
+                notify_since: payload
+                    .and_then(|payload| payload.get("notify_since"))
+                    .and_then(|value| value.as_u64()),
+                working_dir: None,
+                env: None,
+            };
+            match handle_terminal_command(request) {
+                Ok(payload) => {
+                    if snapshot_too_large(&payload) {
+                        let _ = send_session_warning(
+                            sender,
+                            &session_id,
+                            "payload_too_large",
+                            PAYLOAD_TOO_LARGE_MESSAGE,
+                        )
+                        .await;
+                        send_error_response(
+                            sender,
+                            request_id,
+                            "payload_too_large",
+                            "Snapshot exceeds payload limits.",
+                        )
+                        .await;
+                        let _ = sender.send(Message::Close(None)).await;
+                        return false;
+                    }
+                    send_ok_response(sender, request_id, payload).await;
+                }
+                Err(error) => send_terminal_error(sender, request_id, error).await,
+            }
+            *last_sent_at = Instant::now();
+        }
         "input" => {
             let session_id = match ensure_session_id(session_id) {
                 Ok(session_id) => session_id,
