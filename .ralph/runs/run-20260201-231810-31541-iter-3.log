@@ -10861,4 +10861,1249 @@ index 7fff5d6560aa233924ab3874fc2aa4d055e9b713..65119a5d8268c6a6b8a8373c2b49a900
 thinking
 **Staging changes for second commit**
 exec
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 60ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 39d17e11b854e9f33e716e1128b28ca7363f389f..b3d42d5a7bea2971942274c913b4240580342d31
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1207,9 +1207,8 @@
+   - desktop/src/bin/terminald.rs
+   - desktop/src/bin/vibe-ctl.rs
+   - desktop/src/terminal_core.rs
+-- What was implemented
++- What was implemented: terminald now writes a discovery file with atomic temp+rename and 0600 perms, terminal_core exposes discovery path/read/write helpers, and vibe-ctl resolves config via env overrides and discovery file content.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
++  - Discovery writes should use temp file + rename for atomicity across restarts.
+ ---
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index be8d19932ba3f60e38f3c2ab028a3f251070caf9..15af78662417c5680708382bdba845b35d5d6028
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,6 +1,11 @@
+ use clap::Parser;
++use rand::{distributions::Alphanumeric, Rng};
+ 
+-use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++use desktop::terminal_core::{
++    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
++};
++use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -14,5 +19,47 @@
+ }
+ 
+ fn main() {
+-    let _args = TerminaldArgs::parse();
++    let args = TerminaldArgs::parse();
++    let ws_path = normalize_ws_path(&args.ws_path);
++    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let token = random_token(32);
++    let discovery = TerminalDiscoveryFile {
++        ws_url,
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        pid: std::process::id(),
++        created_at: now_ts(),
++        capabilities: Vec::new(),
++    };
++    if let Err(error) = write_discovery_file(&discovery) {
++        eprintln!("Failed to write discovery file: {error}");
++        std::process::exit(1);
++    }
++}
++
++fn normalize_ws_path(path: &str) -> String {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return DEFAULT_TERMINALD_WS_PATH.to_string();
++    }
++    if trimmed.starts_with('/') {
++        trimmed.to_string()
++    } else {
++        format!("/{trimmed}")
++    }
++}
++
++fn random_token(len: usize) -> String {
++    rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(len)
++        .map(char::from)
++        .collect()
++}
++
++fn now_ts() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_secs()
+ }
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index ce9b53b727eba94772e2e86e2d130d16cc9f654e..de8232ec92d53f1c04de23ca1b46a2591b4ca88c
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,6 +1,8 @@
+ use clap::{Parser, Subcommand};
+ 
+-use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++use desktop::terminal_core::{read_discovery_file, terminal_discovery_path, DEFAULT_TERMINALD_WS_URL};
++use std::env;
++use std::path::PathBuf;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -22,9 +24,67 @@
+ 
+ fn main() {
+     let cli = Cli::parse();
++    let config = match resolve_config() {
++        Ok(config) => config,
++        Err(error) => {
++            eprintln!("{}: {}", error.code, error.message);
++            std::process::exit(1);
++        }
++    };
+     match cli.command {
+         Command::Defaults => {
+-            println!("{DEFAULT_TERMINALD_WS_URL}");
++            println!("{}", config.ws_url);
++        }
++    }
++}
++
++struct ResolvedConfig {
++    ws_url: String,
++    token: Option<String>,
++}
++
++struct ConfigError {
++    code: &'static str,
++    message: String,
++}
++
++fn resolve_config() -> Result<ResolvedConfig, ConfigError> {
++    let config_override = read_env_value("VIBE_CTL_CONFIG").map(PathBuf::from);
++    let default_config = terminal_discovery_path();
++    let config_path = config_override.clone().or(default_config);
++    let discovery = match config_path {
++        Some(path) => match read_discovery_file(&path) {
++            Ok(file) => Some(file),
++            Err(error) => {
++                if config_override.is_some() {
++                    return Err(ConfigError {
++                        code: "connection_failed",
++                        message: format!("Failed to read config {}: {error}", path.display()),
++                    });
++                }
++                None
++            }
++        },
++        None => None,
++    };
++    let ws_url = read_env_value("VIBE_CTL_ENDPOINT")
++        .or_else(|| discovery.as_ref().map(|file| file.ws_url.clone()))
++        .unwrap_or_else(|| DEFAULT_TERMINALD_WS_URL.to_string());
++    let token = read_env_value("VIBE_CTL_TOKEN")
++        .or_else(|| discovery.as_ref().map(|file| file.token.clone()));
++    Ok(ResolvedConfig { ws_url, token })
++}
++
++fn read_env_value(key: &str) -> Option<String> {
++    match env::var(key) {
++        Ok(value) => {
++            let trimmed = value.trim().to_string();
++            if trimmed.is_empty() {
++                None
++            } else {
++                Some(trimmed)
++            }
+         }
++        Err(_) => None,
+     }
+ }
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 7fff5d6560aa233924ab3874fc2aa4d055e9b713..65119a5d8268c6a6b8a8373c2b49a900dafa103a
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -10,6 +10,8 @@
+ use std::collections::{HashMap, HashSet, VecDeque};
+ use std::fs;
+ use std::io::{Read, Write};
++#[cfg(unix)]
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+@@ -26,6 +28,12 @@
+ /// Default WebSocket path for terminald.
+ pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+ 
++/// Protocol version for terminald clients.
++pub const TERMINALD_PROTOCOL_VERSION: &str = "1.0";
++
++/// Discovery file name for terminald.
++pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
++
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+@@ -40,6 +48,16 @@
+ const NOTIFICATION_QUEUE_LIMIT: usize = 200;
+ const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct TerminalDiscoveryFile {
++    pub ws_url: String,
++    pub token: String,
++    pub version: String,
++    pub pid: u32,
++    pub created_at: u64,
++    pub capabilities: Vec<String>,
++}
++
+ fn resolve_shell() -> String {
+     if let Ok(shell) = std::env::var("SHELL") {
+         let trimmed = shell.trim();
+@@ -80,6 +98,79 @@
+     "sh".to_string()
+ }
+ 
++pub fn terminal_discovery_path() -> Option<PathBuf> {
++    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
++    Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
++}
++
++pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io::Error> {
++    let contents = fs::read_to_string(path)?;
++    serde_json::from_str(&contents)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
++}
++
++pub fn write_discovery_file(
++    discovery: &TerminalDiscoveryFile,
++) -> Result<PathBuf, std::io::Error> {
++    let path = terminal_discovery_path()
++        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)?;
++    }
++    let payload = serde_json::to_vec_pretty(discovery)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
++    write_atomic_file(&path, &payload)?;
++    Ok(path)
++}
++
++fn discovery_tmp_path(path: &Path) -> PathBuf {
++    let suffix: String = rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(12)
++        .map(char::from)
++        .collect();
++    let file_name = path
++        .file_name()
++        .and_then(|name| name.to_str())
++        .unwrap_or("terminald.json");
++    let tmp_name = format!(".{file_name}.tmp-{suffix}");
++    match path.parent() {
++        Some(parent) => parent.join(tmp_name),
++        None => PathBuf::from(tmp_name),
++    }
++}
++
++fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
++    let tmp_path = discovery_tmp_path(path);
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        options.mode(0o600);
++    }
++    let mut file = options.open(&tmp_path)?;
++    file.write_all(payload)?;
++    file.sync_all()?;
++    #[cfg(unix)]
++    {
++        let permissions = fs::Permissions::from_mode(0o600);
++        fs::set_permissions(&tmp_path, permissions)?;
++    }
++    if let Err(error) = fs::rename(&tmp_path, path) {
++        #[cfg(windows)]
++        {
++            if path.exists() {
++                let _ = fs::remove_file(path);
++                fs::rename(&tmp_path, path)?;
++                return Ok(());
++            }
++        }
++        let _ = fs::remove_file(&tmp_path);
++        return Err(error);
++    }
++    Ok(())
++}
++
+ #[derive(Clone)]
+ struct TerminalOutputChunk {
+     seq: u64,
+
+
+thinking
+**Committing progress log update**
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): log US-003 progress"' in /Users/mac/codes/vibe-inspect succeeded in 38ms:
+[main 293d8ef] chore(ralph): log US-003 progress
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 3884 insertions(+)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 39d17e11b854e9f33e716e1128b28ca7363f389f..b3d42d5a7bea2971942274c913b4240580342d31
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1207,9 +1207,8 @@
+   - desktop/src/bin/terminald.rs
+   - desktop/src/bin/vibe-ctl.rs
+   - desktop/src/terminal_core.rs
+-- What was implemented
++- What was implemented: terminald now writes a discovery file with atomic temp+rename and 0600 perms, terminal_core exposes discovery path/read/write helpers, and vibe-ctl resolves config via env overrides and discovery file content.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
++  - Discovery writes should use temp file + rename for atomicity across restarts.
+ ---
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index be8d19932ba3f60e38f3c2ab028a3f251070caf9..15af78662417c5680708382bdba845b35d5d6028
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,6 +1,11 @@
+ use clap::Parser;
++use rand::{distributions::Alphanumeric, Rng};
+ 
+-use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++use desktop::terminal_core::{
++    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
++};
++use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -14,5 +19,47 @@
+ }
+ 
+ fn main() {
+-    let _args = TerminaldArgs::parse();
++    let args = TerminaldArgs::parse();
++    let ws_path = normalize_ws_path(&args.ws_path);
++    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let token = random_token(32);
++    let discovery = TerminalDiscoveryFile {
++        ws_url,
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        pid: std::process::id(),
++        created_at: now_ts(),
++        capabilities: Vec::new(),
++    };
++    if let Err(error) = write_discovery_file(&discovery) {
++        eprintln!("Failed to write discovery file: {error}");
++        std::process::exit(1);
++    }
++}
++
++fn normalize_ws_path(path: &str) -> String {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return DEFAULT_TERMINALD_WS_PATH.to_string();
++    }
++    if trimmed.starts_with('/') {
++        trimmed.to_string()
++    } else {
++        format!("/{trimmed}")
++    }
++}
++
++fn random_token(len: usize) -> String {
++    rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(len)
++        .map(char::from)
++        .collect()
++}
++
++fn now_ts() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_secs()
+ }
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index ce9b53b727eba94772e2e86e2d130d16cc9f654e..de8232ec92d53f1c04de23ca1b46a2591b4ca88c
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,6 +1,8 @@
+ use clap::{Parser, Subcommand};
+ 
+-use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++use desktop::terminal_core::{read_discovery_file, terminal_discovery_path, DEFAULT_TERMINALD_WS_URL};
++use std::env;
++use std::path::PathBuf;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -22,9 +24,67 @@
+ 
+ fn main() {
+     let cli = Cli::parse();
++    let config = match resolve_config() {
++        Ok(config) => config,
++        Err(error) => {
++            eprintln!("{}: {}", error.code, error.message);
++            std::process::exit(1);
++        }
++    };
+     match cli.command {
+         Command::Defaults => {
+-            println!("{DEFAULT_TERMINALD_WS_URL}");
++            println!("{}", config.ws_url);
++        }
++    }
++}
++
++struct ResolvedConfig {
++    ws_url: String,
++    token: Option<String>,
++}
++
++struct ConfigError {
++    code: &'static str,
++    message: String,
++}
++
++fn resolve_config() -> Result<ResolvedConfig, ConfigError> {
++    let config_override = read_env_value("VIBE_CTL_CONFIG").map(PathBuf::from);
++    let default_config = terminal_discovery_path();
++    let config_path = config_override.clone().or(default_config);
++    let discovery = match config_path {
++        Some(path) => match read_discovery_file(&path) {
++            Ok(file) => Some(file),
++            Err(error) => {
++                if config_override.is_some() {
++                    return Err(ConfigError {
++                        code: "connection_failed",
++                        message: format!("Failed to read config {}: {error}", path.display()),
++                    });
++                }
++                None
++            }
++        },
++        None => None,
++    };
++    let ws_url = read_env_value("VIBE_CTL_ENDPOINT")
++        .or_else(|| discovery.as_ref().map(|file| file.ws_url.clone()))
++        .unwrap_or_else(|| DEFAULT_TERMINALD_WS_URL.to_string());
++    let token = read_env_value("VIBE_CTL_TOKEN")
++        .or_else(|| discovery.as_ref().map(|file| file.token.clone()));
++    Ok(ResolvedConfig { ws_url, token })
++}
++
++fn read_env_value(key: &str) -> Option<String> {
++    match env::var(key) {
++        Ok(value) => {
++            let trimmed = value.trim().to_string();
++            if trimmed.is_empty() {
++                None
++            } else {
++                Some(trimmed)
++            }
+         }
++        Err(_) => None,
+     }
+ }
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 7fff5d6560aa233924ab3874fc2aa4d055e9b713..65119a5d8268c6a6b8a8373c2b49a900dafa103a
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -10,6 +10,8 @@
+ use std::collections::{HashMap, HashSet, VecDeque};
+ use std::fs;
+ use std::io::{Read, Write};
++#[cfg(unix)]
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+@@ -26,6 +28,12 @@
+ /// Default WebSocket path for terminald.
+ pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+ 
++/// Protocol version for terminald clients.
++pub const TERMINALD_PROTOCOL_VERSION: &str = "1.0";
++
++/// Discovery file name for terminald.
++pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
++
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+@@ -40,6 +48,16 @@
+ const NOTIFICATION_QUEUE_LIMIT: usize = 200;
+ const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct TerminalDiscoveryFile {
++    pub ws_url: String,
++    pub token: String,
++    pub version: String,
++    pub pid: u32,
++    pub created_at: u64,
++    pub capabilities: Vec<String>,
++}
++
+ fn resolve_shell() -> String {
+     if let Ok(shell) = std::env::var("SHELL") {
+         let trimmed = shell.trim();
+@@ -80,6 +98,79 @@
+     "sh".to_string()
+ }
+ 
++pub fn terminal_discovery_path() -> Option<PathBuf> {
++    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
++    Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
++}
++
++pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io::Error> {
++    let contents = fs::read_to_string(path)?;
++    serde_json::from_str(&contents)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
++}
++
++pub fn write_discovery_file(
++    discovery: &TerminalDiscoveryFile,
++) -> Result<PathBuf, std::io::Error> {
++    let path = terminal_discovery_path()
++        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)?;
++    }
++    let payload = serde_json::to_vec_pretty(discovery)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
++    write_atomic_file(&path, &payload)?;
++    Ok(path)
++}
++
++fn discovery_tmp_path(path: &Path) -> PathBuf {
++    let suffix: String = rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(12)
++        .map(char::from)
++        .collect();
++    let file_name = path
++        .file_name()
++        .and_then(|name| name.to_str())
++        .unwrap_or("terminald.json");
++    let tmp_name = format!(".{file_name}.tmp-{suffix}");
++    match path.parent() {
++        Some(parent) => parent.join(tmp_name),
++        None => PathBuf::from(tmp_name),
++    }
++}
++
++fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
++    let tmp_path = discovery_tmp_path(path);
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        options.mode(0o600);
++    }
++    let mut file = options.open(&tmp_path)?;
++    file.write_all(payload)?;
++    file.sync_all()?;
++    #[cfg(unix)]
++    {
++        let permissions = fs::Permissions::from_mode(0o600);
++        fs::set_permissions(&tmp_path, permissions)?;
++    }
++    if let Err(error) = fs::rename(&tmp_path, path) {
++        #[cfg(windows)]
++        {
++            if path.exists() {
++                let _ = fs::remove_file(path);
++                fs::rename(&tmp_path, path)?;
++                return Ok(());
++            }
++        }
++        let _ = fs::remove_file(&tmp_path);
++        return Err(error);
++    }
++    Ok(())
++}
++
+ #[derive(Clone)]
+ struct TerminalOutputChunk {
+     seq: u64,
+
+
+thinking
+**Verifying clean working tree**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 49ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-3.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 39d17e11b854e9f33e716e1128b28ca7363f389f..b3d42d5a7bea2971942274c913b4240580342d31
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1207,9 +1207,8 @@
+   - desktop/src/bin/terminald.rs
+   - desktop/src/bin/vibe-ctl.rs
+   - desktop/src/terminal_core.rs
+-- What was implemented
++- What was implemented: terminald now writes a discovery file with atomic temp+rename and 0600 perms, terminal_core exposes discovery path/read/write helpers, and vibe-ctl resolves config via env overrides and discovery file content.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
++  - Discovery writes should use temp file + rename for atomicity across restarts.
+ ---
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index be8d19932ba3f60e38f3c2ab028a3f251070caf9..15af78662417c5680708382bdba845b35d5d6028
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,6 +1,11 @@
+ use clap::Parser;
++use rand::{distributions::Alphanumeric, Rng};
+ 
+-use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++use desktop::terminal_core::{
++    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
++};
++use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -14,5 +19,47 @@
+ }
+ 
+ fn main() {
+-    let _args = TerminaldArgs::parse();
++    let args = TerminaldArgs::parse();
++    let ws_path = normalize_ws_path(&args.ws_path);
++    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let token = random_token(32);
++    let discovery = TerminalDiscoveryFile {
++        ws_url,
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        pid: std::process::id(),
++        created_at: now_ts(),
++        capabilities: Vec::new(),
++    };
++    if let Err(error) = write_discovery_file(&discovery) {
++        eprintln!("Failed to write discovery file: {error}");
++        std::process::exit(1);
++    }
++}
++
++fn normalize_ws_path(path: &str) -> String {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return DEFAULT_TERMINALD_WS_PATH.to_string();
++    }
++    if trimmed.starts_with('/') {
++        trimmed.to_string()
++    } else {
++        format!("/{trimmed}")
++    }
++}
++
++fn random_token(len: usize) -> String {
++    rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(len)
++        .map(char::from)
++        .collect()
++}
++
++fn now_ts() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_secs()
+ }
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index ce9b53b727eba94772e2e86e2d130d16cc9f654e..de8232ec92d53f1c04de23ca1b46a2591b4ca88c
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,6 +1,8 @@
+ use clap::{Parser, Subcommand};
+ 
+-use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++use desktop::terminal_core::{read_discovery_file, terminal_discovery_path, DEFAULT_TERMINALD_WS_URL};
++use std::env;
++use std::path::PathBuf;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -22,9 +24,67 @@
+ 
+ fn main() {
+     let cli = Cli::parse();
++    let config = match resolve_config() {
++        Ok(config) => config,
++        Err(error) => {
++            eprintln!("{}: {}", error.code, error.message);
++            std::process::exit(1);
++        }
++    };
+     match cli.command {
+         Command::Defaults => {
+-            println!("{DEFAULT_TERMINALD_WS_URL}");
++            println!("{}", config.ws_url);
++        }
++    }
++}
++
++struct ResolvedConfig {
++    ws_url: String,
++    token: Option<String>,
++}
++
++struct ConfigError {
++    code: &'static str,
++    message: String,
++}
++
++fn resolve_config() -> Result<ResolvedConfig, ConfigError> {
++    let config_override = read_env_value("VIBE_CTL_CONFIG").map(PathBuf::from);
++    let default_config = terminal_discovery_path();
++    let config_path = config_override.clone().or(default_config);
++    let discovery = match config_path {
++        Some(path) => match read_discovery_file(&path) {
++            Ok(file) => Some(file),
++            Err(error) => {
++                if config_override.is_some() {
++                    return Err(ConfigError {
++                        code: "connection_failed",
++                        message: format!("Failed to read config {}: {error}", path.display()),
++                    });
++                }
++                None
++            }
++        },
++        None => None,
++    };
++    let ws_url = read_env_value("VIBE_CTL_ENDPOINT")
++        .or_else(|| discovery.as_ref().map(|file| file.ws_url.clone()))
++        .unwrap_or_else(|| DEFAULT_TERMINALD_WS_URL.to_string());
++    let token = read_env_value("VIBE_CTL_TOKEN")
++        .or_else(|| discovery.as_ref().map(|file| file.token.clone()));
++    Ok(ResolvedConfig { ws_url, token })
++}
++
++fn read_env_value(key: &str) -> Option<String> {
++    match env::var(key) {
++        Ok(value) => {
++            let trimmed = value.trim().to_string();
++            if trimmed.is_empty() {
++                None
++            } else {
++                Some(trimmed)
++            }
+         }
++        Err(_) => None,
+     }
+ }
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 7fff5d6560aa233924ab3874fc2aa4d055e9b713..65119a5d8268c6a6b8a8373c2b49a900dafa103a
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -10,6 +10,8 @@
+ use std::collections::{HashMap, HashSet, VecDeque};
+ use std::fs;
+ use std::io::{Read, Write};
++#[cfg(unix)]
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+@@ -26,6 +28,12 @@
+ /// Default WebSocket path for terminald.
+ pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+ 
++/// Protocol version for terminald clients.
++pub const TERMINALD_PROTOCOL_VERSION: &str = "1.0";
++
++/// Discovery file name for terminald.
++pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
++
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+@@ -40,6 +48,16 @@
+ const NOTIFICATION_QUEUE_LIMIT: usize = 200;
+ const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct TerminalDiscoveryFile {
++    pub ws_url: String,
++    pub token: String,
++    pub version: String,
++    pub pid: u32,
++    pub created_at: u64,
++    pub capabilities: Vec<String>,
++}
++
+ fn resolve_shell() -> String {
+     if let Ok(shell) = std::env::var("SHELL") {
+         let trimmed = shell.trim();
+@@ -80,6 +98,79 @@
+     "sh".to_string()
+ }
+ 
++pub fn terminal_discovery_path() -> Option<PathBuf> {
++    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
++    Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
++}
++
++pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io::Error> {
++    let contents = fs::read_to_string(path)?;
++    serde_json::from_str(&contents)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
++}
++
++pub fn write_discovery_file(
++    discovery: &TerminalDiscoveryFile,
++) -> Result<PathBuf, std::io::Error> {
++    let path = terminal_discovery_path()
++        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)?;
++    }
++    let payload = serde_json::to_vec_pretty(discovery)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
++    write_atomic_file(&path, &payload)?;
++    Ok(path)
++}
++
++fn discovery_tmp_path(path: &Path) -> PathBuf {
++    let suffix: String = rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(12)
++        .map(char::from)
++        .collect();
++    let file_name = path
++        .file_name()
++        .and_then(|name| name.to_str())
++        .unwrap_or("terminald.json");
++    let tmp_name = format!(".{file_name}.tmp-{suffix}");
++    match path.parent() {
++        Some(parent) => parent.join(tmp_name),
++        None => PathBuf::from(tmp_name),
++    }
++}
++
++fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
++    let tmp_path = discovery_tmp_path(path);
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        options.mode(0o600);
++    }
++    let mut file = options.open(&tmp_path)?;
++    file.write_all(payload)?;
++    file.sync_all()?;
++    #[cfg(unix)]
++    {
++        let permissions = fs::Permissions::from_mode(0o600);
++        fs::set_permissions(&tmp_path, permissions)?;
++    }
++    if let Err(error) = fs::rename(&tmp_path, path) {
++        #[cfg(windows)]
++        {
++            if path.exists() {
++                let _ = fs::remove_file(path);
++                fs::rename(&tmp_path, path)?;
++                return Ok(());
++            }
++        }
++        let _ = fs::remove_file(&tmp_path);
++        return Err(error);
++    }
++    Ok(())
++}
++
+ #[derive(Clone)]
+ struct TerminalOutputChunk {
+     seq: u64,
+
+
+
+
+thinking
+**Identifying run log auto-updates**
+
+The run log file auto-updates after each command, causing repeated modifications even post-commit. To prevent looping, it's best to postpone staging the run log until just before the final commit, ensuring a clean tree while including all activity.
+thinking
+**Planning final commit and clean tree strategy**
+
+The run log continuously updates with each shell command, causing repeated modifications and extra commits. To ensure a clean tree, the plan is to stage and commit all run log changes as the final commit, then avoid running further commands—including status checks—after that commit to prevent new modifications.
+thinking
+**Planning run log inspection despite triggering updates**
+
+To verify whether `git status` updates the run log, I'll inspect the run log's tail despite knowing this action will append to it again; this will clarify run log update sources and help finalize the commit strategy.
+exec
+/bin/zsh -lc 'tail -n 20 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-3.log' in /Users/mac/codes/vibe-inspect succeeded in 23ms:
+ struct TerminalOutputChunk {
+     seq: u64,
+
+
+
+
+thinking
+**Identifying run log auto-updates**
+
+The run log file auto-updates after each command, causing repeated modifications even post-commit. To prevent looping, it's best to postpone staging the run log until just before the final commit, ensuring a clean tree while including all activity.
+thinking
+**Planning final commit and clean tree strategy**
+
+The run log continuously updates with each shell command, causing repeated modifications and extra commits. To ensure a clean tree, the plan is to stage and commit all run log changes as the final commit, then avoid running further commands—including status checks—after that commit to prevent new modifications.
+thinking
+**Planning run log inspection despite triggering updates**
+
+To verify whether `git status` updates the run log, I'll inspect the run log's tail despite knowing this action will append to it again; this will clarify run log update sources and help finalize the commit strategy.
+exec
+/bin/zsh -lc 'tail -n 20 /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-3.log' in /Users/mac/codes/vibe-inspect
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 39d17e11b854e9f33e716e1128b28ca7363f389f..b3d42d5a7bea2971942274c913b4240580342d31
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1207,9 +1207,8 @@
+   - desktop/src/bin/terminald.rs
+   - desktop/src/bin/vibe-ctl.rs
+   - desktop/src/terminal_core.rs
+-- What was implemented
++- What was implemented: terminald now writes a discovery file with atomic temp+rename and 0600 perms, terminal_core exposes discovery path/read/write helpers, and vibe-ctl resolves config via env overrides and discovery file content.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
++  - Discovery writes should use temp file + rename for atomicity across restarts.
+ ---
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+index be8d19932ba3f60e38f3c2ab028a3f251070caf9..15af78662417c5680708382bdba845b35d5d6028
+--- a/desktop/src/bin/terminald.rs
++++ b/desktop/src/bin/terminald.rs
+@@ -1,6 +1,11 @@
+ use clap::Parser;
++use rand::{distributions::Alphanumeric, Rng};
+ 
+-use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++use desktop::terminal_core::{
++    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
++    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
++};
++use std::time::{SystemTime, UNIX_EPOCH};
+ 
+ #[derive(Debug, Parser)]
+ #[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
+@@ -14,5 +19,47 @@
+ }
+ 
+ fn main() {
+-    let _args = TerminaldArgs::parse();
++    let args = TerminaldArgs::parse();
++    let ws_path = normalize_ws_path(&args.ws_path);
++    let ws_url = format!("ws://{}{}", args.bind.trim(), ws_path);
++    let token = random_token(32);
++    let discovery = TerminalDiscoveryFile {
++        ws_url,
++        token,
++        version: TERMINALD_PROTOCOL_VERSION.to_string(),
++        pid: std::process::id(),
++        created_at: now_ts(),
++        capabilities: Vec::new(),
++    };
++    if let Err(error) = write_discovery_file(&discovery) {
++        eprintln!("Failed to write discovery file: {error}");
++        std::process::exit(1);
++    }
++}
++
++fn normalize_ws_path(path: &str) -> String {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return DEFAULT_TERMINALD_WS_PATH.to_string();
++    }
++    if trimmed.starts_with('/') {
++        trimmed.to_string()
++    } else {
++        format!("/{trimmed}")
++    }
++}
++
++fn random_token(len: usize) -> String {
++    rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(len)
++        .map(char::from)
++        .collect()
++}
++
++fn now_ts() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_secs()
+ }
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index ce9b53b727eba94772e2e86e2d130d16cc9f654e..de8232ec92d53f1c04de23ca1b46a2591b4ca88c
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,6 +1,8 @@
+ use clap::{Parser, Subcommand};
+ 
+-use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++use desktop::terminal_core::{read_discovery_file, terminal_discovery_path, DEFAULT_TERMINALD_WS_URL};
++use std::env;
++use std::path::PathBuf;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -22,9 +24,67 @@
+ 
+ fn main() {
+     let cli = Cli::parse();
++    let config = match resolve_config() {
++        Ok(config) => config,
++        Err(error) => {
++            eprintln!("{}: {}", error.code, error.message);
++            std::process::exit(1);
++        }
++    };
+     match cli.command {
+         Command::Defaults => {
+-            println!("{DEFAULT_TERMINALD_WS_URL}");
++            println!("{}", config.ws_url);
++        }
++    }
++}
++
++struct ResolvedConfig {
++    ws_url: String,
++    token: Option<String>,
++}
++
++struct ConfigError {
++    code: &'static str,
++    message: String,
++}
++
++fn resolve_config() -> Result<ResolvedConfig, ConfigError> {
++    let config_override = read_env_value("VIBE_CTL_CONFIG").map(PathBuf::from);
++    let default_config = terminal_discovery_path();
++    let config_path = config_override.clone().or(default_config);
++    let discovery = match config_path {
++        Some(path) => match read_discovery_file(&path) {
++            Ok(file) => Some(file),
++            Err(error) => {
++                if config_override.is_some() {
++                    return Err(ConfigError {
++                        code: "connection_failed",
++                        message: format!("Failed to read config {}: {error}", path.display()),
++                    });
++                }
++                None
++            }
++        },
++        None => None,
++    };
++    let ws_url = read_env_value("VIBE_CTL_ENDPOINT")
++        .or_else(|| discovery.as_ref().map(|file| file.ws_url.clone()))
++        .unwrap_or_else(|| DEFAULT_TERMINALD_WS_URL.to_string());
++    let token = read_env_value("VIBE_CTL_TOKEN")
++        .or_else(|| discovery.as_ref().map(|file| file.token.clone()));
++    Ok(ResolvedConfig { ws_url, token })
++}
++
++fn read_env_value(key: &str) -> Option<String> {
++    match env::var(key) {
++        Ok(value) => {
++            let trimmed = value.trim().to_string();
++            if trimmed.is_empty() {
++                None
++            } else {
++                Some(trimmed)
++            }
+         }
++        Err(_) => None,
+     }
+ }
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 7fff5d6560aa233924ab3874fc2aa4d055e9b713..65119a5d8268c6a6b8a8373c2b49a900dafa103a
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -10,6 +10,8 @@
+ use std::collections::{HashMap, HashSet, VecDeque};
+ use std::fs;
+ use std::io::{Read, Write};
++#[cfg(unix)]
++use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+@@ -26,6 +28,12 @@
+ /// Default WebSocket path for terminald.
+ pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+ 
++/// Protocol version for terminald clients.
++pub const TERMINALD_PROTOCOL_VERSION: &str = "1.0";
++
++/// Discovery file name for terminald.
++pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
++
+ const DEFAULT_COLS: u16 = 120;
+ const DEFAULT_ROWS: u16 = 32;
+ const MAX_BUFFER_BYTES: usize = 512 * 1024;
+@@ -40,6 +48,16 @@
+ const NOTIFICATION_QUEUE_LIMIT: usize = 200;
+ const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct TerminalDiscoveryFile {
++    pub ws_url: String,
++    pub token: String,
++    pub version: String,
++    pub pid: u32,
++    pub created_at: u64,
++    pub capabilities: Vec<String>,
++}
++
+ fn resolve_shell() -> String {
+     if let Ok(shell) = std::env::var("SHELL") {
+         let trimmed = shell.trim();
+@@ -80,6 +98,79 @@
+     "sh".to_string()
+ }
+ 
++pub fn terminal_discovery_path() -> Option<PathBuf> {
++    let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
++    Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
++}
++
++pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io::Error> {
++    let contents = fs::read_to_string(path)?;
++    serde_json::from_str(&contents)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
++}
++
++pub fn write_discovery_file(
++    discovery: &TerminalDiscoveryFile,
++) -> Result<PathBuf, std::io::Error> {
++    let path = terminal_discovery_path()
++        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
++    if let Some(parent) = path.parent() {
++        fs::create_dir_all(parent)?;
++    }
++    let payload = serde_json::to_vec_pretty(discovery)
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
++    write_atomic_file(&path, &payload)?;
++    Ok(path)
++}
++
++fn discovery_tmp_path(path: &Path) -> PathBuf {
++    let suffix: String = rand::thread_rng()
++        .sample_iter(&Alphanumeric)
++        .take(12)
++        .map(char::from)
++        .collect();
++    let file_name = path
++        .file_name()
++        .and_then(|name| name.to_str())
++        .unwrap_or("terminald.json");
++    let tmp_name = format!(".{file_name}.tmp-{suffix}");
++    match path.parent() {
++        Some(parent) => parent.join(tmp_name),
++        None => PathBuf::from(tmp_name),
++    }
++}
++
++fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
++    let tmp_path = discovery_tmp_path(path);
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        options.mode(0o600);
++    }
++    let mut file = options.open(&tmp_path)?;
++    file.write_all(payload)?;
++    file.sync_all()?;
++    #[cfg(unix)]
++    {
++        let permissions = fs::Permissions::from_mode(0o600);
++        fs::set_permissions(&tmp_path, permissions)?;
++    }
++    if let Err(error) = fs::rename(&tmp_path, path) {
++        #[cfg(windows)]
++        {
++            if path.exists() {
++                let _ = fs::remove_file(path);
++                fs::rename(&tmp_path, path)?;
++                return Ok(());
++            }
++        }
++        let _ = fs::remove_file(&tmp_path);
++        return Err(error);
++    }
++    Ok(())
++}
++
+ #[derive(Clone)]
+ struct TerminalOutputChunk {
+     seq: u64,
+
+
+
+
+thinking
+**Resolving final commit and status check order**
+
+The run log appends every shell command, so no commands can run after the final commit. To confirm a clean tree after commit, I'll need to combine necessary checks before the final commit or reconsider how to validate the post-commit state within this constraint.
+thinking
+**Finalizing commit despite auto-updated run log**
+
+Acknowledging that the run log auto-updates after each command—including commit—making a perfectly clean tree impossible, I'll do one last commit including all changes, then stop running commands and note in the final response that the working tree may show run log modifications due to logging activity after that commit.
+thinking
+**Committing final run log changes before stopping commands**
+
+I'll stage all current changes including the modified run log and commit them once more, then stop running commands to avoid further log modifications; final response will summarize commit info without additional commands.
+exec
 /bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
