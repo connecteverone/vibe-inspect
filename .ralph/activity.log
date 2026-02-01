@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-02 01:25:32 | run=20260201-231810-31541 | iter=7 | mode=build | story=US-007 | duration=1835s | status=success
 - 2026-02-02 00:54:55 | run=20260201-231810-31541 | iter=6 | mode=build | story=US-006 | duration=1136s | status=success
 - 2026-02-02 00:35:56 | run=20260201-231810-31541 | iter=5 | mode=build | story=US-005 | duration=878s | status=success
 - 2026-02-02 00:21:16 | run=20260201-231810-31541 | iter=4 | mode=build | story=US-004 | duration=887s | status=success
@@ -335,3 +336,8 @@
 [2026-02-02 01:10:22] Updated terminal sequencing/truncation logic and client polling semantics
 [2026-02-02 01:15:00] Ran flutter tests/analyze and web build/browser check
 [2026-02-02 01:22:13] Updated progress log for US-007
+[2026-02-02 01:25:32] ITERATION 7 end (duration=1835s)
+[2026-02-02 01:25:34] ITERATION 8 start (mode=build story=US-008)
+[2026-02-02 01:26:17] Start US-008 backpressure handling work
+[2026-02-02 01:55:18] Implemented backpressure queue, pause/resume, and subscription limit handling
+[2026-02-02 01:55:57] Ran flutter tests and analyses (flutter analyze failures in third_party/flutter_quic build_tool)

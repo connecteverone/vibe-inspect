@@ -14,12 +14,12 @@ use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 
 use desktop::terminal_core::{
-    handle_terminal_command, list_terminal_sessions, write_discovery_file,
-    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
-    DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+    build_terminal_snapshot_payload, handle_terminal_command, list_terminal_sessions,
+    write_discovery_file, TerminalActionRequest, TerminalDiscoveryFile, TerminalError,
+    DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{interval, timeout, MissedTickBehavior};
@@ -45,6 +45,11 @@ struct TerminaldState {
 type WsSender = SplitSink<WebSocket, Message>;
 
 const MAX_TERMINAL_PAYLOAD_BYTES: usize = 900 * 1024;
+const MAX_SUBSCRIPTIONS_PER_SOCKET: usize = 4;
+const MAX_SEND_QUEUE_BYTES: usize = 2 * 1024 * 1024;
+const LOW_WATER_MARK_BYTES: usize = 1024 * 1024;
+const STREAM_PAUSED_REASON: &str = "backpressure";
+const STREAM_PAUSED_RETRY_MS: u64 = 1000;
 const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
 const PAYLOAD_TOO_LARGE_MESSAGE: &str =
     "Terminal snapshot too large to send; reduce output volume and retry.";
@@ -75,6 +80,71 @@ struct StreamEventBatch {
     events: Vec<Value>,
     detached: Vec<String>,
     close: bool,
+}
+
+#[derive(Debug)]
+struct QueuedMessage {
+    text: String,
+    bytes: usize,
+    is_terminal_payload: bool,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct OutboundQueue {
+    items: VecDeque<QueuedMessage>,
+    bytes: usize,
+}
+
+impl OutboundQueue {
+    fn push(&mut self, message: QueuedMessage) {
+        self.bytes = self.bytes.saturating_add(message.bytes);
+        self.items.push_back(message);
+    }
+
+    fn pop(&mut self) -> Option<QueuedMessage> {
+        let message = self.items.pop_front()?;
+        self.bytes = self.bytes.saturating_sub(message.bytes);
+        Some(message)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn remove_terminal_payloads(&mut self, session_id: Option<&str>) -> usize {
+        if self.items.is_empty() {
+            return 0;
+        }
+        let mut removed_bytes = 0;
+        let mut retained = VecDeque::with_capacity(self.items.len());
+        while let Some(message) = self.items.pop_front() {
+            let matches_session = session_id
+                .map(|id| message.session_id.as_deref() == Some(id))
+                .unwrap_or(true);
+            if message.is_terminal_payload && matches_session {
+                removed_bytes = removed_bytes.saturating_add(message.bytes);
+                continue;
+            }
+            retained.push_back(message);
+        }
+        self.items = retained;
+        self.bytes = self.bytes.saturating_sub(removed_bytes);
+        removed_bytes
+    }
+}
+
+#[derive(Debug, Default)]
+struct BackpressureState {
+    paused: bool,
+    pending_snapshots: HashSet<String>,
+}
+
+#[derive(Debug)]
+enum EnqueueResult {
+    Enqueued,
+    Dropped,
+    Close,
 }
 
 #[tokio::main]
@@ -299,31 +369,58 @@ async fn handle_socket(mut socket: WebSocket, state: TerminaldState) {
 async fn run_authenticated_socket(socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions: HashMap<String, AttachmentState> = HashMap::new();
+    let mut outbound = OutboundQueue::default();
+    let mut backpressure = BackpressureState::default();
     let mut tick = interval(Duration::from_millis(80));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_sent_at = Instant::now();
+    let mut closing = false;
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if !subscriptions.is_empty() {
-                    let batch = collect_stream_events(&mut subscriptions);
-                    for event in batch.events {
-                        if send_json_sender(&mut sender, event).await.is_err() {
-                            return;
-                        }
-                        last_sent_at = Instant::now();
-                    }
-                    for session_id in batch.detached {
-                        subscriptions.remove(&session_id);
-                    }
-                    if batch.close {
+                if flush_outbound_queue(&mut sender, &mut outbound, &mut last_sent_at)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+
+                if closing {
+                    if outbound.is_empty() {
                         let _ = sender.send(Message::Close(None)).await;
                         return;
                     }
+                    continue;
                 }
 
-                if last_sent_at.elapsed() > Duration::from_secs(15) {
+                if backpressure.paused && outbound.bytes <= LOW_WATER_MARK_BYTES {
+                    if resume_streaming(&mut outbound, &mut backpressure, &mut subscriptions) {
+                        closing = true;
+                    }
+                }
+
+                if !subscriptions.is_empty() {
+                    let batch = collect_stream_events(&mut subscriptions);
+                    for event in batch.events {
+                        match enqueue_event(&mut outbound, &mut backpressure, event) {
+                            EnqueueResult::Enqueued | EnqueueResult::Dropped => {}
+                            EnqueueResult::Close => {
+                                closing = true;
+                                break;
+                            }
+                        }
+                    }
+                    for session_id in batch.detached {
+                        subscriptions.remove(&session_id);
+                        backpressure.pending_snapshots.remove(&session_id);
+                    }
+                    if batch.close {
+                        closing = true;
+                    }
+                }
+
+                if outbound.is_empty() && last_sent_at.elapsed() > Duration::from_secs(15) {
                     if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                         return;
                     }
@@ -340,7 +437,16 @@ async fn run_authenticated_socket(socket: WebSocket) {
                         last_sent_at = Instant::now();
                     }
                     Ok(Message::Text(text)) => {
-                        if handle_request(&mut sender, &mut subscriptions, &text, &mut last_sent_at).await {
+                        if handle_request(
+                            &mut sender,
+                            &mut subscriptions,
+                            &mut outbound,
+                            &mut backpressure,
+                            &text,
+                            &mut last_sent_at,
+                        )
+                        .await
+                        {
                             continue;
                         }
                         break;
@@ -356,6 +462,8 @@ async fn run_authenticated_socket(socket: WebSocket) {
 async fn handle_request(
     sender: &mut WsSender,
     subscriptions: &mut HashMap<String, AttachmentState>,
+    outbound: &mut OutboundQueue,
+    backpressure: &mut BackpressureState,
     text: &str,
     last_sent_at: &mut Instant,
 ) -> bool {
@@ -486,6 +594,19 @@ async fn handle_request(
                     return true;
                 }
             };
+            if !subscriptions.contains_key(&session_id)
+                && subscriptions.len() >= MAX_SUBSCRIPTIONS_PER_SOCKET
+            {
+                send_error_response(
+                    sender,
+                    request_id,
+                    "state_locked",
+                    "Too many active subscriptions.",
+                )
+                .await;
+                *last_sent_at = Instant::now();
+                return true;
+            }
             let since = payload
                 .and_then(|payload| payload.get("since"))
                 .and_then(|value| value.as_u64())
@@ -540,19 +661,15 @@ async fn handle_request(
                     subscriptions.insert(session_id.clone(), attachment);
                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
                     if summary.truncated {
-                        let _ = send_session_warning(
-                            sender,
-                            &session_id,
-                            "buffer_truncated",
-                            BUFFER_TRUNCATED_MESSAGE,
-                        )
-                        .await;
+                        let warning =
+                            build_session_warning(&session_id, "buffer_truncated", BUFFER_TRUNCATED_MESSAGE);
+                        if enqueue_event(outbound, backpressure, warning) == EnqueueResult::Close {
+                            return false;
+                        }
                     }
                     let stream_payload = as_stream_payload(payload);
-                    if send_event(sender, "terminal_payload", &session_id, stream_payload)
-                        .await
-                        .is_err()
-                    {
+                    let event = build_terminal_payload_event(&session_id, stream_payload);
+                    if enqueue_event(outbound, backpressure, event) == EnqueueResult::Close {
                         return false;
                     }
                 }
@@ -570,6 +687,7 @@ async fn handle_request(
                 }
             };
             subscriptions.remove(&session_id);
+            backpressure.pending_snapshots.remove(&session_id);
             send_ok_response(sender, request_id, json!({ "detached": true })).await;
             *last_sent_at = Instant::now();
         }
@@ -626,13 +744,11 @@ async fn handle_request(
                     let truncated = payload_truncated(&payload);
                     send_ok_response(sender, request_id, payload).await;
                     if truncated {
-                        let _ = send_session_warning(
-                            sender,
-                            &session_id,
-                            "buffer_truncated",
-                            BUFFER_TRUNCATED_MESSAGE,
-                        )
-                        .await;
+                        let warning =
+                            build_session_warning(&session_id, "buffer_truncated", BUFFER_TRUNCATED_MESSAGE);
+                        if enqueue_event(outbound, backpressure, warning) == EnqueueResult::Close {
+                            return false;
+                        }
                     }
                 }
                 Err(error) => send_terminal_error(sender, request_id, error).await,
@@ -786,19 +902,21 @@ async fn send_terminal_error(sender: &mut WsSender, request_id: &str, error: Ter
     send_error_response(sender, request_id, error.code, &error.message).await;
 }
 
-async fn send_event(
-    sender: &mut WsSender,
-    event: &str,
-    session_id: &str,
-    data: Value,
-) -> Result<(), axum::Error> {
-    let payload = json!({
+fn build_terminal_payload_event(session_id: &str, data: Value) -> Value {
+    json!({
         "type": "event",
-        "event": event,
+        "event": "terminal_payload",
         "session_id": session_id,
         "data": data,
-    });
-    send_json_sender(sender, payload).await
+    })
+}
+
+fn build_stream_event(event: &str, data: Value) -> Value {
+    json!({
+        "type": "event",
+        "event": event,
+        "data": data,
+    })
 }
 
 fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value {
@@ -822,6 +940,188 @@ async fn send_session_warning(
     message: &str,
 ) -> Result<(), axum::Error> {
     send_json_sender(sender, build_session_warning(session_id, reason, message)).await
+}
+
+fn event_meta(value: &Value) -> (bool, Option<String>) {
+    let event = value.get("event").and_then(|value| value.as_str()).unwrap_or("");
+    let is_terminal_payload = event == "terminal_payload";
+    let session_id = value
+        .get("session_id")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+    (is_terminal_payload, session_id)
+}
+
+fn enqueue_control_event(queue: &mut OutboundQueue, value: Value) -> EnqueueResult {
+    let text = value.to_string();
+    let bytes = text.as_bytes().len();
+    if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+        queue.remove_terminal_payloads(None);
+    }
+    if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+        return EnqueueResult::Close;
+    }
+    queue.push(QueuedMessage {
+        text,
+        bytes,
+        is_terminal_payload: false,
+        session_id: None,
+    });
+    EnqueueResult::Enqueued
+}
+
+fn trigger_backpressure(
+    queue: &mut OutboundQueue,
+    backpressure: &mut BackpressureState,
+    session_id: Option<&str>,
+) -> EnqueueResult {
+    if let Some(session_id) = session_id {
+        backpressure.pending_snapshots.insert(session_id.to_string());
+        queue.remove_terminal_payloads(Some(session_id));
+    }
+    if backpressure.paused {
+        return EnqueueResult::Dropped;
+    }
+    backpressure.paused = true;
+    let paused_event = build_stream_event(
+        "stream_paused",
+        json!({
+            "reason": STREAM_PAUSED_REASON,
+            "retry_after_ms": STREAM_PAUSED_RETRY_MS,
+        }),
+    );
+    enqueue_control_event(queue, paused_event)
+}
+
+fn enqueue_event(
+    queue: &mut OutboundQueue,
+    backpressure: &mut BackpressureState,
+    value: Value,
+) -> EnqueueResult {
+    let (is_terminal_payload, session_id) = event_meta(&value);
+    let text = value.to_string();
+    let bytes = text.as_bytes().len();
+    if is_terminal_payload {
+        if backpressure.paused {
+            if let Some(session_id) = session_id {
+                backpressure.pending_snapshots.insert(session_id);
+            }
+            return EnqueueResult::Dropped;
+        }
+        if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+            let result = trigger_backpressure(queue, backpressure, session_id.as_deref());
+            if matches!(result, EnqueueResult::Close) {
+                return result;
+            }
+            return EnqueueResult::Dropped;
+        }
+    } else if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+        queue.remove_terminal_payloads(None);
+        if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+            return EnqueueResult::Close;
+        }
+    }
+    queue.push(QueuedMessage {
+        text,
+        bytes,
+        is_terminal_payload,
+        session_id,
+    });
+    EnqueueResult::Enqueued
+}
+
+fn enqueue_snapshot_event(queue: &mut OutboundQueue, value: Value) -> EnqueueResult {
+    let (is_terminal_payload, session_id) = event_meta(&value);
+    let text = value.to_string();
+    let bytes = text.as_bytes().len();
+    if queue.bytes.saturating_add(bytes) > MAX_SEND_QUEUE_BYTES {
+        return EnqueueResult::Dropped;
+    }
+    queue.push(QueuedMessage {
+        text,
+        bytes,
+        is_terminal_payload,
+        session_id,
+    });
+    EnqueueResult::Enqueued
+}
+
+async fn flush_outbound_queue(
+    sender: &mut WsSender,
+    queue: &mut OutboundQueue,
+    last_sent_at: &mut Instant,
+) -> Result<(), axum::Error> {
+    while let Some(message) = queue.pop() {
+        sender.send(Message::Text(message.text.into())).await?;
+        *last_sent_at = Instant::now();
+    }
+    Ok(())
+}
+
+fn apply_payload_summary(state: &mut AttachmentState, summary: &PayloadSummary) {
+    state.last_seq = summary.next_seq.saturating_sub(1);
+    state.last_notification_seq = summary.notification_next_seq;
+    state.last_status = summary.status.clone();
+    state.last_exit_code = summary.exit_code;
+    state.last_label = summary.label.clone();
+    state.last_truncated = summary.truncated;
+}
+
+fn resume_streaming(
+    outbound: &mut OutboundQueue,
+    backpressure: &mut BackpressureState,
+    subscriptions: &mut HashMap<String, AttachmentState>,
+) -> bool {
+    if !backpressure.paused {
+        return false;
+    }
+    let session_ids = backpressure
+        .pending_snapshots
+        .drain()
+        .collect::<Vec<_>>();
+    let mut still_pending = Vec::new();
+    for session_id in session_ids {
+        let notify_since = subscriptions
+            .get(&session_id)
+            .map(|state| state.last_notification_seq)
+            .unwrap_or(0);
+        let payload = match build_terminal_snapshot_payload(&session_id, notify_since) {
+            Ok(payload) => payload,
+            Err(_) => {
+                subscriptions.remove(&session_id);
+                continue;
+            }
+        };
+        if snapshot_too_large(&payload) {
+            let warning =
+                build_session_warning(&session_id, "payload_too_large", PAYLOAD_TOO_LARGE_MESSAGE);
+            let _ = enqueue_control_event(outbound, warning);
+            return true;
+        }
+        let summary = summarize_payload(&payload);
+        if let Some(state) = subscriptions.get_mut(&session_id) {
+            apply_payload_summary(state, &summary);
+        }
+        let stream_payload = as_stream_payload(payload);
+        let event = build_terminal_payload_event(&session_id, stream_payload);
+        match enqueue_snapshot_event(outbound, event) {
+            EnqueueResult::Enqueued => {}
+            EnqueueResult::Dropped => still_pending.push(session_id),
+            EnqueueResult::Close => return true,
+        }
+    }
+    if !still_pending.is_empty() {
+        for session_id in still_pending {
+            backpressure.pending_snapshots.insert(session_id);
+        }
+        return false;
+    }
+    backpressure.paused = false;
+    let resumed_event = build_stream_event("stream_resumed", json!({}));
+    matches!(
+        enqueue_control_event(outbound, resumed_event),
+        EnqueueResult::Close
+    )
 }
 
 fn ensure_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
@@ -958,12 +1258,7 @@ fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -
                     state.last_label = summary.label;
                     state.last_truncated = summary.truncated;
                     let stream_payload = as_stream_payload(payload);
-                    events.push(json!({
-                        "type": "event",
-                        "event": "terminal_payload",
-                        "session_id": session_id,
-                        "data": stream_payload,
-                    }));
+                    events.push(build_terminal_payload_event(session_id, stream_payload));
                 } else if state.last_truncated {
                     state.last_truncated = false;
                 }

@@ -638,6 +638,46 @@ pub fn handle_terminal_command(request: TerminalActionRequest) -> Result<Value, 
     }
 }
 
+pub fn build_terminal_snapshot_payload(
+    session_id: &str,
+    notify_since: u64,
+) -> Result<Value, TerminalError> {
+    let trimmed = session_id.trim();
+    if trimmed.is_empty() {
+        return Err(TerminalError::new("missing_session", "Missing session id."));
+    }
+    let manager = terminal_manager();
+    let session = {
+        let manager = manager
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
+        manager
+            .session(trimmed)
+            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+    };
+    let mut session = session
+        .lock()
+        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+    session.last_activity = now_ts();
+    let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
+    let snapshot = session.snapshot_formatted().unwrap_or_default();
+    Ok(build_session_payload(
+        "poll",
+        &session.id,
+        session.status,
+        next_expected_seq(session.next_seq),
+        Vec::new(),
+        session.first_seq(),
+        true,
+        Some(snapshot),
+        session.exit_code,
+        session.last_activity,
+        Some(session.label.as_str()),
+        session.notification_seq,
+        notifications,
+    ))
+}
+
 pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
     let session = {
         let manager = terminal_manager();
