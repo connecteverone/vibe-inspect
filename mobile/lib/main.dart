@@ -12174,20 +12174,32 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   void _movePointerBy(Offset delta) {
     final trackpadSize = _lastTrackpadSize;
     final viewSize = _lastViewSize;
-    final surfaceSize = (trackpadSize.width > 0 && trackpadSize.height > 0)
-        ? trackpadSize
-        : viewSize;
-    if (surfaceSize.width <= 0 || surfaceSize.height <= 0) {
+    final hasTrackpadSize = trackpadSize.width > 0 && trackpadSize.height > 0;
+    final hasViewSize = viewSize.width > 0 && viewSize.height > 0;
+    if (!hasTrackpadSize && !hasViewSize) {
       final accelerated = _applyTrackpadAcceleration(delta);
       _setPointerPosition(_pointerPosition + accelerated / _zoom);
       return;
     }
-    final baseScale = _trackpadBaseScale(surfaceSize);
-    if (!baseScale.isFinite || baseScale <= 0) {
+    final surfaceSize = hasViewSize ? viewSize : trackpadSize;
+    if (surfaceSize.width <= 0 || surfaceSize.height <= 0) {
       return;
     }
-    final scaledBase = baseScale * _zoom;
-    final accelerated = _applyTrackpadAcceleration(delta, scale: scaledBase);
+    final viewScale = hasViewSize
+        ? _baseScale(viewSize)
+        : (hasTrackpadSize ? _trackpadBaseScale(trackpadSize) : 1.0);
+    if (!viewScale.isFinite || viewScale <= 0) {
+      return;
+    }
+    final normalizedDelta = (hasViewSize && hasTrackpadSize)
+        ? Offset(
+            delta.dx * (viewSize.width / trackpadSize.width),
+            delta.dy * (viewSize.height / trackpadSize.height),
+          )
+        : delta;
+    final scaledBase = viewScale * _zoom;
+    final accelerated =
+        _applyTrackpadAcceleration(normalizedDelta, scale: scaledBase);
     final scaled = accelerated / scaledBase;
     _setPointerPosition(_pointerPosition + scaled);
   }
