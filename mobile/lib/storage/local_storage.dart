@@ -13,6 +13,12 @@ abstract class StorageRepository {
   Future<void> insertTimelineEvent(TimelineEvent event);
   Future<void> deleteConnection(String connectionId);
   Future<void> deleteToolSessionsByAgent(String agentId);
+  Future<void> insertAgentLog(AgentLogEntry entry);
+  Future<List<AgentLogEntry>> fetchAgentLogs(
+    String agentId, {
+    int limit = 2000,
+  });
+  Future<void> deleteAgentLogs(String agentId);
   Future<String?> readKeyValue(String key);
   Future<void> writeKeyValue(String key, String value);
   Future<void> deleteKeyValue(String key);
@@ -28,7 +34,7 @@ class LocalStorageInitializer extends StorageInitializer {
   const LocalStorageInitializer();
 
   static const _databaseName = 'vibe_inspect.db';
-  static const _schemaVersion = 7;
+  static const _schemaVersion = 8;
   static const _storageKeyId = 'vibe_storage_key';
 
   @override
@@ -86,6 +92,9 @@ class LocalStorageInitializer extends StorageInitializer {
             'ALTER TABLE connections ADD COLUMN host_name TEXT',
           );
         }
+        if (oldVersion < 8) {
+          await _createAgentLogsTable(db);
+        }
       },
     );
     await _ensureStorageKey(secureStorage);
@@ -132,6 +141,7 @@ class LocalStorageInitializer extends StorageInitializer {
     await db.execute(
       'CREATE INDEX tool_sessions_created_at ON tool_sessions(created_at)',
     );
+    await _createAgentLogsTable(db);
   }
 
   static Future<void> _createConnectionsTable(Database db) async {
@@ -158,6 +168,22 @@ class LocalStorageInitializer extends StorageInitializer {
       'CREATE INDEX connections_connected_at ON connections(connected_at)',
     );
   }
+
+  static Future<void> _createAgentLogsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE agent_logs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        level TEXT,
+        message TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX agent_logs_agent_created_at ON agent_logs(agent_id, created_at)',
+    );
+  }
 }
 
 class MemoryStorageInitializer extends StorageInitializer {
@@ -174,6 +200,7 @@ class LocalStorage implements StorageRepository {
 
   final Database _database;
   final FlutterSecureStorage _secureStorage;
+  static const int _maxAgentLogBytes = 10 * 1024 * 1024;
 
   @override
   Future<List<ConnectionRecord>> fetchConnections() async {
@@ -250,6 +277,40 @@ class LocalStorage implements StorageRepository {
   }
 
   @override
+  Future<void> insertAgentLog(AgentLogEntry entry) async {
+    await _database.insert(
+      'agent_logs',
+      entry.toDatabase(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await _trimAgentLogs(entry.agentId);
+  }
+
+  @override
+  Future<List<AgentLogEntry>> fetchAgentLogs(
+    String agentId, {
+    int limit = 2000,
+  }) async {
+    final rows = await _database.query(
+      'agent_logs',
+      where: 'agent_id = ?',
+      whereArgs: [agentId],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+    return rows.map(AgentLogEntry.fromDatabase).toList();
+  }
+
+  @override
+  Future<void> deleteAgentLogs(String agentId) async {
+    await _database.delete(
+      'agent_logs',
+      where: 'agent_id = ?',
+      whereArgs: [agentId],
+    );
+  }
+
+  @override
   Future<String?> readKeyValue(String key) async {
     return _secureStorage.read(key: key);
   }
@@ -263,13 +324,50 @@ class LocalStorage implements StorageRepository {
   Future<void> deleteKeyValue(String key) async {
     await _secureStorage.delete(key: key);
   }
+
+  Future<void> _trimAgentLogs(String agentId) async {
+    final result = await _database.rawQuery(
+      'SELECT SUM(size_bytes) as total FROM agent_logs WHERE agent_id = ?',
+      [agentId],
+    );
+    final total = (result.isNotEmpty ? result.first['total'] : null) as int?;
+    if (total == null || total <= _maxAgentLogBytes) {
+      return;
+    }
+    final rows = await _database.query(
+      'agent_logs',
+      columns: ['id', 'size_bytes'],
+      where: 'agent_id = ?',
+      whereArgs: [agentId],
+      orderBy: 'created_at ASC',
+    );
+    var remaining = total;
+    for (final row in rows) {
+      if (remaining <= _maxAgentLogBytes) {
+        break;
+      }
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) {
+        continue;
+      }
+      final size = (row['size_bytes'] as int?) ?? 0;
+      await _database.delete(
+        'agent_logs',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      remaining -= size;
+    }
+  }
 }
 
 class MemoryStorage implements StorageRepository {
   final List<ConnectionRecord> _connections = [];
   final List<ToolSession> _sessions = [];
   final List<TimelineEvent> _events = [];
+  final List<AgentLogEntry> _agentLogs = [];
   final Map<String, String> _keyValues = {};
+  static const int _maxAgentLogBytes = 10 * 1024 * 1024;
 
   @override
   Future<List<ConnectionRecord>> fetchConnections() async {
@@ -322,6 +420,32 @@ class MemoryStorage implements StorageRepository {
   }
 
   @override
+  Future<void> insertAgentLog(AgentLogEntry entry) async {
+    _agentLogs.add(entry);
+    _trimAgentLogs(entry.agentId);
+  }
+
+  @override
+  Future<List<AgentLogEntry>> fetchAgentLogs(
+    String agentId, {
+    int limit = 2000,
+  }) async {
+    final items = _agentLogs
+        .where((entry) => entry.agentId == agentId)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (items.length > limit) {
+      return items.sublist(items.length - limit);
+    }
+    return items;
+  }
+
+  @override
+  Future<void> deleteAgentLogs(String agentId) async {
+    _agentLogs.removeWhere((entry) => entry.agentId == agentId);
+  }
+
+  @override
   Future<String?> readKeyValue(String key) async {
     return _keyValues[key];
   }
@@ -334,6 +458,26 @@ class MemoryStorage implements StorageRepository {
   @override
   Future<void> deleteKeyValue(String key) async {
     _keyValues.remove(key);
+  }
+
+  void _trimAgentLogs(String agentId) {
+    final items =
+        _agentLogs.where((entry) => entry.agentId == agentId).toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    var total = 0;
+    for (final entry in items) {
+      total += entry.sizeBytes;
+    }
+    if (total <= _maxAgentLogBytes) {
+      return;
+    }
+    for (final entry in items) {
+      if (total <= _maxAgentLogBytes) {
+        break;
+      }
+      total -= entry.sizeBytes;
+      _agentLogs.remove(entry);
+    }
   }
 }
 
@@ -522,6 +666,48 @@ class TimelineEvent {
       title: title,
       payload: Map<String, dynamic>.from(payloadRaw),
       createdAt: createdAt,
+    );
+  }
+}
+
+class AgentLogEntry {
+  const AgentLogEntry({
+    required this.id,
+    required this.agentId,
+    required this.level,
+    required this.message,
+    required this.createdAt,
+    required this.sizeBytes,
+  });
+
+  final String id;
+  final String agentId;
+  final String? level;
+  final String message;
+  final DateTime createdAt;
+  final int sizeBytes;
+
+  Map<String, dynamic> toDatabase() {
+    return {
+      'id': id,
+      'agent_id': agentId,
+      'level': level,
+      'message': message,
+      'created_at': createdAt.millisecondsSinceEpoch,
+      'size_bytes': sizeBytes,
+    };
+  }
+
+  factory AgentLogEntry.fromDatabase(Map<String, Object?> row) {
+    return AgentLogEntry(
+      id: row['id']?.toString() ?? '',
+      agentId: row['agent_id']?.toString() ?? '',
+      level: row['level']?.toString(),
+      message: row['message']?.toString() ?? '',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (row['created_at'] as int?) ?? 0,
+      ),
+      sizeBytes: (row['size_bytes'] as int?) ?? 0,
     );
   }
 }

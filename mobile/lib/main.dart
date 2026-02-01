@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -10672,7 +10673,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool _isResizing = false;
   String? _connectionError;
   Timer? _clickTimer;
-  Timer? _dragHoldTimer;
   Timer? _focusTimer;
   bool _showFocusPulse = false;
   bool _showClickPulse = false;
@@ -10705,7 +10705,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   int _roiReconnectAttempts = 0;
   int _roiRevision = 0;
   bool _debugPanelOpen = false;
-  bool _fullscreenDebugVisible = false;
+  bool _debugPanelVisible = false;
   ui.Image? _frameImage;
   ui.Image? _cursorImage;
   Size _cursorSize = Size.zero;
@@ -10772,6 +10772,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool? _lastLayoutLandscape;
   bool _lastLayoutFullscreen = false;
   bool _pendingPointerReset = false;
+  double _scrollAccumulator = 0;
 
   @override
   void initState() {
@@ -10788,6 +10789,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _hydrateFromPayload();
     unawaited(_loadDisplaySelection());
     unawaited(_loadLocalCursorPreference());
+    unawaited(_loadDebugPanelPreference());
     unawaited(_loadCalibration());
     unawaited(_fetchDisplays());
     unawaited(_startStream());
@@ -10797,7 +10799,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   void dispose() {
     _isDisposed = true;
     _clickTimer?.cancel();
-    _dragHoldTimer?.cancel();
     _focusTimer?.cancel();
     _calibrationSaveTimer?.cancel();
     _autoResizeTimer?.cancel();
@@ -10941,6 +10942,16 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (mounted && !_isDisposed) {
         setState(() {});
       }
+      unawaited(_logAgentEvent(
+        'roi_connected',
+        data: {
+          'port': roiInfo.quicPort,
+          'framebuffer': {
+            'width': roiInfo.framebufferWidth,
+            'height': roiInfo.framebufferHeight,
+          },
+        },
+      ));
       _sendRoiRequest();
     } on AgentCommandFailure catch (error) {
       final presentation = _presentAgentFailure(
@@ -10948,6 +10959,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         fallbackMessage: 'ROI stream unavailable.',
       );
       _logErrorDetails('roi_session', presentation);
+      unawaited(_logAgentEvent(
+        'roi_error',
+        level: 'error',
+        data: {
+          'message': _formatErrorMessage(presentation),
+        },
+      ));
       _roiConnecting = false;
       _roiConnected = false;
       _roiLastError = _formatErrorMessage(presentation);
@@ -10961,6 +10979,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         fallbackMessage: 'ROI stream unavailable.',
       );
       _logErrorDetails('roi_session', presentation);
+      unawaited(_logAgentEvent(
+        'roi_error',
+        level: 'error',
+        data: {
+          'message': _formatErrorMessage(presentation),
+        },
+      ));
       _roiConnecting = false;
       _roiConnected = false;
       _roiLastError = _formatErrorMessage(presentation);
@@ -10993,6 +11018,12 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     _roiReconnectAttempts = (_roiReconnectAttempts + 1).clamp(0, 5);
+    unawaited(_logAgentEvent(
+      'roi_reconnect_scheduled',
+      data: {
+        'attempt': _roiReconnectAttempts,
+      },
+    ));
     final delay = Duration(milliseconds: 1200 + _roiReconnectAttempts * 800);
     _roiReconnectTimer = Timer(delay, () {
       _roiReconnectTimer = null;
@@ -11452,6 +11483,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return 'vnc_local_cursor:$agentId';
   }
 
+  String _debugPanelStorageKey() {
+    final agentId = widget.session.agentId ?? widget.session.id;
+    return 'vnc_debug_panel:$agentId';
+  }
+
+  String _agentLogId() {
+    return widget.session.agentId ?? widget.session.id;
+  }
+
   Future<void> _loadDisplaySelection() async {
     final raw = await widget.storage.readKeyValue(_displayStorageKey());
     if (!mounted || raw == null || raw.trim().isEmpty) {
@@ -11490,6 +11530,88 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     await widget.storage.writeKeyValue(
       _localCursorStorageKey(),
       value ? '1' : '0',
+    );
+  }
+
+  Future<void> _loadDebugPanelPreference() async {
+    final raw = await widget.storage.readKeyValue(_debugPanelStorageKey());
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    final normalized = raw.trim().toLowerCase();
+    final nextValue = normalized == '1' || normalized == 'true';
+    setState(() {
+      _debugPanelVisible = nextValue;
+    });
+  }
+
+  Future<void> _persistDebugPanelPreference(bool value) async {
+    await widget.storage.writeKeyValue(
+      _debugPanelStorageKey(),
+      value ? '1' : '0',
+    );
+  }
+
+  Future<void> _logAgentEvent(
+    String type, {
+    String level = 'info',
+    Map<String, Object?>? data,
+  }) async {
+    try {
+      final entry = <String, Object?>{
+        't': DateTime.now().toIso8601String(),
+        'type': type,
+        'level': level,
+        if (data != null) 'data': data,
+      };
+      final payload = jsonEncode(entry);
+      final sizeBytes = utf8.encode(payload).length;
+      await widget.storage.insertAgentLog(
+        AgentLogEntry(
+          id: createStorageId(),
+          agentId: _agentLogId(),
+          level: level,
+          message: payload,
+          createdAt: DateTime.now(),
+          sizeBytes: sizeBytes,
+        ),
+      );
+    } catch (_) {
+      // Avoid breaking the UI on log failures.
+    }
+  }
+
+  Future<void> _copyAgentLogs() async {
+    final logs = await widget.storage.fetchAgentLogs(_agentLogId());
+    if (logs.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无日志')),
+      );
+      return;
+    }
+    final totalBytes = logs.fold<int>(0, (sum, entry) => sum + entry.sizeBytes);
+    final text = logs.map((entry) => entry.message).join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已复制 ${logs.length} 条日志（${_formatBytes(totalBytes)}）'),
+      ),
+    );
+  }
+
+  Future<void> _clearAgentLogs() async {
+    await widget.storage.deleteAgentLogs(_agentLogId());
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已清空日志')),
     );
   }
 
@@ -11827,6 +11949,17 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _lastFrameAt = null;
       }
       final desired = requestedSize ?? _preferredStreamSize();
+      unawaited(_logAgentEvent(
+        'vnc_start',
+        data: {
+          'requested': {
+            'width': desired?.width?.round(),
+            'height': desired?.height?.round(),
+          },
+          'display_index': _selectedDisplayIndex,
+          'preserve_existing': preserveExisting,
+        },
+      ));
       final sessionInfo = await agentClient.sendVncCommand(
         action: 'start',
         sessionId: widget.session.id,
@@ -11929,6 +12062,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         unawaited(_persistDisplaySelection(sessionInfo.displayIndex));
       }
       await _updateSession(status: 'connected');
+      unawaited(_logAgentEvent(
+        'vnc_connected',
+        data: {
+          'width': sessionInfo.width,
+          'height': sessionInfo.height,
+          'display_index': sessionInfo.displayIndex,
+        },
+      ));
       _vncClient?.requestFullFrame();
       _maybeAutoResizeStream();
       if (!preserveExisting) {
@@ -11981,6 +12122,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _hasStreamInfo = false;
       _resetCursorState();
     });
+    unawaited(_logAgentEvent(
+      'vnc_error',
+      level: 'error',
+      data: {
+        'message': message,
+      },
+    ));
     _noFrameTimer?.cancel();
     _vncClient?.close();
     unawaited(_stopRoiSession());
@@ -12064,7 +12212,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   }
 
   void _updateZoomValue(double value, {bool commit = false}) {
-    final clamped = _clampZoom(value);
+    var clamped = _clampZoom(value);
+    if ((clamped - _zoomDefault).abs() <= 0.05) {
+      clamped = _zoomDefault;
+    }
     if (clamped == _zoomValue) {
       return;
     }
@@ -12542,7 +12693,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       }
     }
     final dpr = MediaQuery.of(context).devicePixelRatio;
-    final zoomFactor = _zoom.clamp(0.7, 2.5);
+    final zoomFactor = _zoom.clamp(0.7, _zoomMax);
     final display = _availableDisplays.isNotEmpty
         ? _availableDisplays.firstWhere(
             (item) => item.index == _selectedDisplayIndex,
@@ -12638,6 +12789,36 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     client.requestIncrementalFrame();
   }
 
+  void _handleScrollDelta(Offset delta) {
+    if (delta.dy == 0) {
+      return;
+    }
+    _scrollAccumulator += -delta.dy;
+    while (_scrollAccumulator.abs() >= _scrollStep) {
+      final direction = _scrollAccumulator.isNegative ? -1 : 1;
+      _sendScrollStep(direction.toDouble());
+      _scrollAccumulator -= direction * _scrollStep;
+    }
+  }
+
+  void _handleTrackpadPointerSignal(PointerSignalEvent event) {
+    if (_connectionError != null || _isConnecting) {
+      return;
+    }
+    if (event is PointerScrollEvent) {
+      _handleScrollDelta(event.scrollDelta);
+    }
+  }
+
+  void _handleTrackpadPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_connectionError != null || _isConnecting) {
+      return;
+    }
+    if (event.panDelta != Offset.zero) {
+      _handleScrollDelta(event.panDelta);
+    }
+  }
+
   int _maxPointerX() {
     final max = _frameSize.width.floor() - 1;
     return max < 0 ? 0 : max;
@@ -12648,9 +12829,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     return max < 0 ? 0 : max;
   }
 
-  void _cancelDragHold() {
-    _dragHoldTimer?.cancel();
-    _dragHoldTimer = null;
+  void _holdButton(int mask) {
+    if (_buttonMask & mask != 0) {
+      return;
+    }
+    _buttonMask |= mask;
+    _sendPointerEvent();
+  }
+
+  void _releaseButton(int mask) {
+    if (_buttonMask & mask == 0) {
+      return;
+    }
+    _buttonMask &= ~mask;
+    _sendPointerEvent();
   }
 
   void _endDrag() {
@@ -12658,8 +12850,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     _isDragging = false;
-    _buttonMask &= ~1;
-    _sendPointerEvent();
+    _releaseButton(1);
   }
 
   Offset _averagePointerPosition() {
@@ -12688,7 +12879,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _primaryDownPosition = null;
     _primaryDownTime = null;
     _lastPrimaryPosition = null;
-    _cancelDragHold();
   }
 
   void _clearPointerState({bool sendPointer = true}) {
@@ -12733,8 +12923,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _primaryDownPosition = event.position;
       _primaryDownTime = DateTime.now();
       _lastPrimaryPosition = event.position;
-    } else {
-      _cancelDragHold();
     }
   }
 
@@ -12749,10 +12937,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     if (_activePointers.length == 1) {
       final last = _lastPrimaryPosition ?? event.position;
       final delta = event.position - last;
-      if (_primaryDownPosition != null &&
-          (event.position - _primaryDownPosition!).distance > _dragSlop) {
-        _cancelDragHold();
-      }
       if (delta.distance != 0) {
         _movePointerBy(delta);
       }
@@ -12922,7 +13106,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       if (value) {
         _directInputBackup = _directInputEnabled;
         _directInputEnabled = false;
-        _fullscreenDebugVisible = false;
       } else if (_directInputBackup != null) {
         _directInputEnabled = _directInputBackup ?? false;
         _directInputBackup = null;
@@ -13165,8 +13348,9 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             builder: (context, setSheetState) {
               void updateDebugVisibility(bool value) {
                 setState(() {
-                  _fullscreenDebugVisible = value;
+                  _debugPanelVisible = value;
                 });
+                unawaited(_persistDebugPanelPreference(value));
                 setSheetState(() {});
               }
 
@@ -13219,10 +13403,29 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Debug view'),
                       subtitle: Text(
-                        _fullscreenDebugVisible ? 'Visible' : 'Hidden',
+                        _debugPanelVisible ? 'Visible' : 'Hidden',
                       ),
-                      value: _fullscreenDebugVisible,
+                      value: _debugPanelVisible,
                       onChanged: updateDebugVisibility,
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.copy),
+                      title: const Text('导出日志'),
+                      subtitle: const Text('复制当前设备日志'),
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        Future.microtask(_copyAgentLogs);
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.delete_outline),
+                      title: const Text('清空日志'),
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        Future.microtask(_clearAgentLogs);
+                      },
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -13769,7 +13972,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     ),
                   ),
                 ),
-              if (!isFullscreen || _fullscreenDebugVisible)
+              if (_debugPanelVisible)
                 Positioned(
                   left: 12 + safePadding.left,
                   bottom: 12 + safePadding.bottom,
@@ -14109,6 +14312,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                       onPointerMove: _handleTrackpadPointerMove,
                       onPointerUp: _handleTrackpadPointerUp,
                       onPointerCancel: _handleTrackpadPointerCancel,
+                      onPointerSignal: _handleTrackpadPointerSignal,
+                      onPointerPanZoomUpdate: _handleTrackpadPanZoomUpdate,
                     );
                     final trackpadColumn = Column(
                       children: [
@@ -14206,6 +14411,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 onPressed: () => _setFullscreen(false),
               ),
             ),
+            Positioned(
+              right: 12,
+              top: 12,
+              child: _VncOverlayIconButton(
+                icon: Icons.keyboard,
+                label: 'Kbd',
+                onPressed: _showKeyboardInput,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -14268,6 +14482,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                     onPointerMove: _handleTrackpadPointerMove,
                     onPointerUp: _handleTrackpadPointerUp,
                     onPointerCancel: _handleTrackpadPointerCancel,
+                    onPointerSignal: _handleTrackpadPointerSignal,
+                    onPointerPanZoomUpdate: _handleTrackpadPanZoomUpdate,
                     child: const SizedBox.expand(),
                   ),
                 ),
@@ -14279,6 +14495,15 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                 icon: Icons.fullscreen_exit,
                 label: 'Exit',
                 onPressed: () => _setFullscreen(false),
+              ),
+            ),
+            Positioned(
+              right: 12 + safePadding.right,
+              top: 12 + safePadding.top,
+              child: _VncOverlayIconButton(
+                icon: Icons.keyboard,
+                label: 'Kbd',
+                onPressed: _showKeyboardInput,
               ),
             ),
             _buildTrackpadMoreButton(
@@ -14440,6 +14665,8 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                             onPointerMove: _handleTrackpadPointerMove,
                             onPointerUp: _handleTrackpadPointerUp,
                             onPointerCancel: _handleTrackpadPointerCancel,
+                            onPointerSignal: _handleTrackpadPointerSignal,
+                            onPointerPanZoomUpdate: _handleTrackpadPanZoomUpdate,
                           );
                         },
                       ),
@@ -14459,6 +14686,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         _buildGestureHints(glassStyle: glassStyle),
         const SizedBox(height: 12),
         SwitchListTile.adaptive(
+          title: const Text('显示调试面板'),
+          subtitle: Text(_debugPanelVisible ? '可见' : '隐藏'),
+          value: _debugPanelVisible,
+          onChanged: isInteractive
+              ? (value) {
+                  setState(() {
+                    _debugPanelVisible = value;
+                  });
+                  unawaited(_persistDebugPanelPreference(value));
+                }
+              : null,
+        ),
+        const SizedBox(height: 6),
+        SwitchListTile.adaptive(
           title: const Text('显示本地光标'),
           subtitle: const Text('关闭后仅移动远端光标'),
           value: _showLocalCursor,
@@ -14470,6 +14711,20 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
                   unawaited(_persistLocalCursorPreference(value));
                 }
               : null,
+        ),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: _copyAgentLogs,
+              icon: const Icon(Icons.copy),
+              label: const Text('复制日志'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: _clearAgentLogs,
+              child: const Text('清空日志'),
+            ),
+          ],
         ),
         if (kDebugMode) ...[
           const SizedBox(height: 8),
@@ -14838,7 +15093,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         children: [
           Expanded(
             child: InkWell(
-              onTap: enabled ? () => _sendClick(1) : null,
+              onTap: enabled ? () {} : null,
+              onTapDown: enabled ? (_) => _holdButton(1) : null,
+              onTapUp: enabled ? (_) => _releaseButton(1) : null,
+              onTapCancel: enabled ? () => _releaseButton(1) : null,
               borderRadius: const BorderRadius.horizontal(
                 left: Radius.circular(12),
               ),
@@ -14856,7 +15114,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           Container(width: 1, color: borderColor),
           Expanded(
             child: InkWell(
-              onTap: enabled ? () => _sendClick(2) : null,
+              onTap: enabled ? () {} : null,
+              onTapDown: enabled ? (_) => _holdButton(2) : null,
+              onTapUp: enabled ? (_) => _releaseButton(2) : null,
+              onTapCancel: enabled ? () => _releaseButton(2) : null,
               borderRadius: const BorderRadius.horizontal(
                 right: Radius.circular(12),
               ),
@@ -16246,6 +16507,8 @@ class _VncTrackpadSurface extends StatelessWidget {
     required this.onPointerMove,
     required this.onPointerUp,
     required this.onPointerCancel,
+    this.onPointerSignal,
+    this.onPointerPanZoomUpdate,
   });
 
   final bool enabled;
@@ -16257,6 +16520,8 @@ class _VncTrackpadSurface extends StatelessWidget {
   final ValueChanged<PointerMoveEvent> onPointerMove;
   final ValueChanged<PointerUpEvent> onPointerUp;
   final ValueChanged<PointerCancelEvent> onPointerCancel;
+  final ValueChanged<PointerSignalEvent>? onPointerSignal;
+  final ValueChanged<PointerPanZoomUpdateEvent>? onPointerPanZoomUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -16282,6 +16547,8 @@ class _VncTrackpadSurface extends StatelessWidget {
         onPointerMove: enabled ? onPointerMove : null,
         onPointerUp: enabled ? onPointerUp : null,
         onPointerCancel: enabled ? onPointerCancel : null,
+        onPointerSignal: enabled ? onPointerSignal : null,
+        onPointerPanZoomUpdate: enabled ? onPointerPanZoomUpdate : null,
         child: Container(
           height: height ?? 120,
           decoration: BoxDecoration(
