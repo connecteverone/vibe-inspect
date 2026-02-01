@@ -20947,4 +20947,3933 @@ index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fe
 thinking
 **Staging all changes for commit**
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 58ms:
+
+file update:
+diff --git a/.ralph/.tmp/prompt-20260201-231810-31541-12.md b/.ralph/.tmp/prompt-20260201-231810-31541-12.md
+deleted file mode 100644
+index f7d8904d6b25d424b842c3d856abf70a2a57168d..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/prompt-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,142 +0,0 @@
+-# Build
+-
+-You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+-
+-## Paths
+-- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json
+-- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+-- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+-- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+-- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+-- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+-- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+-- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+-- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+-- No-commit: false
+-- Repo Root: /Users/mac/codes/vibe-inspect
+-- Run ID: 20260201-231810-31541
+-- Iteration: 12
+-- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-
+-## Global Quality Gates (apply to every story)
+-- cd mobile && flutter test
+-- cd mobile && flutter analyze
+-- ./scripts/flutter_test.sh
+-- ./scripts/flutter_analyze.sh
+-
+-## Selected Story (Do not change scope)
+-ID: US-012
+-Title: vibe-ctl attach raw mode and detach key
+-
+-Story details:
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+-
+-
+-If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+-
+-## Rules (Non-Negotiable)
+-- Implement **only** the work required to complete the selected story.
+-- Complete all tasks associated with this story (and only this story).
+-- Do NOT ask the user questions.
+-- Do NOT change unrelated code.
+-- Do NOT assume something is unimplemented — confirm by reading code.
+-- Implement completely; no placeholders or stubs.
+-- If No-commit is true, do NOT commit or push changes.
+-- Do NOT edit the PRD JSON (status is handled by the loop).
+-- All changes made during the run must be committed (including updates to progress/logs).
+- - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+-
+-## Your Task (Do this in order)
+-1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+-2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+-3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json for global context (do not edit).
+-4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+-5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+-6. Implement only the tasks that belong to US-012.
+-7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+-8. If the project has a build or dev workflow, run what applies:
+-   - Build step (e.g., `npm run build`) if defined.
+-   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+-   - Confirm no runtime/build errors in the console.
+-9. Perform a brief audit before committing:
+-   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+-   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+-   - **Regression:** verify existing behavior that could be impacted still works.
+-10. If No-commit is false, commit changes using the `$commit` skill.
+-    - Stage everything: `git add -A`
+-    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+-    - After committing, capture the commit hash and subject using:
+-      `git show -s --format="%h %s" HEAD`.
+-11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+-    If No-commit is true, skip committing and note it in the progress entry.
+-
+-## Progress Entry Format (Append Only)
+-```
+-## [Date/Time] - US-012: vibe-ctl attach raw mode and detach key
+-Thread: [codex exec session id if available, otherwise leave blank]
+-Run: 20260201-231810-31541 (iteration 12)
+-Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-- Guardrails reviewed: yes
+-- No-commit run: false
+-- Commit: <hash> <subject> (or `none` + reason)
+-- Post-commit status: `clean` or list remaining files
+-- Verification:
+-  - Command: <exact command> -> PASS/FAIL
+-  - Command: <exact command> -> PASS/FAIL
+-- Files changed:
+-  - <file path>
+-  - <file path>
+-- What was implemented
+-- **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
+----
+-```
+-
+-## Completion Signal
+-Only output the completion signal when the **selected story** is fully complete and verified.
+-When the selected story is complete, output:
+-<promise>COMPLETE</promise>
+-
+-Otherwise, end normally without the signal.
+-
+-## Additional Guardrails
+-- When authoring documentation, capture the why (tests + implementation intent).
+-- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+-- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+-- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+-
+-## Activity Logging (Required)
+-Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+-```
+-/Users/mac/codes/vibe-inspect/ralph log "message"
+-```
+-Log at least:
+-- Start of work on the story
+-- After major code changes
+-- After tests/verification
+-- After updating progress log
+-
+-## Browser Testing (Required for Frontend Stories)
+-If the selected story changes UI, you MUST verify it in the browser:
+-1. Load the `dev-browser` skill.
+-2. Navigate to the relevant page.
+-3. Verify the UI changes work as expected.
+-4. Take a screenshot if helpful for the progress log.
+-
+-A frontend story is NOT complete until browser verification passes.
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.json b/.ralph/.tmp/story-20260201-231810-31541-12.json
+deleted file mode 100644
+index 3060d45c6401d0cd6ef282b84c04bf8102a66302..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-  "ok": true,
+-  "total": 16,
+-  "remaining": 5,
+-  "quality_gates": [
+-    "cd mobile && flutter test",
+-    "cd mobile && flutter analyze",
+-    "./scripts/flutter_test.sh",
+-    "./scripts/flutter_analyze.sh"
+-  ],
+-  "id": "US-012",
+-  "title": "vibe-ctl attach raw mode and detach key"
+-}
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.md b/.ralph/.tmp/story-20260201-231810-31541-12.md
+deleted file mode 100644
+index 3523e77c9a042f137be352135ed4d9ea3bc39c58..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fed4942c7a
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,5 +1,7 @@
+ use base64::Engine;
+ use clap::{Args, Parser, Subcommand};
++use crossterm::terminal;
++use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ use desktop::terminal_core::{
+     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
+     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+@@ -10,13 +12,17 @@
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs;
++use std::io::{Read, Write};
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ use tokio::runtime::Runtime;
++use tokio::sync::mpsc;
+ use tokio_tungstenite::connect_async;
+ use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
++#[cfg(unix)]
++use tokio::signal::unix::{signal, SignalKind};
+ 
+ const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
+ const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
+@@ -29,6 +35,8 @@
+ 
+ type TerminaldSocket =
+     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
++type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
++type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -57,6 +65,9 @@
+     Ls(LsArgs),
+     /// Create a new session.
+     New(NewArgs),
++    /// Attach to a session.
++    #[command(alias = "a")]
++    Attach(AttachArgs),
+     /// Send input to a session.
+     Send(SendArgs),
+     /// Resize a session.
+@@ -97,6 +108,25 @@
+ }
+ 
+ #[derive(Debug, Args)]
++struct AttachArgs {
++    /// Target session id.
++    #[arg(short = 't', long = "target", value_name = "ID")]
++    target: String,
++    /// Disable input forwarding.
++    #[arg(long)]
++    read_only: bool,
++    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
++    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
++    detach_key: String,
++    /// Detach timeout in milliseconds.
++    #[arg(long, value_name = "MS", default_value_t = 1000)]
++    detach_timeout_ms: u64,
++    /// Disable raw mode for debugging.
++    #[arg(long)]
++    no_raw: bool,
++}
++
++#[derive(Debug, Args)]
+ struct SendArgs {
+     /// Target session id.
+     #[arg(short = 't', long = "target", value_name = "ID")]
+@@ -193,6 +223,9 @@
+             })?;
+             println!("{session_id}");
+         }
++        Command::Attach(args) => {
++            attach_session(&overrides, args).await?;
++        }
+         Command::Send(args) => {
+             let payload = build_input_payload(&args)?;
+             terminald_request(
+@@ -315,6 +348,498 @@
+     Ok(Value::Object(payload))
+ }
+ 
++struct DetachSequence {
++    prefix: u8,
++    key: u8,
++    timeout: Duration,
++}
++
++struct RawModeGuard {
++    enabled: bool,
++}
++
++impl RawModeGuard {
++    fn new(enable: bool) -> Result<Self, CliError> {
++        if enable {
++            enable_raw_mode().map_err(|error| {
++                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
++            })?;
++        }
++        Ok(Self { enabled: enable })
++    }
++}
++
++impl Drop for RawModeGuard {
++    fn drop(&mut self) {
++        if self.enabled {
++            let _ = disable_raw_mode();
++        }
++    }
++}
++
++async fn attach_session(
++    overrides: &ConfigOverrides,
++    args: AttachArgs,
++) -> Result<(), CliError> {
++    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
++    let mut socket = connect_terminald(overrides).await?;
++    let (mut sender, mut receiver) = socket.split();
++
++    let attach_id = random_request_id();
++    let attach_request = build_terminald_request(
++        &attach_id,
++        "attach",
++        Some(args.target.clone()),
++        Some(json!({
++            "since": 0,
++            "notify_since": 0,
++        })),
++    );
++    sender
++        .send(TungsteniteMessage::Text(attach_request.to_string()))
++        .await
++        .map_err(|error| {
++            CliError::new(
++                "connection_failed",
++                format!("Failed to send attach request: {error}"),
++            )
++        })?;
++
++    let mut stdout = std::io::stdout();
++    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
++
++    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
++
++    if let Ok((cols, rows)) = terminal::size() {
++        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++    }
++
++    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
++    let _input_handle = spawn_stdin_reader(input_tx);
++
++    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
++    spawn_resize_listener(resize_tx);
++
++    let mut prefix_deadline: Option<Instant> = None;
++
++    loop {
++        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
++        if let Some(deadline) = prefix_deadline {
++            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
++        }
++
++        tokio::select! {
++            _ = &mut sleep, if prefix_deadline.is_some() => {
++                if let Some(deadline) = prefix_deadline {
++                    if Instant::now() >= deadline {
++                        if !args.read_only {
++                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
++                        }
++                        prefix_deadline = None;
++                    }
++                }
++            }
++            maybe_input = input_rx.recv() => {
++                let Some(bytes) = maybe_input else { break; };
++                let detach = handle_input_bytes(
++                    &mut sender,
++                    &args.target,
++                    &bytes,
++                    args.read_only,
++                    &detach_sequence,
++                    &mut prefix_deadline,
++                ).await?;
++                if detach {
++                    let _ = send_detach(&mut sender, &args.target).await;
++                    break;
++                }
++            }
++            maybe_resize = resize_rx.recv() => {
++                if let Some((cols, rows)) = maybe_resize {
++                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else { break; };
++                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
++                    break;
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
++fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
++    let tokens: Vec<&str> = value.split_whitespace().collect();
++    if tokens.len() != 2 {
++        return Err(CliError::new(
++            "invalid_request",
++            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
++        ));
++    }
++    let prefix = parse_key_token(tokens[0])?;
++    let key = parse_key_token(tokens[1])?;
++    let timeout = Duration::from_millis(timeout_ms.max(1));
++    Ok(DetachSequence { prefix, key, timeout })
++}
++
++fn parse_key_token(token: &str) -> Result<u8, CliError> {
++    let normalized = token.trim();
++    if normalized.is_empty() {
++        return Err(CliError::new("invalid_request", "Detach key token is empty."));
++    }
++    let lower = normalized.to_lowercase();
++    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
++        let mut chars = rest.chars();
++        let Some(ch) = chars.next() else {
++            return Err(CliError::new("invalid_request", "Detach key missing character."));
++        };
++        if chars.next().is_some() {
++            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++        }
++        let byte = ch as u32;
++        if byte > u8::MAX as u32 {
++            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++        }
++        return Ok((byte as u8) & 0x1f);
++    }
++    let mut chars = normalized.chars();
++    let Some(ch) = chars.next() else {
++        return Err(CliError::new("invalid_request", "Detach key missing character."));
++    };
++    if chars.next().is_some() {
++        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++    }
++    let byte = ch as u32;
++    if byte > u8::MAX as u32 {
++        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++    }
++    Ok(byte as u8)
++}
++
++fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
++    thread::spawn(move || {
++        let mut stdin = std::io::stdin();
++        let mut buffer = [0u8; 1024];
++        loop {
++            match stdin.read(&mut buffer) {
++                Ok(0) => break,
++                Ok(count) => {
++                    if sender
++                        .blocking_send(buffer[..count].to_vec())
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++                Err(_) => break,
++            }
++        }
++    })
++}
++
++fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
++    #[cfg(unix)]
++    {
++        tokio::spawn(async move {
++            let mut signals = match signal(SignalKind::window_change()) {
++                Ok(value) => value,
++                Err(_) => return,
++            };
++            loop {
++                if signals.recv().await.is_none() {
++                    break;
++                }
++                if let Ok((cols, rows)) = terminal::size() {
++                    if sender.send((cols, rows)).await.is_err() {
++                        break;
++                    }
++                }
++            }
++        });
++    }
++    #[cfg(not(unix))]
++    {
++        let _ = sender;
++    }
++}
++
++async fn wait_for_attach(
++    receiver: &mut TerminaldStream,
++    sender: &mut TerminaldSink,
++    attach_id: &str,
++    session_id: &str,
++    stdout: &mut dyn Write,
++) -> Result<(), CliError> {
++    while let Some(message) = receiver.next().await {
++        match message {
++            Ok(TungsteniteMessage::Text(text)) => {
++                if let Some(result) = parse_terminald_response(&text, attach_id) {
++                    return result.map(|_| ());
++                }
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++            Ok(TungsteniteMessage::Binary(bytes)) => {
++                if let Ok(text) = String::from_utf8(bytes) {
++                    if let Some(result) = parse_terminald_response(&text, attach_id) {
++                        return result.map(|_| ());
++                    }
++                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                        write_terminal_payload(&payload, stdout)?;
++                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                        eprintln!("session warning: {warning}");
++                    } else if let Some(error) = parse_terminald_error(&text) {
++                        eprintln!("{}: {}", error.code, error.message);
++                    }
++                }
++            }
++            Ok(TungsteniteMessage::Ping(payload)) => {
++                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++            }
++            Ok(TungsteniteMessage::Close(_)) => {
++                return Err(CliError::new(
++                    "connection_failed",
++                    "Terminal daemon closed connection.",
++                ));
++            }
++            _ => {}
++        }
++    }
++
++    Err(CliError::new(
++        "connection_failed",
++        "Terminal daemon closed connection.",
++    ))
++}
++
++async fn handle_terminald_message(
++    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
++    session_id: &str,
++    stdout: &mut dyn Write,
++    sender: &mut TerminaldSink,
++) -> Result<bool, CliError> {
++    match message {
++        Ok(TungsteniteMessage::Text(text)) => {
++            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                write_terminal_payload(&payload, stdout)?;
++            } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                eprintln!("session warning: {warning}");
++            } else if let Some(error) = parse_terminald_error(&text) {
++                eprintln!("{}: {}", error.code, error.message);
++            }
++        }
++        Ok(TungsteniteMessage::Binary(bytes)) => {
++            if let Ok(text) = String::from_utf8(bytes) {
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++        }
++        Ok(TungsteniteMessage::Ping(payload)) => {
++            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++        }
++        Ok(TungsteniteMessage::Close(_)) => {
++            return Ok(false);
++        }
++        Err(error) => {
++            return Err(CliError::new(
++                "connection_failed",
++                format!("Terminal daemon error: {error}"),
++            ));
++        }
++        _ => {}
++    }
++    Ok(true)
++}
++
++fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "terminal_payload" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed.get("data").cloned()
++}
++
++fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "session_warning" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed
++        .get("data")
++        .and_then(|value| value.get("message"))
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string())
++}
++
++fn parse_terminald_error(text: &str) -> Option<CliError> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "res" {
++        return None;
++    }
++    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
++    if ok {
++        return None;
++    }
++    let error = parsed.get("error")?;
++    let code = error
++        .get("code")
++        .and_then(|value| value.as_str())
++        .unwrap_or("terminal_error");
++    let message = error
++        .get("message")
++        .and_then(|value| value.as_str())
++        .unwrap_or("Terminal daemon error.");
++    Some(CliError::new(map_error_code(code), message.to_string()))
++}
++
++fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
++    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
++        stdout
++            .write_all(snapshot.as_bytes())
++            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++    }
++    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
++        for chunk in output {
++            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
++                stdout
++                    .write_all(data.as_bytes())
++                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++            }
++        }
++    }
++    stdout
++        .flush()
++        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
++    Ok(())
++}
++
++async fn handle_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++    read_only: bool,
++    detach_sequence: &DetachSequence,
++    prefix_deadline: &mut Option<Instant>,
++) -> Result<bool, CliError> {
++    let mut buffer: Vec<u8> = Vec::new();
++    for &byte in bytes {
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() > deadline {
++                if !read_only {
++                    buffer.push(detach_sequence.prefix);
++                }
++                *prefix_deadline = None;
++            }
++        }
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() <= deadline && byte == detach_sequence.key {
++                *prefix_deadline = None;
++                if !read_only && !buffer.is_empty() {
++                    send_input_bytes(sender, session_id, &buffer).await?;
++                }
++                return Ok(true);
++            }
++            if !read_only {
++                buffer.push(detach_sequence.prefix);
++            }
++            *prefix_deadline = None;
++        }
++        if byte == detach_sequence.prefix {
++            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
++        } else if !read_only {
++            buffer.push(byte);
++        }
++    }
++    if !read_only && !buffer.is_empty() {
++        send_input_bytes(sender, session_id, &buffer).await?;
++    }
++    Ok(false)
++}
++
++async fn send_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++) -> Result<(), CliError> {
++    if bytes.is_empty() {
++        return Ok(());
++    }
++    let payload = match std::str::from_utf8(bytes) {
++        Ok(text) => json!({ "data": text }),
++        Err(_) => {
++            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
++            json!({ "data_b64": encoded })
++        }
++    };
++    send_terminald_action(sender, "input", session_id, Some(payload)).await
++}
++
++async fn send_resize(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    cols: u16,
++    rows: u16,
++) -> Result<(), CliError> {
++    let payload = json!({ "cols": cols, "rows": rows });
++    send_terminald_action(sender, "resize", session_id, Some(payload)).await
++}
++
++async fn send_detach(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++) -> Result<(), CliError> {
++    send_terminald_action(sender, "detach", session_id, None).await
++}
++
++async fn send_terminald_action(
++    sender: &mut TerminaldSink,
++    action: &str,
++    session_id: &str,
++    payload: Option<Value>,
++) -> Result<(), CliError> {
++    let request_id = random_request_id();
++    let request = build_terminald_request(
++        &request_id,
++        action,
++        Some(session_id.to_string()),
++        payload,
++    );
++    sender
++        .send(TungsteniteMessage::Text(request.to_string()))
++        .await
++        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
++    Ok(())
++}
++
+ fn extract_session_id(data: &Value) -> Option<String> {
+     data.get("session_id")
+         .and_then(|value| value.as_str())
+
+
+thinking
+**Checking current status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 31ms:
+M  .agents/tasks/prd-terminal-daemon.json
+M  .ralph/activity.log
+M  .ralph/errors.log
+M  .ralph/runs/run-20260201-231810-31541-iter-11.log
+A  .ralph/runs/run-20260201-231810-31541-iter-11.md
+AM .ralph/runs/run-20260201-231810-31541-iter-12.log
+M  desktop/src/bin/vibe-ctl.rs
+file update:
+diff --git a/.ralph/.tmp/prompt-20260201-231810-31541-12.md b/.ralph/.tmp/prompt-20260201-231810-31541-12.md
+deleted file mode 100644
+index f7d8904d6b25d424b842c3d856abf70a2a57168d..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/prompt-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,142 +0,0 @@
+-# Build
+-
+-You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+-
+-## Paths
+-- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json
+-- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+-- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+-- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+-- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+-- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+-- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+-- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+-- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+-- No-commit: false
+-- Repo Root: /Users/mac/codes/vibe-inspect
+-- Run ID: 20260201-231810-31541
+-- Iteration: 12
+-- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-
+-## Global Quality Gates (apply to every story)
+-- cd mobile && flutter test
+-- cd mobile && flutter analyze
+-- ./scripts/flutter_test.sh
+-- ./scripts/flutter_analyze.sh
+-
+-## Selected Story (Do not change scope)
+-ID: US-012
+-Title: vibe-ctl attach raw mode and detach key
+-
+-Story details:
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+-
+-
+-If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+-
+-## Rules (Non-Negotiable)
+-- Implement **only** the work required to complete the selected story.
+-- Complete all tasks associated with this story (and only this story).
+-- Do NOT ask the user questions.
+-- Do NOT change unrelated code.
+-- Do NOT assume something is unimplemented — confirm by reading code.
+-- Implement completely; no placeholders or stubs.
+-- If No-commit is true, do NOT commit or push changes.
+-- Do NOT edit the PRD JSON (status is handled by the loop).
+-- All changes made during the run must be committed (including updates to progress/logs).
+- - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+-
+-## Your Task (Do this in order)
+-1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+-2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+-3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json for global context (do not edit).
+-4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+-5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+-6. Implement only the tasks that belong to US-012.
+-7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+-8. If the project has a build or dev workflow, run what applies:
+-   - Build step (e.g., `npm run build`) if defined.
+-   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+-   - Confirm no runtime/build errors in the console.
+-9. Perform a brief audit before committing:
+-   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+-   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+-   - **Regression:** verify existing behavior that could be impacted still works.
+-10. If No-commit is false, commit changes using the `$commit` skill.
+-    - Stage everything: `git add -A`
+-    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+-    - After committing, capture the commit hash and subject using:
+-      `git show -s --format="%h %s" HEAD`.
+-11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+-    If No-commit is true, skip committing and note it in the progress entry.
+-
+-## Progress Entry Format (Append Only)
+-```
+-## [Date/Time] - US-012: vibe-ctl attach raw mode and detach key
+-Thread: [codex exec session id if available, otherwise leave blank]
+-Run: 20260201-231810-31541 (iteration 12)
+-Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-- Guardrails reviewed: yes
+-- No-commit run: false
+-- Commit: <hash> <subject> (or `none` + reason)
+-- Post-commit status: `clean` or list remaining files
+-- Verification:
+-  - Command: <exact command> -> PASS/FAIL
+-  - Command: <exact command> -> PASS/FAIL
+-- Files changed:
+-  - <file path>
+-  - <file path>
+-- What was implemented
+-- **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
+----
+-```
+-
+-## Completion Signal
+-Only output the completion signal when the **selected story** is fully complete and verified.
+-When the selected story is complete, output:
+-<promise>COMPLETE</promise>
+-
+-Otherwise, end normally without the signal.
+-
+-## Additional Guardrails
+-- When authoring documentation, capture the why (tests + implementation intent).
+-- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+-- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+-- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+-
+-## Activity Logging (Required)
+-Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+-```
+-/Users/mac/codes/vibe-inspect/ralph log "message"
+-```
+-Log at least:
+-- Start of work on the story
+-- After major code changes
+-- After tests/verification
+-- After updating progress log
+-
+-## Browser Testing (Required for Frontend Stories)
+-If the selected story changes UI, you MUST verify it in the browser:
+-1. Load the `dev-browser` skill.
+-2. Navigate to the relevant page.
+-3. Verify the UI changes work as expected.
+-4. Take a screenshot if helpful for the progress log.
+-
+-A frontend story is NOT complete until browser verification passes.
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.json b/.ralph/.tmp/story-20260201-231810-31541-12.json
+deleted file mode 100644
+index 3060d45c6401d0cd6ef282b84c04bf8102a66302..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-  "ok": true,
+-  "total": 16,
+-  "remaining": 5,
+-  "quality_gates": [
+-    "cd mobile && flutter test",
+-    "cd mobile && flutter analyze",
+-    "./scripts/flutter_test.sh",
+-    "./scripts/flutter_analyze.sh"
+-  ],
+-  "id": "US-012",
+-  "title": "vibe-ctl attach raw mode and detach key"
+-}
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.md b/.ralph/.tmp/story-20260201-231810-31541-12.md
+deleted file mode 100644
+index 3523e77c9a042f137be352135ed4d9ea3bc39c58..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fed4942c7a
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,5 +1,7 @@
+ use base64::Engine;
+ use clap::{Args, Parser, Subcommand};
++use crossterm::terminal;
++use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ use desktop::terminal_core::{
+     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
+     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+@@ -10,13 +12,17 @@
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs;
++use std::io::{Read, Write};
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ use tokio::runtime::Runtime;
++use tokio::sync::mpsc;
+ use tokio_tungstenite::connect_async;
+ use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
++#[cfg(unix)]
++use tokio::signal::unix::{signal, SignalKind};
+ 
+ const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
+ const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
+@@ -29,6 +35,8 @@
+ 
+ type TerminaldSocket =
+     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
++type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
++type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -57,6 +65,9 @@
+     Ls(LsArgs),
+     /// Create a new session.
+     New(NewArgs),
++    /// Attach to a session.
++    #[command(alias = "a")]
++    Attach(AttachArgs),
+     /// Send input to a session.
+     Send(SendArgs),
+     /// Resize a session.
+@@ -97,6 +108,25 @@
+ }
+ 
+ #[derive(Debug, Args)]
++struct AttachArgs {
++    /// Target session id.
++    #[arg(short = 't', long = "target", value_name = "ID")]
++    target: String,
++    /// Disable input forwarding.
++    #[arg(long)]
++    read_only: bool,
++    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
++    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
++    detach_key: String,
++    /// Detach timeout in milliseconds.
++    #[arg(long, value_name = "MS", default_value_t = 1000)]
++    detach_timeout_ms: u64,
++    /// Disable raw mode for debugging.
++    #[arg(long)]
++    no_raw: bool,
++}
++
++#[derive(Debug, Args)]
+ struct SendArgs {
+     /// Target session id.
+     #[arg(short = 't', long = "target", value_name = "ID")]
+@@ -193,6 +223,9 @@
+             })?;
+             println!("{session_id}");
+         }
++        Command::Attach(args) => {
++            attach_session(&overrides, args).await?;
++        }
+         Command::Send(args) => {
+             let payload = build_input_payload(&args)?;
+             terminald_request(
+@@ -315,6 +348,498 @@
+     Ok(Value::Object(payload))
+ }
+ 
++struct DetachSequence {
++    prefix: u8,
++    key: u8,
++    timeout: Duration,
++}
++
++struct RawModeGuard {
++    enabled: bool,
++}
++
++impl RawModeGuard {
++    fn new(enable: bool) -> Result<Self, CliError> {
++        if enable {
++            enable_raw_mode().map_err(|error| {
++                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
++            })?;
++        }
++        Ok(Self { enabled: enable })
++    }
++}
++
++impl Drop for RawModeGuard {
++    fn drop(&mut self) {
++        if self.enabled {
++            let _ = disable_raw_mode();
++        }
++    }
++}
++
++async fn attach_session(
++    overrides: &ConfigOverrides,
++    args: AttachArgs,
++) -> Result<(), CliError> {
++    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
++    let mut socket = connect_terminald(overrides).await?;
++    let (mut sender, mut receiver) = socket.split();
++
++    let attach_id = random_request_id();
++    let attach_request = build_terminald_request(
++        &attach_id,
++        "attach",
++        Some(args.target.clone()),
++        Some(json!({
++            "since": 0,
++            "notify_since": 0,
++        })),
++    );
++    sender
++        .send(TungsteniteMessage::Text(attach_request.to_string()))
++        .await
++        .map_err(|error| {
++            CliError::new(
++                "connection_failed",
++                format!("Failed to send attach request: {error}"),
++            )
++        })?;
++
++    let mut stdout = std::io::stdout();
++    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
++
++    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
++
++    if let Ok((cols, rows)) = terminal::size() {
++        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++    }
++
++    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
++    let _input_handle = spawn_stdin_reader(input_tx);
++
++    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
++    spawn_resize_listener(resize_tx);
++
++    let mut prefix_deadline: Option<Instant> = None;
++
++    loop {
++        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
++        if let Some(deadline) = prefix_deadline {
++            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
++        }
++
++        tokio::select! {
++            _ = &mut sleep, if prefix_deadline.is_some() => {
++                if let Some(deadline) = prefix_deadline {
++                    if Instant::now() >= deadline {
++                        if !args.read_only {
++                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
++                        }
++                        prefix_deadline = None;
++                    }
++                }
++            }
++            maybe_input = input_rx.recv() => {
++                let Some(bytes) = maybe_input else { break; };
++                let detach = handle_input_bytes(
++                    &mut sender,
++                    &args.target,
++                    &bytes,
++                    args.read_only,
++                    &detach_sequence,
++                    &mut prefix_deadline,
++                ).await?;
++                if detach {
++                    let _ = send_detach(&mut sender, &args.target).await;
++                    break;
++                }
++            }
++            maybe_resize = resize_rx.recv() => {
++                if let Some((cols, rows)) = maybe_resize {
++                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else { break; };
++                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
++                    break;
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
++fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
++    let tokens: Vec<&str> = value.split_whitespace().collect();
++    if tokens.len() != 2 {
++        return Err(CliError::new(
++            "invalid_request",
++            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
++        ));
++    }
++    let prefix = parse_key_token(tokens[0])?;
++    let key = parse_key_token(tokens[1])?;
++    let timeout = Duration::from_millis(timeout_ms.max(1));
++    Ok(DetachSequence { prefix, key, timeout })
++}
++
++fn parse_key_token(token: &str) -> Result<u8, CliError> {
++    let normalized = token.trim();
++    if normalized.is_empty() {
++        return Err(CliError::new("invalid_request", "Detach key token is empty."));
++    }
++    let lower = normalized.to_lowercase();
++    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
++        let mut chars = rest.chars();
++        let Some(ch) = chars.next() else {
++            return Err(CliError::new("invalid_request", "Detach key missing character."));
++        };
++        if chars.next().is_some() {
++            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++        }
++        let byte = ch as u32;
++        if byte > u8::MAX as u32 {
++            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++        }
++        return Ok((byte as u8) & 0x1f);
++    }
++    let mut chars = normalized.chars();
++    let Some(ch) = chars.next() else {
++        return Err(CliError::new("invalid_request", "Detach key missing character."));
++    };
++    if chars.next().is_some() {
++        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++    }
++    let byte = ch as u32;
++    if byte > u8::MAX as u32 {
++        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++    }
++    Ok(byte as u8)
++}
++
++fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
++    thread::spawn(move || {
++        let mut stdin = std::io::stdin();
++        let mut buffer = [0u8; 1024];
++        loop {
++            match stdin.read(&mut buffer) {
++                Ok(0) => break,
++                Ok(count) => {
++                    if sender
++                        .blocking_send(buffer[..count].to_vec())
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++                Err(_) => break,
++            }
++        }
++    })
++}
++
++fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
++    #[cfg(unix)]
++    {
++        tokio::spawn(async move {
++            let mut signals = match signal(SignalKind::window_change()) {
++                Ok(value) => value,
++                Err(_) => return,
++            };
++            loop {
++                if signals.recv().await.is_none() {
++                    break;
++                }
++                if let Ok((cols, rows)) = terminal::size() {
++                    if sender.send((cols, rows)).await.is_err() {
++                        break;
++                    }
++                }
++            }
++        });
++    }
++    #[cfg(not(unix))]
++    {
++        let _ = sender;
++    }
++}
++
++async fn wait_for_attach(
++    receiver: &mut TerminaldStream,
++    sender: &mut TerminaldSink,
++    attach_id: &str,
++    session_id: &str,
++    stdout: &mut dyn Write,
++) -> Result<(), CliError> {
++    while let Some(message) = receiver.next().await {
++        match message {
++            Ok(TungsteniteMessage::Text(text)) => {
++                if let Some(result) = parse_terminald_response(&text, attach_id) {
++                    return result.map(|_| ());
++                }
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++            Ok(TungsteniteMessage::Binary(bytes)) => {
++                if let Ok(text) = String::from_utf8(bytes) {
++                    if let Some(result) = parse_terminald_response(&text, attach_id) {
++                        return result.map(|_| ());
++                    }
++                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                        write_terminal_payload(&payload, stdout)?;
++                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                        eprintln!("session warning: {warning}");
++                    } else if let Some(error) = parse_terminald_error(&text) {
++                        eprintln!("{}: {}", error.code, error.message);
++                    }
++                }
++            }
++            Ok(TungsteniteMessage::Ping(payload)) => {
++                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++            }
++            Ok(TungsteniteMessage::Close(_)) => {
++                return Err(CliError::new(
++                    "connection_failed",
++                    "Terminal daemon closed connection.",
++                ));
++            }
++            _ => {}
++        }
++    }
++
++    Err(CliError::new(
++        "connection_failed",
++        "Terminal daemon closed connection.",
++    ))
++}
++
++async fn handle_terminald_message(
++    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
++    session_id: &str,
++    stdout: &mut dyn Write,
++    sender: &mut TerminaldSink,
++) -> Result<bool, CliError> {
++    match message {
++        Ok(TungsteniteMessage::Text(text)) => {
++            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                write_terminal_payload(&payload, stdout)?;
++            } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                eprintln!("session warning: {warning}");
++            } else if let Some(error) = parse_terminald_error(&text) {
++                eprintln!("{}: {}", error.code, error.message);
++            }
++        }
++        Ok(TungsteniteMessage::Binary(bytes)) => {
++            if let Ok(text) = String::from_utf8(bytes) {
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++        }
++        Ok(TungsteniteMessage::Ping(payload)) => {
++            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++        }
++        Ok(TungsteniteMessage::Close(_)) => {
++            return Ok(false);
++        }
++        Err(error) => {
++            return Err(CliError::new(
++                "connection_failed",
++                format!("Terminal daemon error: {error}"),
++            ));
++        }
++        _ => {}
++    }
++    Ok(true)
++}
++
++fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "terminal_payload" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed.get("data").cloned()
++}
++
++fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "session_warning" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed
++        .get("data")
++        .and_then(|value| value.get("message"))
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string())
++}
++
++fn parse_terminald_error(text: &str) -> Option<CliError> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "res" {
++        return None;
++    }
++    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
++    if ok {
++        return None;
++    }
++    let error = parsed.get("error")?;
++    let code = error
++        .get("code")
++        .and_then(|value| value.as_str())
++        .unwrap_or("terminal_error");
++    let message = error
++        .get("message")
++        .and_then(|value| value.as_str())
++        .unwrap_or("Terminal daemon error.");
++    Some(CliError::new(map_error_code(code), message.to_string()))
++}
++
++fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
++    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
++        stdout
++            .write_all(snapshot.as_bytes())
++            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++    }
++    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
++        for chunk in output {
++            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
++                stdout
++                    .write_all(data.as_bytes())
++                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++            }
++        }
++    }
++    stdout
++        .flush()
++        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
++    Ok(())
++}
++
++async fn handle_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++    read_only: bool,
++    detach_sequence: &DetachSequence,
++    prefix_deadline: &mut Option<Instant>,
++) -> Result<bool, CliError> {
++    let mut buffer: Vec<u8> = Vec::new();
++    for &byte in bytes {
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() > deadline {
++                if !read_only {
++                    buffer.push(detach_sequence.prefix);
++                }
++                *prefix_deadline = None;
++            }
++        }
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() <= deadline && byte == detach_sequence.key {
++                *prefix_deadline = None;
++                if !read_only && !buffer.is_empty() {
++                    send_input_bytes(sender, session_id, &buffer).await?;
++                }
++                return Ok(true);
++            }
++            if !read_only {
++                buffer.push(detach_sequence.prefix);
++            }
++            *prefix_deadline = None;
++        }
++        if byte == detach_sequence.prefix {
++            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
++        } else if !read_only {
++            buffer.push(byte);
++        }
++    }
++    if !read_only && !buffer.is_empty() {
++        send_input_bytes(sender, session_id, &buffer).await?;
++    }
++    Ok(false)
++}
++
++async fn send_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++) -> Result<(), CliError> {
++    if bytes.is_empty() {
++        return Ok(());
++    }
++    let payload = match std::str::from_utf8(bytes) {
++        Ok(text) => json!({ "data": text }),
++        Err(_) => {
++            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
++            json!({ "data_b64": encoded })
++        }
++    };
++    send_terminald_action(sender, "input", session_id, Some(payload)).await
++}
++
++async fn send_resize(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    cols: u16,
++    rows: u16,
++) -> Result<(), CliError> {
++    let payload = json!({ "cols": cols, "rows": rows });
++    send_terminald_action(sender, "resize", session_id, Some(payload)).await
++}
++
++async fn send_detach(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++) -> Result<(), CliError> {
++    send_terminald_action(sender, "detach", session_id, None).await
++}
++
++async fn send_terminald_action(
++    sender: &mut TerminaldSink,
++    action: &str,
++    session_id: &str,
++    payload: Option<Value>,
++) -> Result<(), CliError> {
++    let request_id = random_request_id();
++    let request = build_terminald_request(
++        &request_id,
++        action,
++        Some(session_id.to_string()),
++        payload,
++    );
++    sender
++        .send(TungsteniteMessage::Text(request.to_string()))
++        .await
++        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
++    Ok(())
++}
++
+ fn extract_session_id(data: &Value) -> Option<String> {
+     data.get("session_id")
+         .and_then(|value| value.as_str())
+
+
+thinking
+**Composing conventional commit message**
+
+I'm crafting a concise commit subject with type and scope, adding a body to explain raw mode, detach sequence, and resize details for clarity before committing.
+exec
+/bin/zsh -lc 'git commit -m "feat(vibe-ctl): add interactive attach mode
+
+Implement raw-mode attach streaming with:
+- detach sequence parsing (Ctrl-b d) and timeout
+- stdin forwarding and read-only guard
+- SIGWINCH resize handling during attach"' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
+[main 5d3b176] feat(vibe-ctl): add interactive attach mode
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 7 files changed, 21591 insertions(+), 6 deletions(-)
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-11.md
+ create mode 100644 .ralph/runs/run-20260201-231810-31541-iter-12.log
+file update:
+diff --git a/.ralph/.tmp/prompt-20260201-231810-31541-12.md b/.ralph/.tmp/prompt-20260201-231810-31541-12.md
+deleted file mode 100644
+index f7d8904d6b25d424b842c3d856abf70a2a57168d..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/prompt-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,142 +0,0 @@
+-# Build
+-
+-You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+-
+-## Paths
+-- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json
+-- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+-- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+-- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+-- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+-- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+-- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+-- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+-- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+-- No-commit: false
+-- Repo Root: /Users/mac/codes/vibe-inspect
+-- Run ID: 20260201-231810-31541
+-- Iteration: 12
+-- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-
+-## Global Quality Gates (apply to every story)
+-- cd mobile && flutter test
+-- cd mobile && flutter analyze
+-- ./scripts/flutter_test.sh
+-- ./scripts/flutter_analyze.sh
+-
+-## Selected Story (Do not change scope)
+-ID: US-012
+-Title: vibe-ctl attach raw mode and detach key
+-
+-Story details:
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+-
+-
+-If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+-
+-## Rules (Non-Negotiable)
+-- Implement **only** the work required to complete the selected story.
+-- Complete all tasks associated with this story (and only this story).
+-- Do NOT ask the user questions.
+-- Do NOT change unrelated code.
+-- Do NOT assume something is unimplemented — confirm by reading code.
+-- Implement completely; no placeholders or stubs.
+-- If No-commit is true, do NOT commit or push changes.
+-- Do NOT edit the PRD JSON (status is handled by the loop).
+-- All changes made during the run must be committed (including updates to progress/logs).
+- - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+-
+-## Your Task (Do this in order)
+-1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+-2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+-3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json for global context (do not edit).
+-4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+-5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+-6. Implement only the tasks that belong to US-012.
+-7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+-8. If the project has a build or dev workflow, run what applies:
+-   - Build step (e.g., `npm run build`) if defined.
+-   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+-   - Confirm no runtime/build errors in the console.
+-9. Perform a brief audit before committing:
+-   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+-   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+-   - **Regression:** verify existing behavior that could be impacted still works.
+-10. If No-commit is false, commit changes using the `$commit` skill.
+-    - Stage everything: `git add -A`
+-    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+-    - After committing, capture the commit hash and subject using:
+-      `git show -s --format="%h %s" HEAD`.
+-11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+-    If No-commit is true, skip committing and note it in the progress entry.
+-
+-## Progress Entry Format (Append Only)
+-```
+-## [Date/Time] - US-012: vibe-ctl attach raw mode and detach key
+-Thread: [codex exec session id if available, otherwise leave blank]
+-Run: 20260201-231810-31541 (iteration 12)
+-Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-- Guardrails reviewed: yes
+-- No-commit run: false
+-- Commit: <hash> <subject> (or `none` + reason)
+-- Post-commit status: `clean` or list remaining files
+-- Verification:
+-  - Command: <exact command> -> PASS/FAIL
+-  - Command: <exact command> -> PASS/FAIL
+-- Files changed:
+-  - <file path>
+-  - <file path>
+-- What was implemented
+-- **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
+----
+-```
+-
+-## Completion Signal
+-Only output the completion signal when the **selected story** is fully complete and verified.
+-When the selected story is complete, output:
+-<promise>COMPLETE</promise>
+-
+-Otherwise, end normally without the signal.
+-
+-## Additional Guardrails
+-- When authoring documentation, capture the why (tests + implementation intent).
+-- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+-- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+-- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+-
+-## Activity Logging (Required)
+-Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+-```
+-/Users/mac/codes/vibe-inspect/ralph log "message"
+-```
+-Log at least:
+-- Start of work on the story
+-- After major code changes
+-- After tests/verification
+-- After updating progress log
+-
+-## Browser Testing (Required for Frontend Stories)
+-If the selected story changes UI, you MUST verify it in the browser:
+-1. Load the `dev-browser` skill.
+-2. Navigate to the relevant page.
+-3. Verify the UI changes work as expected.
+-4. Take a screenshot if helpful for the progress log.
+-
+-A frontend story is NOT complete until browser verification passes.
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.json b/.ralph/.tmp/story-20260201-231810-31541-12.json
+deleted file mode 100644
+index 3060d45c6401d0cd6ef282b84c04bf8102a66302..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-  "ok": true,
+-  "total": 16,
+-  "remaining": 5,
+-  "quality_gates": [
+-    "cd mobile && flutter test",
+-    "cd mobile && flutter analyze",
+-    "./scripts/flutter_test.sh",
+-    "./scripts/flutter_analyze.sh"
+-  ],
+-  "id": "US-012",
+-  "title": "vibe-ctl attach raw mode and detach key"
+-}
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.md b/.ralph/.tmp/story-20260201-231810-31541-12.md
+deleted file mode 100644
+index 3523e77c9a042f137be352135ed4d9ea3bc39c58..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fed4942c7a
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,5 +1,7 @@
+ use base64::Engine;
+ use clap::{Args, Parser, Subcommand};
++use crossterm::terminal;
++use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ use desktop::terminal_core::{
+     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
+     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+@@ -10,13 +12,17 @@
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs;
++use std::io::{Read, Write};
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ use tokio::runtime::Runtime;
++use tokio::sync::mpsc;
+ use tokio_tungstenite::connect_async;
+ use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
++#[cfg(unix)]
++use tokio::signal::unix::{signal, SignalKind};
+ 
+ const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
+ const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
+@@ -29,6 +35,8 @@
+ 
+ type TerminaldSocket =
+     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
++type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
++type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -57,6 +65,9 @@
+     Ls(LsArgs),
+     /// Create a new session.
+     New(NewArgs),
++    /// Attach to a session.
++    #[command(alias = "a")]
++    Attach(AttachArgs),
+     /// Send input to a session.
+     Send(SendArgs),
+     /// Resize a session.
+@@ -97,6 +108,25 @@
+ }
+ 
+ #[derive(Debug, Args)]
++struct AttachArgs {
++    /// Target session id.
++    #[arg(short = 't', long = "target", value_name = "ID")]
++    target: String,
++    /// Disable input forwarding.
++    #[arg(long)]
++    read_only: bool,
++    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
++    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
++    detach_key: String,
++    /// Detach timeout in milliseconds.
++    #[arg(long, value_name = "MS", default_value_t = 1000)]
++    detach_timeout_ms: u64,
++    /// Disable raw mode for debugging.
++    #[arg(long)]
++    no_raw: bool,
++}
++
++#[derive(Debug, Args)]
+ struct SendArgs {
+     /// Target session id.
+     #[arg(short = 't', long = "target", value_name = "ID")]
+@@ -193,6 +223,9 @@
+             })?;
+             println!("{session_id}");
+         }
++        Command::Attach(args) => {
++            attach_session(&overrides, args).await?;
++        }
+         Command::Send(args) => {
+             let payload = build_input_payload(&args)?;
+             terminald_request(
+@@ -315,6 +348,498 @@
+     Ok(Value::Object(payload))
+ }
+ 
++struct DetachSequence {
++    prefix: u8,
++    key: u8,
++    timeout: Duration,
++}
++
++struct RawModeGuard {
++    enabled: bool,
++}
++
++impl RawModeGuard {
++    fn new(enable: bool) -> Result<Self, CliError> {
++        if enable {
++            enable_raw_mode().map_err(|error| {
++                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
++            })?;
++        }
++        Ok(Self { enabled: enable })
++    }
++}
++
++impl Drop for RawModeGuard {
++    fn drop(&mut self) {
++        if self.enabled {
++            let _ = disable_raw_mode();
++        }
++    }
++}
++
++async fn attach_session(
++    overrides: &ConfigOverrides,
++    args: AttachArgs,
++) -> Result<(), CliError> {
++    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
++    let mut socket = connect_terminald(overrides).await?;
++    let (mut sender, mut receiver) = socket.split();
++
++    let attach_id = random_request_id();
++    let attach_request = build_terminald_request(
++        &attach_id,
++        "attach",
++        Some(args.target.clone()),
++        Some(json!({
++            "since": 0,
++            "notify_since": 0,
++        })),
++    );
++    sender
++        .send(TungsteniteMessage::Text(attach_request.to_string()))
++        .await
++        .map_err(|error| {
++            CliError::new(
++                "connection_failed",
++                format!("Failed to send attach request: {error}"),
++            )
++        })?;
++
++    let mut stdout = std::io::stdout();
++    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
++
++    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
++
++    if let Ok((cols, rows)) = terminal::size() {
++        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++    }
++
++    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
++    let _input_handle = spawn_stdin_reader(input_tx);
++
++    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
++    spawn_resize_listener(resize_tx);
++
++    let mut prefix_deadline: Option<Instant> = None;
++
++    loop {
++        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
++        if let Some(deadline) = prefix_deadline {
++            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
++        }
++
++        tokio::select! {
++            _ = &mut sleep, if prefix_deadline.is_some() => {
++                if let Some(deadline) = prefix_deadline {
++                    if Instant::now() >= deadline {
++                        if !args.read_only {
++                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
++                        }
++                        prefix_deadline = None;
++                    }
++                }
++            }
++            maybe_input = input_rx.recv() => {
++                let Some(bytes) = maybe_input else { break; };
++                let detach = handle_input_bytes(
++                    &mut sender,
++                    &args.target,
++                    &bytes,
++                    args.read_only,
++                    &detach_sequence,
++                    &mut prefix_deadline,
++                ).await?;
++                if detach {
++                    let _ = send_detach(&mut sender, &args.target).await;
++                    break;
++                }
++            }
++            maybe_resize = resize_rx.recv() => {
++                if let Some((cols, rows)) = maybe_resize {
++                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else { break; };
++                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
++                    break;
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
++fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
++    let tokens: Vec<&str> = value.split_whitespace().collect();
++    if tokens.len() != 2 {
++        return Err(CliError::new(
++            "invalid_request",
++            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
++        ));
++    }
++    let prefix = parse_key_token(tokens[0])?;
++    let key = parse_key_token(tokens[1])?;
++    let timeout = Duration::from_millis(timeout_ms.max(1));
++    Ok(DetachSequence { prefix, key, timeout })
++}
++
++fn parse_key_token(token: &str) -> Result<u8, CliError> {
++    let normalized = token.trim();
++    if normalized.is_empty() {
++        return Err(CliError::new("invalid_request", "Detach key token is empty."));
++    }
++    let lower = normalized.to_lowercase();
++    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
++        let mut chars = rest.chars();
++        let Some(ch) = chars.next() else {
++            return Err(CliError::new("invalid_request", "Detach key missing character."));
++        };
++        if chars.next().is_some() {
++            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++        }
++        let byte = ch as u32;
++        if byte > u8::MAX as u32 {
++            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++        }
++        return Ok((byte as u8) & 0x1f);
++    }
++    let mut chars = normalized.chars();
++    let Some(ch) = chars.next() else {
++        return Err(CliError::new("invalid_request", "Detach key missing character."));
++    };
++    if chars.next().is_some() {
++        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++    }
++    let byte = ch as u32;
++    if byte > u8::MAX as u32 {
++        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++    }
++    Ok(byte as u8)
++}
++
++fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
++    thread::spawn(move || {
++        let mut stdin = std::io::stdin();
++        let mut buffer = [0u8; 1024];
++        loop {
++            match stdin.read(&mut buffer) {
++                Ok(0) => break,
++                Ok(count) => {
++                    if sender
++                        .blocking_send(buffer[..count].to_vec())
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++                Err(_) => break,
++            }
++        }
++    })
++}
++
++fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
++    #[cfg(unix)]
++    {
++        tokio::spawn(async move {
++            let mut signals = match signal(SignalKind::window_change()) {
++                Ok(value) => value,
++                Err(_) => return,
++            };
++            loop {
++                if signals.recv().await.is_none() {
++                    break;
++                }
++                if let Ok((cols, rows)) = terminal::size() {
++                    if sender.send((cols, rows)).await.is_err() {
++                        break;
++                    }
++                }
++            }
++        });
++    }
++    #[cfg(not(unix))]
++    {
++        let _ = sender;
++    }
++}
++
++async fn wait_for_attach(
++    receiver: &mut TerminaldStream,
++    sender: &mut TerminaldSink,
++    attach_id: &str,
++    session_id: &str,
++    stdout: &mut dyn Write,
++) -> Result<(), CliError> {
++    while let Some(message) = receiver.next().await {
++        match message {
++            Ok(TungsteniteMessage::Text(text)) => {
++                if let Some(result) = parse_terminald_response(&text, attach_id) {
++                    return result.map(|_| ());
++                }
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++            Ok(TungsteniteMessage::Binary(bytes)) => {
++                if let Ok(text) = String::from_utf8(bytes) {
++                    if let Some(result) = parse_terminald_response(&text, attach_id) {
++                        return result.map(|_| ());
++                    }
++                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                        write_terminal_payload(&payload, stdout)?;
++                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                        eprintln!("session warning: {warning}");
++                    } else if let Some(error) = parse_terminald_error(&text) {
++                        eprintln!("{}: {}", error.code, error.message);
++                    }
++                }
++            }
++            Ok(TungsteniteMessage::Ping(payload)) => {
++                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++            }
++            Ok(TungsteniteMessage::Close(_)) => {
++                return Err(CliError::new(
++                    "connection_failed",
++                    "Terminal daemon closed connection.",
++                ));
++            }
++            _ => {}
++        }
++    }
++
++    Err(CliError::new(
++        "connection_failed",
++        "Terminal daemon closed connection.",
++    ))
++}
++
++async fn handle_terminald_message(
++    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
++    session_id: &str,
++    stdout: &mut dyn Write,
++    sender: &mut TerminaldSink,
++) -> Result<bool, CliError> {
++    match message {
++        Ok(TungsteniteMessage::Text(text)) => {
++            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                write_terminal_payload(&payload, stdout)?;
++            } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                eprintln!("session warning: {warning}");
++            } else if let Some(error) = parse_terminald_error(&text) {
++                eprintln!("{}: {}", error.code, error.message);
++            }
++        }
++        Ok(TungsteniteMessage::Binary(bytes)) => {
++            if let Ok(text) = String::from_utf8(bytes) {
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++        }
++        Ok(TungsteniteMessage::Ping(payload)) => {
++            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++        }
++        Ok(TungsteniteMessage::Close(_)) => {
++            return Ok(false);
++        }
++        Err(error) => {
++            return Err(CliError::new(
++                "connection_failed",
++                format!("Terminal daemon error: {error}"),
++            ));
++        }
++        _ => {}
++    }
++    Ok(true)
++}
++
++fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "terminal_payload" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed.get("data").cloned()
++}
++
++fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "session_warning" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed
++        .get("data")
++        .and_then(|value| value.get("message"))
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string())
++}
++
++fn parse_terminald_error(text: &str) -> Option<CliError> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "res" {
++        return None;
++    }
++    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
++    if ok {
++        return None;
++    }
++    let error = parsed.get("error")?;
++    let code = error
++        .get("code")
++        .and_then(|value| value.as_str())
++        .unwrap_or("terminal_error");
++    let message = error
++        .get("message")
++        .and_then(|value| value.as_str())
++        .unwrap_or("Terminal daemon error.");
++    Some(CliError::new(map_error_code(code), message.to_string()))
++}
++
++fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
++    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
++        stdout
++            .write_all(snapshot.as_bytes())
++            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++    }
++    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
++        for chunk in output {
++            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
++                stdout
++                    .write_all(data.as_bytes())
++                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++            }
++        }
++    }
++    stdout
++        .flush()
++        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
++    Ok(())
++}
++
++async fn handle_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++    read_only: bool,
++    detach_sequence: &DetachSequence,
++    prefix_deadline: &mut Option<Instant>,
++) -> Result<bool, CliError> {
++    let mut buffer: Vec<u8> = Vec::new();
++    for &byte in bytes {
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() > deadline {
++                if !read_only {
++                    buffer.push(detach_sequence.prefix);
++                }
++                *prefix_deadline = None;
++            }
++        }
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() <= deadline && byte == detach_sequence.key {
++                *prefix_deadline = None;
++                if !read_only && !buffer.is_empty() {
++                    send_input_bytes(sender, session_id, &buffer).await?;
++                }
++                return Ok(true);
++            }
++            if !read_only {
++                buffer.push(detach_sequence.prefix);
++            }
++            *prefix_deadline = None;
++        }
++        if byte == detach_sequence.prefix {
++            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
++        } else if !read_only {
++            buffer.push(byte);
++        }
++    }
++    if !read_only && !buffer.is_empty() {
++        send_input_bytes(sender, session_id, &buffer).await?;
++    }
++    Ok(false)
++}
++
++async fn send_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++) -> Result<(), CliError> {
++    if bytes.is_empty() {
++        return Ok(());
++    }
++    let payload = match std::str::from_utf8(bytes) {
++        Ok(text) => json!({ "data": text }),
++        Err(_) => {
++            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
++            json!({ "data_b64": encoded })
++        }
++    };
++    send_terminald_action(sender, "input", session_id, Some(payload)).await
++}
++
++async fn send_resize(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    cols: u16,
++    rows: u16,
++) -> Result<(), CliError> {
++    let payload = json!({ "cols": cols, "rows": rows });
++    send_terminald_action(sender, "resize", session_id, Some(payload)).await
++}
++
++async fn send_detach(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++) -> Result<(), CliError> {
++    send_terminald_action(sender, "detach", session_id, None).await
++}
++
++async fn send_terminald_action(
++    sender: &mut TerminaldSink,
++    action: &str,
++    session_id: &str,
++    payload: Option<Value>,
++) -> Result<(), CliError> {
++    let request_id = random_request_id();
++    let request = build_terminald_request(
++        &request_id,
++        action,
++        Some(session_id.to_string()),
++        payload,
++    );
++    sender
++        .send(TungsteniteMessage::Text(request.to_string()))
++        .await
++        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
++    Ok(())
++}
++
+ fn extract_session_id(data: &Value) -> Option<String> {
+     data.get("session_id")
+         .and_then(|value| value.as_str())
+
+
+thinking
+**Checking status after commit**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 46ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-12.log
+file update:
+diff --git a/.ralph/.tmp/prompt-20260201-231810-31541-12.md b/.ralph/.tmp/prompt-20260201-231810-31541-12.md
+deleted file mode 100644
+index f7d8904d6b25d424b842c3d856abf70a2a57168d..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/prompt-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,142 +0,0 @@
+-# Build
+-
+-You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+-
+-## Paths
+-- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json
+-- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+-- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+-- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+-- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+-- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+-- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+-- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+-- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+-- No-commit: false
+-- Repo Root: /Users/mac/codes/vibe-inspect
+-- Run ID: 20260201-231810-31541
+-- Iteration: 12
+-- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-
+-## Global Quality Gates (apply to every story)
+-- cd mobile && flutter test
+-- cd mobile && flutter analyze
+-- ./scripts/flutter_test.sh
+-- ./scripts/flutter_analyze.sh
+-
+-## Selected Story (Do not change scope)
+-ID: US-012
+-Title: vibe-ctl attach raw mode and detach key
+-
+-Story details:
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+-
+-
+-If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+-
+-## Rules (Non-Negotiable)
+-- Implement **only** the work required to complete the selected story.
+-- Complete all tasks associated with this story (and only this story).
+-- Do NOT ask the user questions.
+-- Do NOT change unrelated code.
+-- Do NOT assume something is unimplemented — confirm by reading code.
+-- Implement completely; no placeholders or stubs.
+-- If No-commit is true, do NOT commit or push changes.
+-- Do NOT edit the PRD JSON (status is handled by the loop).
+-- All changes made during the run must be committed (including updates to progress/logs).
+- - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+-
+-## Your Task (Do this in order)
+-1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+-2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+-3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json for global context (do not edit).
+-4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+-5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+-6. Implement only the tasks that belong to US-012.
+-7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+-8. If the project has a build or dev workflow, run what applies:
+-   - Build step (e.g., `npm run build`) if defined.
+-   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+-   - Confirm no runtime/build errors in the console.
+-9. Perform a brief audit before committing:
+-   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+-   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+-   - **Regression:** verify existing behavior that could be impacted still works.
+-10. If No-commit is false, commit changes using the `$commit` skill.
+-    - Stage everything: `git add -A`
+-    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+-    - After committing, capture the commit hash and subject using:
+-      `git show -s --format="%h %s" HEAD`.
+-11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+-    If No-commit is true, skip committing and note it in the progress entry.
+-
+-## Progress Entry Format (Append Only)
+-```
+-## [Date/Time] - US-012: vibe-ctl attach raw mode and detach key
+-Thread: [codex exec session id if available, otherwise leave blank]
+-Run: 20260201-231810-31541 (iteration 12)
+-Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-- Guardrails reviewed: yes
+-- No-commit run: false
+-- Commit: <hash> <subject> (or `none` + reason)
+-- Post-commit status: `clean` or list remaining files
+-- Verification:
+-  - Command: <exact command> -> PASS/FAIL
+-  - Command: <exact command> -> PASS/FAIL
+-- Files changed:
+-  - <file path>
+-  - <file path>
+-- What was implemented
+-- **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
+----
+-```
+-
+-## Completion Signal
+-Only output the completion signal when the **selected story** is fully complete and verified.
+-When the selected story is complete, output:
+-<promise>COMPLETE</promise>
+-
+-Otherwise, end normally without the signal.
+-
+-## Additional Guardrails
+-- When authoring documentation, capture the why (tests + implementation intent).
+-- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+-- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+-- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+-
+-## Activity Logging (Required)
+-Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+-```
+-/Users/mac/codes/vibe-inspect/ralph log "message"
+-```
+-Log at least:
+-- Start of work on the story
+-- After major code changes
+-- After tests/verification
+-- After updating progress log
+-
+-## Browser Testing (Required for Frontend Stories)
+-If the selected story changes UI, you MUST verify it in the browser:
+-1. Load the `dev-browser` skill.
+-2. Navigate to the relevant page.
+-3. Verify the UI changes work as expected.
+-4. Take a screenshot if helpful for the progress log.
+-
+-A frontend story is NOT complete until browser verification passes.
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.json b/.ralph/.tmp/story-20260201-231810-31541-12.json
+deleted file mode 100644
+index 3060d45c6401d0cd6ef282b84c04bf8102a66302..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-  "ok": true,
+-  "total": 16,
+-  "remaining": 5,
+-  "quality_gates": [
+-    "cd mobile && flutter test",
+-    "cd mobile && flutter analyze",
+-    "./scripts/flutter_test.sh",
+-    "./scripts/flutter_analyze.sh"
+-  ],
+-  "id": "US-012",
+-  "title": "vibe-ctl attach raw mode and detach key"
+-}
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.md b/.ralph/.tmp/story-20260201-231810-31541-12.md
+deleted file mode 100644
+index 3523e77c9a042f137be352135ed4d9ea3bc39c58..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fed4942c7a
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,5 +1,7 @@
+ use base64::Engine;
+ use clap::{Args, Parser, Subcommand};
++use crossterm::terminal;
++use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ use desktop::terminal_core::{
+     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
+     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+@@ -10,13 +12,17 @@
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs;
++use std::io::{Read, Write};
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ use tokio::runtime::Runtime;
++use tokio::sync::mpsc;
+ use tokio_tungstenite::connect_async;
+ use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
++#[cfg(unix)]
++use tokio::signal::unix::{signal, SignalKind};
+ 
+ const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
+ const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
+@@ -29,6 +35,8 @@
+ 
+ type TerminaldSocket =
+     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
++type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
++type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -57,6 +65,9 @@
+     Ls(LsArgs),
+     /// Create a new session.
+     New(NewArgs),
++    /// Attach to a session.
++    #[command(alias = "a")]
++    Attach(AttachArgs),
+     /// Send input to a session.
+     Send(SendArgs),
+     /// Resize a session.
+@@ -97,6 +108,25 @@
+ }
+ 
+ #[derive(Debug, Args)]
++struct AttachArgs {
++    /// Target session id.
++    #[arg(short = 't', long = "target", value_name = "ID")]
++    target: String,
++    /// Disable input forwarding.
++    #[arg(long)]
++    read_only: bool,
++    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
++    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
++    detach_key: String,
++    /// Detach timeout in milliseconds.
++    #[arg(long, value_name = "MS", default_value_t = 1000)]
++    detach_timeout_ms: u64,
++    /// Disable raw mode for debugging.
++    #[arg(long)]
++    no_raw: bool,
++}
++
++#[derive(Debug, Args)]
+ struct SendArgs {
+     /// Target session id.
+     #[arg(short = 't', long = "target", value_name = "ID")]
+@@ -193,6 +223,9 @@
+             })?;
+             println!("{session_id}");
+         }
++        Command::Attach(args) => {
++            attach_session(&overrides, args).await?;
++        }
+         Command::Send(args) => {
+             let payload = build_input_payload(&args)?;
+             terminald_request(
+@@ -315,6 +348,498 @@
+     Ok(Value::Object(payload))
+ }
+ 
++struct DetachSequence {
++    prefix: u8,
++    key: u8,
++    timeout: Duration,
++}
++
++struct RawModeGuard {
++    enabled: bool,
++}
++
++impl RawModeGuard {
++    fn new(enable: bool) -> Result<Self, CliError> {
++        if enable {
++            enable_raw_mode().map_err(|error| {
++                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
++            })?;
++        }
++        Ok(Self { enabled: enable })
++    }
++}
++
++impl Drop for RawModeGuard {
++    fn drop(&mut self) {
++        if self.enabled {
++            let _ = disable_raw_mode();
++        }
++    }
++}
++
++async fn attach_session(
++    overrides: &ConfigOverrides,
++    args: AttachArgs,
++) -> Result<(), CliError> {
++    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
++    let mut socket = connect_terminald(overrides).await?;
++    let (mut sender, mut receiver) = socket.split();
++
++    let attach_id = random_request_id();
++    let attach_request = build_terminald_request(
++        &attach_id,
++        "attach",
++        Some(args.target.clone()),
++        Some(json!({
++            "since": 0,
++            "notify_since": 0,
++        })),
++    );
++    sender
++        .send(TungsteniteMessage::Text(attach_request.to_string()))
++        .await
++        .map_err(|error| {
++            CliError::new(
++                "connection_failed",
++                format!("Failed to send attach request: {error}"),
++            )
++        })?;
++
++    let mut stdout = std::io::stdout();
++    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
++
++    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
++
++    if let Ok((cols, rows)) = terminal::size() {
++        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++    }
++
++    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
++    let _input_handle = spawn_stdin_reader(input_tx);
++
++    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
++    spawn_resize_listener(resize_tx);
++
++    let mut prefix_deadline: Option<Instant> = None;
++
++    loop {
++        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
++        if let Some(deadline) = prefix_deadline {
++            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
++        }
++
++        tokio::select! {
++            _ = &mut sleep, if prefix_deadline.is_some() => {
++                if let Some(deadline) = prefix_deadline {
++                    if Instant::now() >= deadline {
++                        if !args.read_only {
++                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
++                        }
++                        prefix_deadline = None;
++                    }
++                }
++            }
++            maybe_input = input_rx.recv() => {
++                let Some(bytes) = maybe_input else { break; };
++                let detach = handle_input_bytes(
++                    &mut sender,
++                    &args.target,
++                    &bytes,
++                    args.read_only,
++                    &detach_sequence,
++                    &mut prefix_deadline,
++                ).await?;
++                if detach {
++                    let _ = send_detach(&mut sender, &args.target).await;
++                    break;
++                }
++            }
++            maybe_resize = resize_rx.recv() => {
++                if let Some((cols, rows)) = maybe_resize {
++                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else { break; };
++                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
++                    break;
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
++fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
++    let tokens: Vec<&str> = value.split_whitespace().collect();
++    if tokens.len() != 2 {
++        return Err(CliError::new(
++            "invalid_request",
++            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
++        ));
++    }
++    let prefix = parse_key_token(tokens[0])?;
++    let key = parse_key_token(tokens[1])?;
++    let timeout = Duration::from_millis(timeout_ms.max(1));
++    Ok(DetachSequence { prefix, key, timeout })
++}
++
++fn parse_key_token(token: &str) -> Result<u8, CliError> {
++    let normalized = token.trim();
++    if normalized.is_empty() {
++        return Err(CliError::new("invalid_request", "Detach key token is empty."));
++    }
++    let lower = normalized.to_lowercase();
++    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
++        let mut chars = rest.chars();
++        let Some(ch) = chars.next() else {
++            return Err(CliError::new("invalid_request", "Detach key missing character."));
++        };
++        if chars.next().is_some() {
++            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++        }
++        let byte = ch as u32;
++        if byte > u8::MAX as u32 {
++            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++        }
++        return Ok((byte as u8) & 0x1f);
++    }
++    let mut chars = normalized.chars();
++    let Some(ch) = chars.next() else {
++        return Err(CliError::new("invalid_request", "Detach key missing character."));
++    };
++    if chars.next().is_some() {
++        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++    }
++    let byte = ch as u32;
++    if byte > u8::MAX as u32 {
++        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++    }
++    Ok(byte as u8)
++}
++
++fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
++    thread::spawn(move || {
++        let mut stdin = std::io::stdin();
++        let mut buffer = [0u8; 1024];
++        loop {
++            match stdin.read(&mut buffer) {
++                Ok(0) => break,
++                Ok(count) => {
++                    if sender
++                        .blocking_send(buffer[..count].to_vec())
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++                Err(_) => break,
++            }
++        }
++    })
++}
++
++fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
++    #[cfg(unix)]
++    {
++        tokio::spawn(async move {
++            let mut signals = match signal(SignalKind::window_change()) {
++                Ok(value) => value,
++                Err(_) => return,
++            };
++            loop {
++                if signals.recv().await.is_none() {
++                    break;
++                }
++                if let Ok((cols, rows)) = terminal::size() {
++                    if sender.send((cols, rows)).await.is_err() {
++                        break;
++                    }
++                }
++            }
++        });
++    }
++    #[cfg(not(unix))]
++    {
++        let _ = sender;
++    }
++}
++
++async fn wait_for_attach(
++    receiver: &mut TerminaldStream,
++    sender: &mut TerminaldSink,
++    attach_id: &str,
++    session_id: &str,
++    stdout: &mut dyn Write,
++) -> Result<(), CliError> {
++    while let Some(message) = receiver.next().await {
++        match message {
++            Ok(TungsteniteMessage::Text(text)) => {
++                if let Some(result) = parse_terminald_response(&text, attach_id) {
++                    return result.map(|_| ());
++                }
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++            Ok(TungsteniteMessage::Binary(bytes)) => {
++                if let Ok(text) = String::from_utf8(bytes) {
++                    if let Some(result) = parse_terminald_response(&text, attach_id) {
++                        return result.map(|_| ());
++                    }
++                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                        write_terminal_payload(&payload, stdout)?;
++                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                        eprintln!("session warning: {warning}");
++                    } else if let Some(error) = parse_terminald_error(&text) {
++                        eprintln!("{}: {}", error.code, error.message);
++                    }
++                }
++            }
++            Ok(TungsteniteMessage::Ping(payload)) => {
++                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++            }
++            Ok(TungsteniteMessage::Close(_)) => {
++                return Err(CliError::new(
++                    "connection_failed",
++                    "Terminal daemon closed connection.",
++                ));
++            }
++            _ => {}
++        }
++    }
++
++    Err(CliError::new(
++        "connection_failed",
++        "Terminal daemon closed connection.",
++    ))
++}
++
++async fn handle_terminald_message(
++    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
++    session_id: &str,
++    stdout: &mut dyn Write,
++    sender: &mut TerminaldSink,
++) -> Result<bool, CliError> {
++    match message {
++        Ok(TungsteniteMessage::Text(text)) => {
++            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                write_terminal_payload(&payload, stdout)?;
++            } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                eprintln!("session warning: {warning}");
++            } else if let Some(error) = parse_terminald_error(&text) {
++                eprintln!("{}: {}", error.code, error.message);
++            }
++        }
++        Ok(TungsteniteMessage::Binary(bytes)) => {
++            if let Ok(text) = String::from_utf8(bytes) {
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++        }
++        Ok(TungsteniteMessage::Ping(payload)) => {
++            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++        }
++        Ok(TungsteniteMessage::Close(_)) => {
++            return Ok(false);
++        }
++        Err(error) => {
++            return Err(CliError::new(
++                "connection_failed",
++                format!("Terminal daemon error: {error}"),
++            ));
++        }
++        _ => {}
++    }
++    Ok(true)
++}
++
++fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "terminal_payload" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed.get("data").cloned()
++}
++
++fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "session_warning" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed
++        .get("data")
++        .and_then(|value| value.get("message"))
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string())
++}
++
++fn parse_terminald_error(text: &str) -> Option<CliError> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "res" {
++        return None;
++    }
++    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
++    if ok {
++        return None;
++    }
++    let error = parsed.get("error")?;
++    let code = error
++        .get("code")
++        .and_then(|value| value.as_str())
++        .unwrap_or("terminal_error");
++    let message = error
++        .get("message")
++        .and_then(|value| value.as_str())
++        .unwrap_or("Terminal daemon error.");
++    Some(CliError::new(map_error_code(code), message.to_string()))
++}
++
++fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
++    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
++        stdout
++            .write_all(snapshot.as_bytes())
++            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++    }
++    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
++        for chunk in output {
++            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
++                stdout
++                    .write_all(data.as_bytes())
++                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++            }
++        }
++    }
++    stdout
++        .flush()
++        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
++    Ok(())
++}
++
++async fn handle_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++    read_only: bool,
++    detach_sequence: &DetachSequence,
++    prefix_deadline: &mut Option<Instant>,
++) -> Result<bool, CliError> {
++    let mut buffer: Vec<u8> = Vec::new();
++    for &byte in bytes {
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() > deadline {
++                if !read_only {
++                    buffer.push(detach_sequence.prefix);
++                }
++                *prefix_deadline = None;
++            }
++        }
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() <= deadline && byte == detach_sequence.key {
++                *prefix_deadline = None;
++                if !read_only && !buffer.is_empty() {
++                    send_input_bytes(sender, session_id, &buffer).await?;
++                }
++                return Ok(true);
++            }
++            if !read_only {
++                buffer.push(detach_sequence.prefix);
++            }
++            *prefix_deadline = None;
++        }
++        if byte == detach_sequence.prefix {
++            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
++        } else if !read_only {
++            buffer.push(byte);
++        }
++    }
++    if !read_only && !buffer.is_empty() {
++        send_input_bytes(sender, session_id, &buffer).await?;
++    }
++    Ok(false)
++}
++
++async fn send_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++) -> Result<(), CliError> {
++    if bytes.is_empty() {
++        return Ok(());
++    }
++    let payload = match std::str::from_utf8(bytes) {
++        Ok(text) => json!({ "data": text }),
++        Err(_) => {
++            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
++            json!({ "data_b64": encoded })
++        }
++    };
++    send_terminald_action(sender, "input", session_id, Some(payload)).await
++}
++
++async fn send_resize(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    cols: u16,
++    rows: u16,
++) -> Result<(), CliError> {
++    let payload = json!({ "cols": cols, "rows": rows });
++    send_terminald_action(sender, "resize", session_id, Some(payload)).await
++}
++
++async fn send_detach(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++) -> Result<(), CliError> {
++    send_terminald_action(sender, "detach", session_id, None).await
++}
++
++async fn send_terminald_action(
++    sender: &mut TerminaldSink,
++    action: &str,
++    session_id: &str,
++    payload: Option<Value>,
++) -> Result<(), CliError> {
++    let request_id = random_request_id();
++    let request = build_terminald_request(
++        &request_id,
++        action,
++        Some(session_id.to_string()),
++        payload,
++    );
++    sender
++        .send(TungsteniteMessage::Text(request.to_string()))
++        .await
++        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
++    Ok(())
++}
++
+ fn extract_session_id(data: &Value) -> Option<String> {
+     data.get("session_id")
+         .and_then(|value| value.as_str())
+
+
+thinking
+**Investigating post-commit log file changes**
+
+The run log file appears modified right after the commit, preventing a clean working tree. I'll verify the diff to decide if a follow-up commit updating the log is needed to satisfy the requirement for a clean state after committing.
+exec
+/bin/zsh -lc 'git diff --stat' in /Users/mac/codes/vibe-inspect succeeded in 51ms:
+ .ralph/runs/run-20260201-231810-31541-iter-12.log | 3145 ++++++++++++++++++++-
+ 1 file changed, 3144 insertions(+), 1 deletion(-)
+file update:
+diff --git a/.ralph/.tmp/prompt-20260201-231810-31541-12.md b/.ralph/.tmp/prompt-20260201-231810-31541-12.md
+deleted file mode 100644
+index f7d8904d6b25d424b842c3d856abf70a2a57168d..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/prompt-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,142 +0,0 @@
+-# Build
+-
+-You are an autonomous coding agent. Your task is to complete the work for exactly one story and record the outcome.
+-
+-## Paths
+-- PRD: /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json
+-- AGENTS (optional): /Users/mac/codes/vibe-inspect/AGENTS.md
+-- Progress Log: /Users/mac/codes/vibe-inspect/.ralph/progress.md
+-- Guardrails: /Users/mac/codes/vibe-inspect/.ralph/guardrails.md
+-- Guardrails Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md
+-- Context Reference: /Users/mac/codes/vibe-inspect/.agents/ralph/references/CONTEXT_ENGINEERING.md
+-- Errors Log: /Users/mac/codes/vibe-inspect/.ralph/errors.log
+-- Activity Log: /Users/mac/codes/vibe-inspect/.ralph/activity.log
+-- Activity Logger: /Users/mac/codes/vibe-inspect/ralph log
+-- No-commit: false
+-- Repo Root: /Users/mac/codes/vibe-inspect
+-- Run ID: 20260201-231810-31541
+-- Iteration: 12
+-- Run Log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-- Run Summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-
+-## Global Quality Gates (apply to every story)
+-- cd mobile && flutter test
+-- cd mobile && flutter analyze
+-- ./scripts/flutter_test.sh
+-- ./scripts/flutter_analyze.sh
+-
+-## Selected Story (Do not change scope)
+-ID: US-012
+-Title: vibe-ctl attach raw mode and detach key
+-
+-Story details:
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+-
+-
+-If the story details are empty or missing, STOP and report that the PRD story format could not be parsed.
+-
+-## Rules (Non-Negotiable)
+-- Implement **only** the work required to complete the selected story.
+-- Complete all tasks associated with this story (and only this story).
+-- Do NOT ask the user questions.
+-- Do NOT change unrelated code.
+-- Do NOT assume something is unimplemented — confirm by reading code.
+-- Implement completely; no placeholders or stubs.
+-- If No-commit is true, do NOT commit or push changes.
+-- Do NOT edit the PRD JSON (status is handled by the loop).
+-- All changes made during the run must be committed (including updates to progress/logs).
+- - Before committing, perform a final **security**, **performance**, and **regression** review of your changes.
+-
+-## Your Task (Do this in order)
+-1. Read /Users/mac/codes/vibe-inspect/.ralph/guardrails.md before any code changes.
+-2. Read /Users/mac/codes/vibe-inspect/.ralph/errors.log for repeated failures to avoid.
+-3. Read /Users/mac/codes/vibe-inspect/.agents/tasks/prd-terminal-daemon.json for global context (do not edit).
+-4. Fully audit and read all necessary files to understand the task end-to-end before implementing. Do not assume missing functionality.
+-5. If /Users/mac/codes/vibe-inspect/AGENTS.md exists, follow its build/test instructions.
+-6. Implement only the tasks that belong to US-012.
+-7. Run verification commands listed in the story, the global quality gates, and in /Users/mac/codes/vibe-inspect/AGENTS.md (if required).
+-8. If the project has a build or dev workflow, run what applies:
+-   - Build step (e.g., `npm run build`) if defined.
+-   - Dev server (e.g., `npm run dev`, `wrangler dev`) if it is the normal validation path.
+-   - Confirm no runtime/build errors in the console.
+-9. Perform a brief audit before committing:
+-   - **Security:** check for obvious vulnerabilities or unsafe handling introduced by your changes.
+-   - **Performance:** check for avoidable regressions (extra queries, heavy loops, unnecessary re-renders).
+-   - **Regression:** verify existing behavior that could be impacted still works.
+-10. If No-commit is false, commit changes using the `$commit` skill.
+-    - Stage everything: `git add -A`
+-    - Confirm a clean working tree after commit: `git status --porcelain` should be empty.
+-    - After committing, capture the commit hash and subject using:
+-      `git show -s --format="%h %s" HEAD`.
+-11. Append a progress entry to /Users/mac/codes/vibe-inspect/.ralph/progress.md with run/commit/test details (format below).
+-    If No-commit is true, skip committing and note it in the progress entry.
+-
+-## Progress Entry Format (Append Only)
+-```
+-## [Date/Time] - US-012: vibe-ctl attach raw mode and detach key
+-Thread: [codex exec session id if available, otherwise leave blank]
+-Run: 20260201-231810-31541 (iteration 12)
+-Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log
+-Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.md
+-- Guardrails reviewed: yes
+-- No-commit run: false
+-- Commit: <hash> <subject> (or `none` + reason)
+-- Post-commit status: `clean` or list remaining files
+-- Verification:
+-  - Command: <exact command> -> PASS/FAIL
+-  - Command: <exact command> -> PASS/FAIL
+-- Files changed:
+-  - <file path>
+-  - <file path>
+-- What was implemented
+-- **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
+----
+-```
+-
+-## Completion Signal
+-Only output the completion signal when the **selected story** is fully complete and verified.
+-When the selected story is complete, output:
+-<promise>COMPLETE</promise>
+-
+-Otherwise, end normally without the signal.
+-
+-## Additional Guardrails
+-- When authoring documentation, capture the why (tests + implementation intent).
+-- If you learn how to run/build/test the project, update /Users/mac/codes/vibe-inspect/AGENTS.md briefly (operational only).
+-- Keep AGENTS operational only; progress notes belong in /Users/mac/codes/vibe-inspect/.ralph/progress.md.
+-- If you hit repeated errors, log them in /Users/mac/codes/vibe-inspect/.ralph/errors.log and add a Sign to /Users/mac/codes/vibe-inspect/.ralph/guardrails.md using /Users/mac/codes/vibe-inspect/.agents/ralph/references/GUARDRAILS.md as the template.
+-
+-## Activity Logging (Required)
+-Log major actions to /Users/mac/codes/vibe-inspect/.ralph/activity.log using the helper:
+-```
+-/Users/mac/codes/vibe-inspect/ralph log "message"
+-```
+-Log at least:
+-- Start of work on the story
+-- After major code changes
+-- After tests/verification
+-- After updating progress log
+-
+-## Browser Testing (Required for Frontend Stories)
+-If the selected story changes UI, you MUST verify it in the browser:
+-1. Load the `dev-browser` skill.
+-2. Navigate to the relevant page.
+-3. Verify the UI changes work as expected.
+-4. Take a screenshot if helpful for the progress log.
+-
+-A frontend story is NOT complete until browser verification passes.
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.json b/.ralph/.tmp/story-20260201-231810-31541-12.json
+deleted file mode 100644
+index 3060d45c6401d0cd6ef282b84c04bf8102a66302..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-  "ok": true,
+-  "total": 16,
+-  "remaining": 5,
+-  "quality_gates": [
+-    "cd mobile && flutter test",
+-    "cd mobile && flutter analyze",
+-    "./scripts/flutter_test.sh",
+-    "./scripts/flutter_analyze.sh"
+-  ],
+-  "id": "US-012",
+-  "title": "vibe-ctl attach raw mode and detach key"
+-}
+diff --git a/.ralph/.tmp/story-20260201-231810-31541-12.md b/.ralph/.tmp/story-20260201-231810-31541-12.md
+deleted file mode 100644
+index 3523e77c9a042f137be352135ed4d9ea3bc39c58..0000000000000000000000000000000000000000
+--- a/.ralph/.tmp/story-20260201-231810-31541-12.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+-### US-012: vibe-ctl attach raw mode and detach key
+-Status: in_progress
+-Depends on: US-011, US-006
+-
+-Description:
+-As a user, I want interactive attach with raw-mode input and tmux-like detach semantics.
+-
+-Acceptance Criteria:
+-- [ ] Attach enters raw mode, streams output, forwards keystrokes as `input`
+-- [ ] Detach key sequence is `Ctrl-b` then `d` within 1s (configurable), and restores TTY
+-- [ ] Handle SIGWINCH to send resize events automatically
+-- [ ] Example: attach, type commands, then detach and return to shell prompt without corruption
+-- [ ] Negative: `--read-only` prevents input from being sent to the session
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+index 6a3ddd7ebbf8d9bc1e5b079085eba4ecf5b10d44..2dcd0156d0c4e95830fbe6d776c3a7fed4942c7a
+--- a/desktop/src/bin/vibe-ctl.rs
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -1,5 +1,7 @@
+ use base64::Engine;
+ use clap::{Args, Parser, Subcommand};
++use crossterm::terminal;
++use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ use desktop::terminal_core::{
+     read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
+     DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+@@ -10,13 +12,17 @@
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs;
++use std::io::{Read, Write};
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ use tokio::runtime::Runtime;
++use tokio::sync::mpsc;
+ use tokio_tungstenite::connect_async;
+ use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
++#[cfg(unix)]
++use tokio::signal::unix::{signal, SignalKind};
+ 
+ const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
+ const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
+@@ -29,6 +35,8 @@
+ 
+ type TerminaldSocket =
+     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
++type TerminaldSink = futures_util::stream::SplitSink<TerminaldSocket, TungsteniteMessage>;
++type TerminaldStream = futures_util::stream::SplitStream<TerminaldSocket>;
+ 
+ #[derive(Debug, Parser)]
+ #[command(
+@@ -57,6 +65,9 @@
+     Ls(LsArgs),
+     /// Create a new session.
+     New(NewArgs),
++    /// Attach to a session.
++    #[command(alias = "a")]
++    Attach(AttachArgs),
+     /// Send input to a session.
+     Send(SendArgs),
+     /// Resize a session.
+@@ -97,6 +108,25 @@
+ }
+ 
+ #[derive(Debug, Args)]
++struct AttachArgs {
++    /// Target session id.
++    #[arg(short = 't', long = "target", value_name = "ID")]
++    target: String,
++    /// Disable input forwarding.
++    #[arg(long)]
++    read_only: bool,
++    /// Detach key sequence (two keys, e.g. "Ctrl-b d").
++    #[arg(long, value_name = "KEYS", default_value = "Ctrl-b d")]
++    detach_key: String,
++    /// Detach timeout in milliseconds.
++    #[arg(long, value_name = "MS", default_value_t = 1000)]
++    detach_timeout_ms: u64,
++    /// Disable raw mode for debugging.
++    #[arg(long)]
++    no_raw: bool,
++}
++
++#[derive(Debug, Args)]
+ struct SendArgs {
+     /// Target session id.
+     #[arg(short = 't', long = "target", value_name = "ID")]
+@@ -193,6 +223,9 @@
+             })?;
+             println!("{session_id}");
+         }
++        Command::Attach(args) => {
++            attach_session(&overrides, args).await?;
++        }
+         Command::Send(args) => {
+             let payload = build_input_payload(&args)?;
+             terminald_request(
+@@ -315,6 +348,498 @@
+     Ok(Value::Object(payload))
+ }
+ 
++struct DetachSequence {
++    prefix: u8,
++    key: u8,
++    timeout: Duration,
++}
++
++struct RawModeGuard {
++    enabled: bool,
++}
++
++impl RawModeGuard {
++    fn new(enable: bool) -> Result<Self, CliError> {
++        if enable {
++            enable_raw_mode().map_err(|error| {
++                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
++            })?;
++        }
++        Ok(Self { enabled: enable })
++    }
++}
++
++impl Drop for RawModeGuard {
++    fn drop(&mut self) {
++        if self.enabled {
++            let _ = disable_raw_mode();
++        }
++    }
++}
++
++async fn attach_session(
++    overrides: &ConfigOverrides,
++    args: AttachArgs,
++) -> Result<(), CliError> {
++    let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
++    let mut socket = connect_terminald(overrides).await?;
++    let (mut sender, mut receiver) = socket.split();
++
++    let attach_id = random_request_id();
++    let attach_request = build_terminald_request(
++        &attach_id,
++        "attach",
++        Some(args.target.clone()),
++        Some(json!({
++            "since": 0,
++            "notify_since": 0,
++        })),
++    );
++    sender
++        .send(TungsteniteMessage::Text(attach_request.to_string()))
++        .await
++        .map_err(|error| {
++            CliError::new(
++                "connection_failed",
++                format!("Failed to send attach request: {error}"),
++            )
++        })?;
++
++    let mut stdout = std::io::stdout();
++    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
++
++    let _raw_guard = RawModeGuard::new(!args.no_raw)?;
++
++    if let Ok((cols, rows)) = terminal::size() {
++        let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++    }
++
++    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
++    let _input_handle = spawn_stdin_reader(input_tx);
++
++    let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(8);
++    spawn_resize_listener(resize_tx);
++
++    let mut prefix_deadline: Option<Instant> = None;
++
++    loop {
++        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
++        if let Some(deadline) = prefix_deadline {
++            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
++        }
++
++        tokio::select! {
++            _ = &mut sleep, if prefix_deadline.is_some() => {
++                if let Some(deadline) = prefix_deadline {
++                    if Instant::now() >= deadline {
++                        if !args.read_only {
++                            let _ = send_input_bytes(&mut sender, &args.target, &[detach_sequence.prefix]).await;
++                        }
++                        prefix_deadline = None;
++                    }
++                }
++            }
++            maybe_input = input_rx.recv() => {
++                let Some(bytes) = maybe_input else { break; };
++                let detach = handle_input_bytes(
++                    &mut sender,
++                    &args.target,
++                    &bytes,
++                    args.read_only,
++                    &detach_sequence,
++                    &mut prefix_deadline,
++                ).await?;
++                if detach {
++                    let _ = send_detach(&mut sender, &args.target).await;
++                    break;
++                }
++            }
++            maybe_resize = resize_rx.recv() => {
++                if let Some((cols, rows)) = maybe_resize {
++                    let _ = send_resize(&mut sender, &args.target, cols, rows).await;
++                }
++            }
++            maybe_message = receiver.next() => {
++                let Some(message) = maybe_message else { break; };
++                if !handle_terminald_message(message, &args.target, &mut stdout, &mut sender).await? {
++                    break;
++                }
++            }
++        }
++    }
++
++    Ok(())
++}
++
++fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence, CliError> {
++    let tokens: Vec<&str> = value.split_whitespace().collect();
++    if tokens.len() != 2 {
++        return Err(CliError::new(
++            "invalid_request",
++            "Detach key must be two keys (e.g. \"Ctrl-b d\").",
++        ));
++    }
++    let prefix = parse_key_token(tokens[0])?;
++    let key = parse_key_token(tokens[1])?;
++    let timeout = Duration::from_millis(timeout_ms.max(1));
++    Ok(DetachSequence { prefix, key, timeout })
++}
++
++fn parse_key_token(token: &str) -> Result<u8, CliError> {
++    let normalized = token.trim();
++    if normalized.is_empty() {
++        return Err(CliError::new("invalid_request", "Detach key token is empty."));
++    }
++    let lower = normalized.to_lowercase();
++    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
++        let mut chars = rest.chars();
++        let Some(ch) = chars.next() else {
++            return Err(CliError::new("invalid_request", "Detach key missing character."));
++        };
++        if chars.next().is_some() {
++            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++        }
++        let byte = ch as u32;
++        if byte > u8::MAX as u32 {
++            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++        }
++        return Ok((byte as u8) & 0x1f);
++    }
++    let mut chars = normalized.chars();
++    let Some(ch) = chars.next() else {
++        return Err(CliError::new("invalid_request", "Detach key missing character."));
++    };
++    if chars.next().is_some() {
++        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
++    }
++    let byte = ch as u32;
++    if byte > u8::MAX as u32 {
++        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
++    }
++    Ok(byte as u8)
++}
++
++fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
++    thread::spawn(move || {
++        let mut stdin = std::io::stdin();
++        let mut buffer = [0u8; 1024];
++        loop {
++            match stdin.read(&mut buffer) {
++                Ok(0) => break,
++                Ok(count) => {
++                    if sender
++                        .blocking_send(buffer[..count].to_vec())
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++                Err(_) => break,
++            }
++        }
++    })
++}
++
++fn spawn_resize_listener(sender: mpsc::Sender<(u16, u16)>) {
++    #[cfg(unix)]
++    {
++        tokio::spawn(async move {
++            let mut signals = match signal(SignalKind::window_change()) {
++                Ok(value) => value,
++                Err(_) => return,
++            };
++            loop {
++                if signals.recv().await.is_none() {
++                    break;
++                }
++                if let Ok((cols, rows)) = terminal::size() {
++                    if sender.send((cols, rows)).await.is_err() {
++                        break;
++                    }
++                }
++            }
++        });
++    }
++    #[cfg(not(unix))]
++    {
++        let _ = sender;
++    }
++}
++
++async fn wait_for_attach(
++    receiver: &mut TerminaldStream,
++    sender: &mut TerminaldSink,
++    attach_id: &str,
++    session_id: &str,
++    stdout: &mut dyn Write,
++) -> Result<(), CliError> {
++    while let Some(message) = receiver.next().await {
++        match message {
++            Ok(TungsteniteMessage::Text(text)) => {
++                if let Some(result) = parse_terminald_response(&text, attach_id) {
++                    return result.map(|_| ());
++                }
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++            Ok(TungsteniteMessage::Binary(bytes)) => {
++                if let Ok(text) = String::from_utf8(bytes) {
++                    if let Some(result) = parse_terminald_response(&text, attach_id) {
++                        return result.map(|_| ());
++                    }
++                    if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                        write_terminal_payload(&payload, stdout)?;
++                    } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                        eprintln!("session warning: {warning}");
++                    } else if let Some(error) = parse_terminald_error(&text) {
++                        eprintln!("{}: {}", error.code, error.message);
++                    }
++                }
++            }
++            Ok(TungsteniteMessage::Ping(payload)) => {
++                let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++            }
++            Ok(TungsteniteMessage::Close(_)) => {
++                return Err(CliError::new(
++                    "connection_failed",
++                    "Terminal daemon closed connection.",
++                ));
++            }
++            _ => {}
++        }
++    }
++
++    Err(CliError::new(
++        "connection_failed",
++        "Terminal daemon closed connection.",
++    ))
++}
++
++async fn handle_terminald_message(
++    message: Result<TungsteniteMessage, tokio_tungstenite::tungstenite::Error>,
++    session_id: &str,
++    stdout: &mut dyn Write,
++    sender: &mut TerminaldSink,
++) -> Result<bool, CliError> {
++    match message {
++        Ok(TungsteniteMessage::Text(text)) => {
++            if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                write_terminal_payload(&payload, stdout)?;
++            } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                eprintln!("session warning: {warning}");
++            } else if let Some(error) = parse_terminald_error(&text) {
++                eprintln!("{}: {}", error.code, error.message);
++            }
++        }
++        Ok(TungsteniteMessage::Binary(bytes)) => {
++            if let Ok(text) = String::from_utf8(bytes) {
++                if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
++                    write_terminal_payload(&payload, stdout)?;
++                } else if let Some(warning) = extract_session_warning(&text, session_id) {
++                    eprintln!("session warning: {warning}");
++                } else if let Some(error) = parse_terminald_error(&text) {
++                    eprintln!("{}: {}", error.code, error.message);
++                }
++            }
++        }
++        Ok(TungsteniteMessage::Ping(payload)) => {
++            let _ = sender.send(TungsteniteMessage::Pong(payload)).await;
++        }
++        Ok(TungsteniteMessage::Close(_)) => {
++            return Ok(false);
++        }
++        Err(error) => {
++            return Err(CliError::new(
++                "connection_failed",
++                format!("Terminal daemon error: {error}"),
++            ));
++        }
++        _ => {}
++    }
++    Ok(true)
++}
++
++fn extract_terminal_payload_event(text: &str, session_id: &str) -> Option<Value> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "terminal_payload" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed.get("data").cloned()
++}
++
++fn extract_session_warning(text: &str, session_id: &str) -> Option<String> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "event" {
++        return None;
++    }
++    if parsed.get("event")?.as_str()? != "session_warning" {
++        return None;
++    }
++    if let Some(event_session) = parsed.get("session_id").and_then(|value| value.as_str()) {
++        if event_session != session_id {
++            return None;
++        }
++    }
++    parsed
++        .get("data")
++        .and_then(|value| value.get("message"))
++        .and_then(|value| value.as_str())
++        .map(|value| value.to_string())
++}
++
++fn parse_terminald_error(text: &str) -> Option<CliError> {
++    let parsed: Value = serde_json::from_str(text).ok()?;
++    if parsed.get("type")?.as_str()? != "res" {
++        return None;
++    }
++    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
++    if ok {
++        return None;
++    }
++    let error = parsed.get("error")?;
++    let code = error
++        .get("code")
++        .and_then(|value| value.as_str())
++        .unwrap_or("terminal_error");
++    let message = error
++        .get("message")
++        .and_then(|value| value.as_str())
++        .unwrap_or("Terminal daemon error.");
++    Some(CliError::new(map_error_code(code), message.to_string()))
++}
++
++fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
++    if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
++        stdout
++            .write_all(snapshot.as_bytes())
++            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++    }
++    if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
++        for chunk in output {
++            if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
++                stdout
++                    .write_all(data.as_bytes())
++                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
++            }
++        }
++    }
++    stdout
++        .flush()
++        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
++    Ok(())
++}
++
++async fn handle_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++    read_only: bool,
++    detach_sequence: &DetachSequence,
++    prefix_deadline: &mut Option<Instant>,
++) -> Result<bool, CliError> {
++    let mut buffer: Vec<u8> = Vec::new();
++    for &byte in bytes {
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() > deadline {
++                if !read_only {
++                    buffer.push(detach_sequence.prefix);
++                }
++                *prefix_deadline = None;
++            }
++        }
++        if let Some(deadline) = *prefix_deadline {
++            if Instant::now() <= deadline && byte == detach_sequence.key {
++                *prefix_deadline = None;
++                if !read_only && !buffer.is_empty() {
++                    send_input_bytes(sender, session_id, &buffer).await?;
++                }
++                return Ok(true);
++            }
++            if !read_only {
++                buffer.push(detach_sequence.prefix);
++            }
++            *prefix_deadline = None;
++        }
++        if byte == detach_sequence.prefix {
++            *prefix_deadline = Some(Instant::now() + detach_sequence.timeout);
++        } else if !read_only {
++            buffer.push(byte);
++        }
++    }
++    if !read_only && !buffer.is_empty() {
++        send_input_bytes(sender, session_id, &buffer).await?;
++    }
++    Ok(false)
++}
++
++async fn send_input_bytes(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    bytes: &[u8],
++) -> Result<(), CliError> {
++    if bytes.is_empty() {
++        return Ok(());
++    }
++    let payload = match std::str::from_utf8(bytes) {
++        Ok(text) => json!({ "data": text }),
++        Err(_) => {
++            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
++            json!({ "data_b64": encoded })
++        }
++    };
++    send_terminald_action(sender, "input", session_id, Some(payload)).await
++}
++
++async fn send_resize(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++    cols: u16,
++    rows: u16,
++) -> Result<(), CliError> {
++    let payload = json!({ "cols": cols, "rows": rows });
++    send_terminald_action(sender, "resize", session_id, Some(payload)).await
++}
++
++async fn send_detach(
++    sender: &mut TerminaldSink,
++    session_id: &str,
++) -> Result<(), CliError> {
++    send_terminald_action(sender, "detach", session_id, None).await
++}
++
++async fn send_terminald_action(
++    sender: &mut TerminaldSink,
++    action: &str,
++    session_id: &str,
++    payload: Option<Value>,
++) -> Result<(), CliError> {
++    let request_id = random_request_id();
++    let request = build_terminald_request(
++        &request_id,
++        action,
++        Some(session_id.to_string()),
++        payload,
++    );
++    sender
++        .send(TungsteniteMessage::Text(request.to_string()))
++        .await
++        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
++    Ok(())
++}
++
+ fn extract_session_id(data: &Value) -> Option<String> {
+     data.get("session_id")
+         .and_then(|value| value.as_str())
+
+
+
+thinking
+**Deciding to commit updated log separately**
+
+The log file changes after the first commit require a second commit to keep the tree clean as instructed. It's acceptable to have multiple commits, so I'll commit the log update separately and ensure the final summary references the latest commit hash and subject.
+thinking
+**Choosing second commit for run log**
+
+Since amending is disallowed, I'll create a second commit for the updated run log to capture the required final state and record its hash as the main reference.
+exec
+/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-12.log' in /Users/mac/codes/vibe-inspect
