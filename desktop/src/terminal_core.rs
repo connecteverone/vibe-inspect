@@ -42,12 +42,16 @@ const MIN_ROWS: u16 = 4;
 const MAX_ROWS: u16 = 200;
 const MAX_BUFFER_BYTES: usize = 512 * 1024;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
-const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
+const DEFAULT_IDLE_TTL_SECS: u64 = 60 * 60 * 24;
+const DEFAULT_IDLE_WARNING_SECS: u64 = 60 * 10;
+const ENV_IDLE_TTL_SECS: &str = "TERMINALD_IDLE_TTL_SECS";
+const ENV_IDLE_WARNING_SECS: &str = "TERMINALD_IDLE_WARNING_SECS";
 const OUTPUT_LIMIT_DEFAULT: usize = 800;
 const SNAPSHOT_SCROLLBACK: usize = 0;
 const MAX_LABEL_LEN: usize = 80;
 const TERMINAL_SESSIONS_FILE: &str = "terminal_sessions.json";
-const TERMINAL_RESTART_REASON: &str = "Session closed because the desktop agent restarted.";
+const TERMINAL_RESTART_REASON: &str = "Session closed because terminald restarted.";
+const IDLE_TIMEOUT_REASON: &str = "Session closed after idle timeout.";
 const NOTIFICATION_RATE_LIMIT_SECS: u64 = 10;
 const NOTIFICATION_QUEUE_LIMIT: usize = 200;
 const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
@@ -60,6 +64,39 @@ pub struct TerminalDiscoveryFile {
     pub pid: u32,
     pub created_at: u64,
     pub capabilities: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct IdleCleanupConfig {
+    pub ttl_secs: u64,
+    pub warning_lead_secs: u64,
+}
+
+fn parse_env_seconds(key: &str) -> Option<u64> {
+    let value = std::env::var(key).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+pub fn idle_cleanup_config() -> IdleCleanupConfig {
+    let ttl = parse_env_seconds(ENV_IDLE_TTL_SECS).unwrap_or(DEFAULT_IDLE_TTL_SECS);
+    if ttl == 0 {
+        return IdleCleanupConfig {
+            ttl_secs: 0,
+            warning_lead_secs: 0,
+        };
+    }
+    let mut warning = parse_env_seconds(ENV_IDLE_WARNING_SECS).unwrap_or(DEFAULT_IDLE_WARNING_SECS);
+    if warning >= ttl {
+        warning = ttl.saturating_div(2);
+    }
+    IdleCleanupConfig {
+        ttl_secs: ttl,
+        warning_lead_secs: warning,
+    }
 }
 
 fn resolve_shell() -> String {
@@ -144,6 +181,12 @@ fn discovery_tmp_path(path: &Path) -> PathBuf {
     }
 }
 
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+}
+
 fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> {
     let tmp_path = discovery_tmp_path(path);
     let mut options = fs::OpenOptions::new();
@@ -166,12 +209,14 @@ fn write_atomic_file(path: &Path, payload: &[u8]) -> Result<(), std::io::Error> 
             if path.exists() {
                 let _ = fs::remove_file(path);
                 fs::rename(&tmp_path, path)?;
+                sync_parent_dir(path);
                 return Ok(());
             }
         }
         let _ = fs::remove_file(&tmp_path);
         return Err(error);
     }
+    sync_parent_dir(path);
     Ok(())
 }
 
@@ -226,6 +271,7 @@ struct TerminalSession {
     last_activity: u64,
     status: TerminalSessionStatus,
     exit_code: Option<i32>,
+    closed_reason: Option<String>,
     buffer: VecDeque<TerminalOutputChunk>,
     buffer_bytes: usize,
     next_seq: u64,
@@ -470,9 +516,13 @@ struct TerminalSessionHistory {
 
 impl TerminalSessionHistory {
     fn load() -> Self {
-        Self {
-            sessions: load_terminal_session_history(),
+        let (mut sessions, parsed_ok) = load_terminal_session_history();
+        let changed = normalize_history_entries(&mut sessions);
+        let history = Self { sessions };
+        if parsed_ok && changed {
+            history.persist();
         }
+        history
     }
 
     fn persist(&self) {
@@ -489,25 +539,63 @@ fn terminal_sessions_path() -> Option<PathBuf> {
     Some(dirs.config_dir().join(TERMINAL_SESSIONS_FILE))
 }
 
-fn load_terminal_session_history() -> HashMap<String, TerminalSessionSummary> {
+fn normalize_history_entries(
+    sessions: &mut HashMap<String, TerminalSessionSummary>,
+) -> bool {
+    let now = now_ts();
+    let mut changed = false;
+    for session in sessions.values_mut() {
+        let status = session.status.trim();
+        if status.is_empty() {
+            session.status = "exited".to_string();
+            changed = true;
+            continue;
+        }
+        if status == "closed" || status == "running" {
+            session.status = "exited".to_string();
+            if session.closed_reason.is_none() {
+                session.closed_reason = Some(TERMINAL_RESTART_REASON.to_string());
+            }
+            session.last_activity = now;
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn load_terminal_session_history() -> (HashMap<String, TerminalSessionSummary>, bool) {
     let mut sessions = HashMap::new();
     let Some(path) = terminal_sessions_path() else {
-        return sessions;
+        return (sessions, false);
     };
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,
-        Err(_) => return sessions,
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Warning: failed to read terminal session summaries at {}: {error}",
+                    path.display()
+                );
+            }
+            return (sessions, false);
+        }
     };
     let parsed = match serde_json::from_str::<Vec<TerminalSessionSummary>>(&contents) {
         Ok(parsed) => parsed,
-        Err(_) => return sessions,
+        Err(error) => {
+            eprintln!(
+                "Warning: failed to parse terminal session summaries at {}: {error}",
+                path.display()
+            );
+            return (sessions, false);
+        }
     };
     for session in parsed {
         if !session.id.trim().is_empty() {
             sessions.insert(session.id.clone(), session);
         }
     }
-    sessions
+    (sessions, true)
 }
 
 fn save_terminal_session_history(
@@ -521,9 +609,9 @@ fn save_terminal_session_history(
     }
     let mut entries = sessions.values().cloned().collect::<Vec<_>>();
     entries.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
-    let payload = serde_json::to_string_pretty(&entries)
+    let payload = serde_json::to_vec_pretty(&entries)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
-    fs::write(path, payload)?;
+    write_atomic_file(&path, &payload)?;
     Ok(())
 }
 
@@ -561,7 +649,7 @@ fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
         last_activity: session.last_activity,
         exit_code: session.exit_code,
         last_output: preview,
-        closed_reason: None,
+        closed_reason: session.closed_reason.clone(),
     }
 }
 
@@ -601,8 +689,8 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
             if active_ids.contains(&session.id) {
                 continue;
             }
-            if session.status == "running" {
-                session.status = "closed".to_string();
+            if session.status == "running" || session.status == "closed" {
+                session.status = "exited".to_string();
                 if session.closed_reason.is_none() {
                     session.closed_reason = Some(TERMINAL_RESTART_REASON.to_string());
                 }
@@ -655,10 +743,9 @@ pub fn build_terminal_snapshot_payload(
             .session(trimmed)
             .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
     };
-    let mut session = session
+    let session = session
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    session.last_activity = now_ts();
     let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
     let snapshot = session.snapshot_formatted().unwrap_or_default();
     Ok(build_session_payload(
@@ -1003,6 +1090,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         last_activity: now,
         status: TerminalSessionStatus::Running,
         exit_code: None,
+        closed_reason: None,
         buffer: VecDeque::new(),
         buffer_bytes: 0,
         next_seq: 0,
@@ -1071,10 +1159,9 @@ fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
             .session(&session_id)
             .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
     };
-    let mut session = session
+    let session = session
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    session.last_activity = now_ts();
     let since = request.since.unwrap_or(0);
     let notify_since = request.notify_since.unwrap_or(0);
     let limit = request.limit.unwrap_or(OUTPUT_LIMIT_DEFAULT);
@@ -1506,29 +1593,62 @@ fn spawn_reader(session: Arc<Mutex<TerminalSession>>, mut reader: Box<dyn Read +
 fn spawn_cleanup(manager: Arc<Mutex<TerminalManager>>) {
     thread::spawn(move || loop {
         thread::sleep(CLEANUP_INTERVAL);
+        let idle_config = idle_cleanup_config();
+        if idle_config.ttl_secs == 0 {
+            continue;
+        }
         let now = now_ts();
         let mut manager = match manager.lock() {
             Ok(guard) => guard,
             Err(_) => continue,
         };
-        let expired_ids = manager
+        let mut expired_ids = Vec::new();
+        for (id, session) in manager.sessions.iter() {
+            let mut session = match session.lock() {
+                Ok(session) => session,
+                Err(_) => continue,
+            };
+            let idle = now.saturating_sub(session.last_activity);
+            if idle < idle_config.ttl_secs {
+                continue;
+            }
+            if !session.status.is_ended() {
+                let _ = session.child.kill();
+                session.status = TerminalSessionStatus::Killed;
+                session.exit_code = None;
+                session.closed_reason = Some(IDLE_TIMEOUT_REASON.to_string());
+            } else if session.closed_reason.is_none() {
+                session.closed_reason = Some(IDLE_TIMEOUT_REASON.to_string());
+            }
+            session.last_activity = now;
+            persist_session_summary(&session);
+            expired_ids.push(id.clone());
+        }
+        for id in &expired_ids {
+            manager.remove_session(id);
+        }
+        let active_ids = manager
             .sessions
-            .iter()
-            .filter_map(|(id, session)| {
-                let session = session.lock().ok()?;
-                if !session.status.is_ended() {
-                    return None;
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        drop(manager);
+        if let Ok(mut history) = terminal_history().lock() {
+            let mut changed = false;
+            history.sessions.retain(|session_id, summary| {
+                if active_ids.contains(session_id) {
+                    return true;
                 }
-                let idle = now.saturating_sub(session.last_activity);
-                if idle > ENDED_SESSION_TTL.as_secs() {
-                    Some(id.clone())
-                } else {
-                    None
+                let idle = now.saturating_sub(summary.last_activity);
+                if idle >= idle_config.ttl_secs {
+                    changed = true;
+                    return false;
                 }
-            })
-            .collect::<Vec<_>>();
-        for id in expired_ids {
-            manager.remove_session(&id);
+                true
+            });
+            if changed {
+                history.persist();
+            }
         }
     });
 }

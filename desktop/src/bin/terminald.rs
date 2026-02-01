@@ -14,9 +14,10 @@ use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 
 use desktop::terminal_core::{
-    build_terminal_snapshot_payload, handle_terminal_command, list_terminal_sessions,
-    write_discovery_file, TerminalActionRequest, TerminalDiscoveryFile, TerminalError,
-    DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
+    build_terminal_snapshot_payload, handle_terminal_command, idle_cleanup_config,
+    list_terminal_sessions, write_discovery_file, IdleCleanupConfig, TerminalActionRequest,
+    TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH,
+    TERMINALD_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -53,6 +54,8 @@ const STREAM_PAUSED_RETRY_MS: u64 = 1000;
 const BUFFER_TRUNCATED_MESSAGE: &str = "Output buffer truncated; screen snapshot sent.";
 const PAYLOAD_TOO_LARGE_MESSAGE: &str =
     "Terminal snapshot too large to send; reduce output volume and retry.";
+const IDLE_WARNING_REASON: &str = "idle_expiring";
+const IDLE_WARNING_RATE_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 struct AttachmentState {
@@ -62,6 +65,7 @@ struct AttachmentState {
     last_exit_code: Option<i64>,
     last_label: String,
     last_truncated: bool,
+    last_idle_warning_ts: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +379,7 @@ async fn run_authenticated_socket(socket: WebSocket) {
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_sent_at = Instant::now();
     let mut closing = false;
+    let idle_config = idle_cleanup_config();
 
     loop {
         tokio::select! {
@@ -401,7 +406,7 @@ async fn run_authenticated_socket(socket: WebSocket) {
                 }
 
                 if !subscriptions.is_empty() {
-                    let batch = collect_stream_events(&mut subscriptions);
+                    let batch = collect_stream_events(&mut subscriptions, idle_config);
                     for event in batch.events {
                         match enqueue_event(&mut outbound, &mut backpressure, event) {
                             EnqueueResult::Enqueued | EnqueueResult::Dropped => {}
@@ -657,6 +662,7 @@ async fn handle_request(
                         last_exit_code: summary.exit_code,
                         last_label: summary.label.clone(),
                         last_truncated: summary.truncated,
+                        last_idle_warning_ts: 0,
                     };
                     subscriptions.insert(session_id.clone(), attachment);
                     send_ok_response(sender, request_id, json!({ "attached": true })).await;
@@ -933,6 +939,30 @@ fn build_session_warning(session_id: &str, reason: &str, message: &str) -> Value
     })
 }
 
+fn format_idle_warning_message(remaining_secs: u64) -> String {
+    let remaining = format_remaining_duration(remaining_secs);
+    format!(
+        "Session idle; will close in {remaining}. Send keepalive to continue."
+    )
+}
+
+fn format_remaining_duration(remaining_secs: u64) -> String {
+    if remaining_secs >= 3600 {
+        let hours = remaining_secs / 3600;
+        let minutes = (remaining_secs % 3600) / 60;
+        if minutes > 0 {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else if remaining_secs >= 60 {
+        let minutes = remaining_secs / 60;
+        format!("{minutes}m")
+    } else {
+        format!("{remaining_secs}s")
+    }
+}
+
 async fn send_session_warning(
     sender: &mut WsSender,
     session_id: &str,
@@ -1200,10 +1230,14 @@ fn as_stream_payload(mut payload: Value) -> Value {
     payload
 }
 
-fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -> StreamEventBatch {
+fn collect_stream_events(
+    subscriptions: &mut HashMap<String, AttachmentState>,
+    idle_config: IdleCleanupConfig,
+) -> StreamEventBatch {
     let mut events = Vec::new();
     let mut detached = Vec::new();
     let mut close = false;
+    let now = now_ts();
 
     for (session_id, state) in subscriptions.iter_mut() {
         let request = TerminalActionRequest {
@@ -1230,6 +1264,36 @@ fn collect_stream_events(subscriptions: &mut HashMap<String, AttachmentState>) -
                     ));
                     close = true;
                     continue;
+                }
+                let status = payload
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let last_activity = payload
+                    .get("last_activity")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(now);
+                if idle_config.ttl_secs > 0
+                    && idle_config.warning_lead_secs > 0
+                    && status == "running"
+                {
+                    let idle = now.saturating_sub(last_activity);
+                    let warn_at = idle_config
+                        .ttl_secs
+                        .saturating_sub(idle_config.warning_lead_secs);
+                    if idle >= warn_at && idle < idle_config.ttl_secs {
+                        if now.saturating_sub(state.last_idle_warning_ts) >= IDLE_WARNING_RATE_SECS
+                        {
+                            let remaining = idle_config.ttl_secs.saturating_sub(idle);
+                            let message = format_idle_warning_message(remaining);
+                            events.push(build_session_warning(
+                                session_id,
+                                IDLE_WARNING_REASON,
+                                &message,
+                            ));
+                            state.last_idle_warning_ts = now;
+                        }
+                    }
                 }
                 let summary = summarize_payload(&payload);
                 let summary_last_seq = summary.next_seq.saturating_sub(1);

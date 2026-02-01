@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "total": 16,
+  "remaining": 8,
+  "quality_gates": [
+    "cd mobile && flutter test",
+    "cd mobile && flutter analyze",
+    "./scripts/flutter_test.sh",
+    "./scripts/flutter_analyze.sh"
+  ],
+  "id": "US-009",
+  "title": "Session summary persistence and idle cleanup"
+}
