@@ -1385,3 +1385,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
   - Useful context: stream_paused/resumed events emit when queue crosses high/low water marks.
 ---
+## [2026-02-02 02:18:42] - US-009: Session summary persistence and idle cleanup
+Thread: 
+Run: 20260201-231810-31541 (iteration 9)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-9.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-9.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ae0daee feat(terminald): persist summaries and idle cleanup
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool dependencies missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool dependencies missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-9.md
+  - .ralph/.tmp/story-20260201-231810-31541-9.json
+  - .ralph/.tmp/story-20260201-231810-31541-9.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-8.log
+  - .ralph/runs/run-20260201-231810-31541-iter-8.md
+  - .ralph/runs/run-20260201-231810-31541-iter-9.log
+  - desktop/src/bin/terminald.rs
+  - desktop/src/terminal_core.rs
+- What was implemented
+  - Added atomic session summary persistence with restart normalization for exited status.
+  - Added idle cleanup config with timeout handling, history pruning, and warning lead time.
+  - Emitted idle-expiring session warnings from terminald stream updates.
+- **Learnings for future iterations:**
+  - Patterns discovered: keepalive drives idle timers instead of polling.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: idle TTL defaults to 24h with 10m warning lead time; override via env.
+---
