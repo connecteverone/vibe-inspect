@@ -1060,3 +1060,36 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; http.server may already be bound to port 8030.
   - Useful context: QUIC port binding errors are surfaced in desktop/src/server.rs and desktop/src/quic/mod.rs; input mapping is tied to VNC framebuffer size in desktop/src/vnc.rs.
 ---
+## [2026-02-01 14:44] - US-002: Add fullscreen More menu with keyboard + debug toggle
+Thread: 
+Run: 20260201-135030-22863 (iteration 2)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863-iter-2.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863-iter-2.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: b417bba feat(vnc): add fullscreen more menu
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: cd desktop && cargo build -> PASS (warnings)
+  - Command: cd mobile && flutter build web -> PASS (wasm warnings)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> PASS
+- Files changed:
+  - mobile/lib/main.dart
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260201-135030-22863-iter-1.log
+  - .ralph/runs/run-20260201-135030-22863-iter-1.md
+  - .ralph/runs/run-20260201-135030-22863-iter-2.log
+  - .ralph/progress.md
+- What was implemented
+  - Added fullscreen More button/menu actions for keyboard input, debug view toggle, and cursor recalibration.
+  - Hid debug panel by default on fullscreen entry with a toggle-driven visibility path.
+  - Extended fullscreen landscape overlays to show the More control.
+- **Learnings for future iterations:**
+  - flutter analyze failures originate from third_party/flutter_quic build_tool deps and can be recorded as known external issues.
+  - Web UI checks can use import bundle JSON to seed a mock agent for navigating the VNC view in-browser.
+---
