@@ -13,10 +13,12 @@ use futures_util::{SinkExt, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 
 use desktop::terminal_core::{
-    write_discovery_file, TerminalDiscoveryFile, DEFAULT_TERMINALD_BIND,
+    handle_terminal_command, list_terminal_sessions, write_discovery_file,
+    TerminalActionRequest, TerminalDiscoveryFile, TerminalError, DEFAULT_TERMINALD_BIND,
     DEFAULT_TERMINALD_WS_PATH, TERMINALD_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -260,14 +262,224 @@ async fn run_authenticated_socket(socket: &mut WebSocket) {
             Ok(Message::Ping(payload)) => {
                 let _ = socket.send(Message::Pong(payload)).await;
             }
+            Ok(Message::Text(text)) => {
+                handle_request(socket, &text).await;
+            }
             Ok(Message::Close(_)) | Err(_) => break,
             _ => {}
         }
     }
 }
 
+async fn handle_request(socket: &mut WebSocket, text: &str) {
+    let parsed: Value = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(_) => {
+            send_error_response(socket, "", "invalid_request", "Invalid JSON payload.").await;
+            return;
+        }
+    };
+
+    let request_id = parsed.get("id").and_then(|value| value.as_str()).unwrap_or("");
+    if request_id.trim().is_empty() {
+        send_error_response(
+            socket,
+            "",
+            "invalid_request",
+            "Missing request id.",
+        )
+        .await;
+        return;
+    }
+
+    let message_type = parsed
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if message_type != "req" {
+        send_error_response(
+            socket,
+            request_id,
+            "invalid_request",
+            "Unsupported message type.",
+        )
+        .await;
+        return;
+    }
+
+    let action = parsed
+        .get("action")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if action.is_empty() {
+        send_error_response(socket, request_id, "invalid_request", "Missing action.").await;
+        return;
+    }
+
+    let payload = match parsed.get("payload") {
+        Some(value) => {
+            if let Some(map) = value.as_object() {
+                Some(map)
+            } else {
+                send_error_response(
+                    socket,
+                    request_id,
+                    "invalid_request",
+                    "Payload must be an object.",
+                )
+                .await;
+                return;
+            }
+        }
+        None => None,
+    };
+
+    let session_id = parsed
+        .get("session_id")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+
+    match action.as_str() {
+        "list" => {
+            let sessions = list_terminal_sessions();
+            let data = json!({ "sessions": sessions });
+            send_ok_response(socket, request_id, data).await;
+        }
+        "start" => {
+            let request = TerminalActionRequest {
+                action: action.clone(),
+                session_id,
+                label: payload
+                    .and_then(|payload| payload.get("label"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string()),
+                input: None,
+                cols: payload
+                    .and_then(|payload| payload.get("cols"))
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| u16::try_from(value).ok()),
+                rows: payload
+                    .and_then(|payload| payload.get("rows"))
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| u16::try_from(value).ok()),
+                since: None,
+                limit: None,
+                notify_since: None,
+                working_dir: payload
+                    .and_then(|payload| payload.get("working_dir"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string()),
+                env: parse_env(payload),
+            };
+            match handle_terminal_command(request) {
+                Ok(payload) => {
+                    let session_id = payload
+                        .get("session_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let data = json!({
+                        "session_id": session_id,
+                        "payload": payload,
+                    });
+                    send_ok_response(socket, request_id, data).await;
+                }
+                Err(error) => send_terminal_error(socket, request_id, error).await,
+            }
+        }
+        "stop" | "kill" | "rename" | "resize" | "keepalive" => {
+            let request = TerminalActionRequest {
+                action: action.clone(),
+                session_id,
+                label: payload
+                    .and_then(|payload| payload.get("label"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string()),
+                input: None,
+                cols: payload
+                    .and_then(|payload| payload.get("cols"))
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| u16::try_from(value).ok()),
+                rows: payload
+                    .and_then(|payload| payload.get("rows"))
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| u16::try_from(value).ok()),
+                since: None,
+                limit: None,
+                notify_since: None,
+                working_dir: None,
+                env: None,
+            };
+            match handle_terminal_command(request) {
+                Ok(payload) => send_ok_response(socket, request_id, payload).await,
+                Err(error) => send_terminal_error(socket, request_id, error).await,
+            }
+        }
+        _ => {
+            send_error_response(
+                socket,
+                request_id,
+                "unsupported_action",
+                "Unsupported action.",
+            )
+            .await;
+        }
+    }
+}
+
 async fn send_json(socket: &mut WebSocket, value: Value) -> Result<(), axum::Error> {
     socket.send(Message::Text(value.to_string().into())).await
+}
+
+async fn send_ok_response(socket: &mut WebSocket, request_id: &str, data: Value) {
+    let payload = json!({
+        "type": "res",
+        "id": request_id,
+        "ok": true,
+        "data": data,
+    });
+    let _ = send_json(socket, payload).await;
+}
+
+async fn send_error_response(
+    socket: &mut WebSocket,
+    request_id: &str,
+    code: &str,
+    message: &str,
+) {
+    let payload = json!({
+        "type": "res",
+        "id": request_id,
+        "ok": false,
+        "data": null,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    });
+    let _ = send_json(socket, payload).await;
+}
+
+async fn send_terminal_error(socket: &mut WebSocket, request_id: &str, error: TerminalError) {
+    send_error_response(socket, request_id, error.code, &error.message).await;
+}
+
+fn parse_env(
+    payload: Option<&serde_json::Map<String, Value>>,
+) -> Option<HashMap<String, String>> {
+    let env = payload?.get("env")?.as_object()?;
+    let mut entries = HashMap::new();
+    for (key, value) in env {
+        if let Some(value) = value.as_str() {
+            entries.insert(key.clone(), value.to_string());
+        }
+    }
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries)
+    }
 }
 
 async fn send_error_and_close(

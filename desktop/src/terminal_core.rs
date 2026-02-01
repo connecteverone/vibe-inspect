@@ -36,6 +36,10 @@ pub const TERMINALD_DISCOVERY_FILE: &str = "terminald.json";
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
+const MIN_COLS: u16 = 10;
+const MAX_COLS: u16 = 400;
+const MIN_ROWS: u16 = 4;
+const MAX_ROWS: u16 = 200;
 const MAX_BUFFER_BYTES: usize = 512 * 1024;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
 const ENDED_SESSION_TTL: Duration = Duration::from_secs(60 * 60);
@@ -216,6 +220,8 @@ impl TerminalSessionStatus {
 struct TerminalSession {
     id: String,
     label: String,
+    cols: u16,
+    rows: u16,
     created_at: u64,
     last_activity: u64,
     status: TerminalSessionStatus,
@@ -890,6 +896,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
     let pty_system = native_pty_system();
     let cols = request.cols.unwrap_or(DEFAULT_COLS);
     let rows = request.rows.unwrap_or(DEFAULT_ROWS);
+    validate_size(cols, rows)?;
     let pair = pty_system
         .openpty(PtySize {
             rows,
@@ -936,6 +943,8 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
     let session = Arc::new(Mutex::new(TerminalSession {
         id: session_id.clone(),
         label: label.clone(),
+        cols,
+        rows,
         created_at: now,
         last_activity: now,
         status: TerminalSessionStatus::Running,
@@ -1100,6 +1109,7 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
     let rows = request
         .rows
         .ok_or_else(|| TerminalError::new("missing_size", "Missing terminal rows."))?;
+    validate_size(cols, rows)?;
     let manager = terminal_manager();
     let session = {
         let manager = manager
@@ -1112,17 +1122,21 @@ fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError
     let mut session = session
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    session
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
-    session.parser.screen_mut().set_size(rows, cols);
-    session.last_activity = now_ts();
+    if session.cols != cols || session.rows != rows {
+        session
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| TerminalError::new("resize_failed", error.to_string()))?;
+        session.parser.screen_mut().set_size(rows, cols);
+        session.cols = cols;
+        session.rows = rows;
+        session.last_activity = now_ts();
+    }
     Ok(build_session_payload(
         "resize",
         &session.id,
@@ -1266,9 +1280,11 @@ fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError
     let mut session = session
         .lock()
         .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    session.label = label.clone();
-    session.last_activity = now_ts();
-    persist_session_summary(&session);
+    if session.label != label {
+        session.label = label.clone();
+        session.last_activity = now_ts();
+        persist_session_summary(&session);
+    }
     Ok(build_session_payload(
         "rename",
         &session.id,
@@ -1343,6 +1359,18 @@ fn ensure_label_length(label: &str) -> Result<(), TerminalError> {
         return Err(TerminalError::new(
             "invalid_label",
             format!("Session name must be {MAX_LABEL_LEN} characters or fewer."),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_size(cols: u16, rows: u16) -> Result<(), TerminalError> {
+    if cols < MIN_COLS || cols > MAX_COLS || rows < MIN_ROWS || rows > MAX_ROWS {
+        return Err(TerminalError::new(
+            "invalid_size",
+            format!(
+                "Terminal size must be cols {MIN_COLS}-{MAX_COLS} and rows {MIN_ROWS}-{MAX_ROWS}."
+            ),
         ));
     }
     Ok(())
