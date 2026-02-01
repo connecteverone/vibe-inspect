@@ -277,3 +277,4 @@
 [2026-02-01 13:51:02] Start US-001 work: audit VNC input/ROI context doc
 [2026-02-01 13:53:59] Added VNC input/ROI context doc with invariants and recent-fix notes
 [2026-02-01 13:55:36] Completed verification commands (flutter test/analyze, scripts, cargo build, flutter build web, http.server attempt)
+[2026-02-01 13:59:05] Updated progress log for US-001

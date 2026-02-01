@@ -1024,3 +1024,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260131-221506-98331
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
   - Useful context: flutter build web succeeds with wasm/ffi warnings; browser check verified UI loads.
 ---
+## [2026-02-01 13:58:12] - US-001: Re-audit VNC input + ROI code paths after recent fixes
+Thread: 
+Run: 20260201-135030-22863 (iteration 1)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863-iter-1.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 292d573 docs(vnc): add input roi context doc
+- Post-commit status: dirty (.ralph/runs/run-20260201-135030-22863-iter-1.log)
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool dependencies missing: build_tool, version, ed25519_edwards, github, toml, hex)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool dependencies missing: build_tool, version, ed25519_edwards, github, toml, hex)
+  - Command: cd desktop && cargo build -> PASS (warnings about vendor/scrap cfgs)
+  - Command: cd mobile && flutter build web -> PASS (warnings about wasm dry run)
+  - Command: cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1 -> FAIL (port 8030 already in use)
+- Files changed:
+  - docs/vnc_input_roi_context.md
+  - .ralph/activity.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-135030-22863-iter-1.log
+  - .ralph/.tmp/prd-prompt-20260201-061403-66713.md
+  - .ralph/.tmp/prd-prompt-20260201-131903-9330.md
+  - .ralph/.tmp/prompt-20260201-135030-22863-1.md
+  - .ralph/.tmp/story-20260201-135030-22863-1.json
+  - .ralph/.tmp/story-20260201-135030-22863-1.md
+  - .ralph/runs/run-20260131-221506-98331-iter-11.md
+  - .agents/tasks/prd-vnc-input-roi.json
+  - .codex/skills/dev-browser/profiles/
+- What was implemented: Documented current VNC input/ROI pipelines, invariants, and zoom+edge-pan alignment scenario in docs/vnc_input_roi_context.md.
+- **Learnings for future iterations:**
+  - Patterns discovered: ROI alignment depends on clamped camera center + framebuffer-size resync; keep both when refactoring.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies; http.server may already be bound to port 8030.
+  - Useful context: QUIC port binding errors are surfaced in desktop/src/server.rs and desktop/src/quic/mod.rs; input mapping is tied to VNC framebuffer size in desktop/src/vnc.rs.
+---
