@@ -128,7 +128,7 @@
     {
       "id": "US-001",
       "title": "Scaffold terminald + vibe-ctl binaries and shared terminal_core module",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a developer, I want dedicated binaries and a shared module so daemon/CLI/agent can reuse terminal logic without duplicating code.",
       "acceptanceCriteria": [
@@ -139,13 +139,13 @@
         "Negative: `cargo run --bin vibe-ctl -- unknown` exits non-zero and prints a helpful error"
       ],
       "startedAt": "2026-02-01T15:18:10.101326+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T15:18:10.101477+00:00"
+      "completedAt": "2026-02-01T15:30:09.650124+00:00",
+      "updatedAt": "2026-02-01T15:30:09.650029+00:00"
     },
     {
       "id": "US-002",
       "title": "Extract terminal session core into terminal_core",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-001"
       ],
@@ -155,7 +155,10 @@
         "Desktop agent code uses terminal_core functions and preserves payload schema compatibility",
         "Example: existing desktop terminal start/poll responses match the current payload fields and values",
         "Negative: missing session_id in a session-scoped call returns `missing_session` error"
-      ]
+      ],
+      "startedAt": "2026-02-01T15:30:11.752350+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-02-01T15:30:11.752469+00:00"
     },
     {
       "id": "US-003",

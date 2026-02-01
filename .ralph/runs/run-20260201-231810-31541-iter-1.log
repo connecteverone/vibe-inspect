@@ -4675,4 +4675,604 @@ thinking
 
 I'll stage all changes, acknowledging the run log won't be perfectly clean due to auto-updates, and note this in the final response and progress entry.
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 59ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 611ee4cc2583284e8338fa91f3778c3e6ae3b377..aca2d7d6ab38ba8f54cc96ccf2d5a0bdd85d393a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -76,7 +76,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 55010f8 feat(pairing): add QR token pairing flow
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-1.log (auto-updated)
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..be8d19932ba3f60e38f3c2ab028a3f251070caf9
+--- /dev/null
++++ b/desktop/src/bin/terminald.rs
+@@ -0,0 +1,18 @@
++use clap::Parser;
++
++use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++
++#[derive(Debug, Parser)]
++#[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
++struct TerminaldArgs {
++    /// Address to bind the WebSocket server.
++    #[arg(long, default_value = DEFAULT_TERMINALD_BIND)]
++    bind: String,
++    /// WebSocket path for the daemon.
++    #[arg(long, default_value = DEFAULT_TERMINALD_WS_PATH)]
++    ws_path: String,
++}
++
++fn main() {
++    let _args = TerminaldArgs::parse();
++}
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce9b53b727eba94772e2e86e2d130d16cc9f654e
+--- /dev/null
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -0,0 +1,30 @@
++use clap::{Parser, Subcommand};
++
++use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++
++#[derive(Debug, Parser)]
++#[command(
++    name = "vibe-ctl",
++    about = "CLI for managing terminald sessions",
++    version,
++    arg_required_else_help = true
++)]
++struct Cli {
++    #[command(subcommand)]
++    command: Command,
++}
++
++#[derive(Debug, Subcommand)]
++enum Command {
++    /// Print the default terminald endpoint.
++    Defaults,
++}
++
++fn main() {
++    let cli = Cli::parse();
++    match cli.command {
++        Command::Defaults => {
++            println!("{DEFAULT_TERMINALD_WS_URL}");
++        }
++    }
++}
+diff --git a/desktop/src/lib.rs b/desktop/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff38e455011a0e6b630bea02ceae10d3c8b1a24b
+--- /dev/null
++++ b/desktop/src/lib.rs
+@@ -0,0 +1 @@
++pub mod terminal_core;
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4bc5ec33fc0432fa50e9286f368430068fde530
+--- /dev/null
++++ b/desktop/src/terminal_core.rs
+@@ -0,0 +1,10 @@
++//! Shared terminal daemon core types and defaults.
++
++/// Default WebSocket URL for terminald.
++pub const DEFAULT_TERMINALD_WS_URL: &str = "ws://127.0.0.1:7078/ws";
++
++/// Default bind address for terminald.
++pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
++
++/// Default WebSocket path for terminald.
++pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+
+
+thinking
+**Committing progress update**
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): update progress entry"' in /Users/mac/codes/vibe-inspect succeeded in 60ms:
+[main c8a11c9] chore(ralph): update progress entry
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 2 files changed, 513 insertions(+), 1 deletion(-)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 611ee4cc2583284e8338fa91f3778c3e6ae3b377..aca2d7d6ab38ba8f54cc96ccf2d5a0bdd85d393a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -76,7 +76,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 55010f8 feat(pairing): add QR token pairing flow
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-1.log (auto-updated)
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..be8d19932ba3f60e38f3c2ab028a3f251070caf9
+--- /dev/null
++++ b/desktop/src/bin/terminald.rs
+@@ -0,0 +1,18 @@
++use clap::Parser;
++
++use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++
++#[derive(Debug, Parser)]
++#[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
++struct TerminaldArgs {
++    /// Address to bind the WebSocket server.
++    #[arg(long, default_value = DEFAULT_TERMINALD_BIND)]
++    bind: String,
++    /// WebSocket path for the daemon.
++    #[arg(long, default_value = DEFAULT_TERMINALD_WS_PATH)]
++    ws_path: String,
++}
++
++fn main() {
++    let _args = TerminaldArgs::parse();
++}
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce9b53b727eba94772e2e86e2d130d16cc9f654e
+--- /dev/null
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -0,0 +1,30 @@
++use clap::{Parser, Subcommand};
++
++use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++
++#[derive(Debug, Parser)]
++#[command(
++    name = "vibe-ctl",
++    about = "CLI for managing terminald sessions",
++    version,
++    arg_required_else_help = true
++)]
++struct Cli {
++    #[command(subcommand)]
++    command: Command,
++}
++
++#[derive(Debug, Subcommand)]
++enum Command {
++    /// Print the default terminald endpoint.
++    Defaults,
++}
++
++fn main() {
++    let cli = Cli::parse();
++    match cli.command {
++        Command::Defaults => {
++            println!("{DEFAULT_TERMINALD_WS_URL}");
++        }
++    }
++}
+diff --git a/desktop/src/lib.rs b/desktop/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff38e455011a0e6b630bea02ceae10d3c8b1a24b
+--- /dev/null
++++ b/desktop/src/lib.rs
+@@ -0,0 +1 @@
++pub mod terminal_core;
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4bc5ec33fc0432fa50e9286f368430068fde530
+--- /dev/null
++++ b/desktop/src/terminal_core.rs
+@@ -0,0 +1,10 @@
++//! Shared terminal daemon core types and defaults.
++
++/// Default WebSocket URL for terminald.
++pub const DEFAULT_TERMINALD_WS_URL: &str = "ws://127.0.0.1:7078/ws";
++
++/// Default bind address for terminald.
++pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
++
++/// Default WebSocket path for terminald.
++pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+
+
+thinking
+**Capturing latest commit hash and message**
+exec
+/bin/zsh -lc 'git show -s --format="%h %s" HEAD' in /Users/mac/codes/vibe-inspect succeeded in 43ms:
+c8a11c9 chore(ralph): update progress entry
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 611ee4cc2583284e8338fa91f3778c3e6ae3b377..aca2d7d6ab38ba8f54cc96ccf2d5a0bdd85d393a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -76,7 +76,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 55010f8 feat(pairing): add QR token pairing flow
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-1.log (auto-updated)
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..be8d19932ba3f60e38f3c2ab028a3f251070caf9
+--- /dev/null
++++ b/desktop/src/bin/terminald.rs
+@@ -0,0 +1,18 @@
++use clap::Parser;
++
++use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++
++#[derive(Debug, Parser)]
++#[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
++struct TerminaldArgs {
++    /// Address to bind the WebSocket server.
++    #[arg(long, default_value = DEFAULT_TERMINALD_BIND)]
++    bind: String,
++    /// WebSocket path for the daemon.
++    #[arg(long, default_value = DEFAULT_TERMINALD_WS_PATH)]
++    ws_path: String,
++}
++
++fn main() {
++    let _args = TerminaldArgs::parse();
++}
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce9b53b727eba94772e2e86e2d130d16cc9f654e
+--- /dev/null
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -0,0 +1,30 @@
++use clap::{Parser, Subcommand};
++
++use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++
++#[derive(Debug, Parser)]
++#[command(
++    name = "vibe-ctl",
++    about = "CLI for managing terminald sessions",
++    version,
++    arg_required_else_help = true
++)]
++struct Cli {
++    #[command(subcommand)]
++    command: Command,
++}
++
++#[derive(Debug, Subcommand)]
++enum Command {
++    /// Print the default terminald endpoint.
++    Defaults,
++}
++
++fn main() {
++    let cli = Cli::parse();
++    match cli.command {
++        Command::Defaults => {
++            println!("{DEFAULT_TERMINALD_WS_URL}");
++        }
++    }
++}
+diff --git a/desktop/src/lib.rs b/desktop/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff38e455011a0e6b630bea02ceae10d3c8b1a24b
+--- /dev/null
++++ b/desktop/src/lib.rs
+@@ -0,0 +1 @@
++pub mod terminal_core;
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4bc5ec33fc0432fa50e9286f368430068fde530
+--- /dev/null
++++ b/desktop/src/terminal_core.rs
+@@ -0,0 +1,10 @@
++//! Shared terminal daemon core types and defaults.
++
++/// Default WebSocket URL for terminald.
++pub const DEFAULT_TERMINALD_WS_URL: &str = "ws://127.0.0.1:7078/ws";
++
++/// Default bind address for terminald.
++pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
++
++/// Default WebSocket path for terminald.
++pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+
+
+thinking
+**Confirming clean git status**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 54ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-1.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 611ee4cc2583284e8338fa91f3778c3e6ae3b377..aca2d7d6ab38ba8f54cc96ccf2d5a0bdd85d393a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -76,7 +76,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 55010f8 feat(pairing): add QR token pairing flow
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-1.log (auto-updated)
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..be8d19932ba3f60e38f3c2ab028a3f251070caf9
+--- /dev/null
++++ b/desktop/src/bin/terminald.rs
+@@ -0,0 +1,18 @@
++use clap::Parser;
++
++use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++
++#[derive(Debug, Parser)]
++#[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
++struct TerminaldArgs {
++    /// Address to bind the WebSocket server.
++    #[arg(long, default_value = DEFAULT_TERMINALD_BIND)]
++    bind: String,
++    /// WebSocket path for the daemon.
++    #[arg(long, default_value = DEFAULT_TERMINALD_WS_PATH)]
++    ws_path: String,
++}
++
++fn main() {
++    let _args = TerminaldArgs::parse();
++}
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce9b53b727eba94772e2e86e2d130d16cc9f654e
+--- /dev/null
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -0,0 +1,30 @@
++use clap::{Parser, Subcommand};
++
++use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++
++#[derive(Debug, Parser)]
++#[command(
++    name = "vibe-ctl",
++    about = "CLI for managing terminald sessions",
++    version,
++    arg_required_else_help = true
++)]
++struct Cli {
++    #[command(subcommand)]
++    command: Command,
++}
++
++#[derive(Debug, Subcommand)]
++enum Command {
++    /// Print the default terminald endpoint.
++    Defaults,
++}
++
++fn main() {
++    let cli = Cli::parse();
++    match cli.command {
++        Command::Defaults => {
++            println!("{DEFAULT_TERMINALD_WS_URL}");
++        }
++    }
++}
+diff --git a/desktop/src/lib.rs b/desktop/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff38e455011a0e6b630bea02ceae10d3c8b1a24b
+--- /dev/null
++++ b/desktop/src/lib.rs
+@@ -0,0 +1 @@
++pub mod terminal_core;
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4bc5ec33fc0432fa50e9286f368430068fde530
+--- /dev/null
++++ b/desktop/src/terminal_core.rs
+@@ -0,0 +1,10 @@
++//! Shared terminal daemon core types and defaults.
++
++/// Default WebSocket URL for terminald.
++pub const DEFAULT_TERMINALD_WS_URL: &str = "ws://127.0.0.1:7078/ws";
++
++/// Default bind address for terminald.
++pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
++
++/// Default WebSocket path for terminald.
++pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+
+
+
+thinking
+**Accepting final dirty state due to run log updates**
+
+The run log updates after each command keep leaving the working tree dirty, making an endless commit loop. I'll stop committing further, note this ongoing change in the final response and progress, and accept the dirty state as final since repeated git status and commits would never stabilize.
+thinking
+**Finalizing response details and summary**
+
+I'm preparing the final response to summarize the changes, tests, known failures, multiple commits, and the persistent uncommitted run log modification. I'll include a brief mention of using the commit skill for formatting and note that the progress entry references the feature commit while the HEAD is a later commit. The response will confirm completed reviews with no new risks and mention all key commands and results as planned.
+codex
+Scaffolded the terminald/vibe-ctl binaries and shared terminal_core module with clap hooks and defaults, plus added the CLI dependencies in the desktop crate while keeping the existing desktop runtime untouched.
+Skill used: commit (to format conventional commit messages).
+
+**Details**
+- Added shared defaults in `desktop/src/terminal_core.rs` and exported them from `desktop/src/lib.rs`.
+- Added `desktop/src/bin/terminald.rs` and `desktop/src/bin/vibe-ctl.rs` with clap parsing hooks; `vibe-ctl defaults` prints the default endpoint.
+- Installed `clap` (derive), `tokio-tungstenite`, and `crossterm` in `desktop/Cargo.toml`/`desktop/Cargo.lock`.
+
+**Verification**
+- `cargo run --bin vibe-ctl -- --help` -> PASS (vendor `scrap` warnings).
+- `cargo run --bin vibe-ctl -- unknown` -> PASS (expected non-zero).
+- `cd mobile && flutter test` -> PASS.
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing; known external issue).
+- `./scripts/flutter_test.sh` -> PASS.
+- `./scripts/flutter_analyze.sh` -> FAIL (same missing deps).
+
+**Review**
+- Security: no new attack surface; CLI parsing only.
+- Performance: no runtime changes; constants-only module.
+- Regression: desktop runtime untouched; new binaries are additive.
+
+**Repo status**
+- Working tree still shows `.ralph/runs/run-20260201-231810-31541-iter-1.log` modified due to auto-updated run logging after required commands.
+
+**Commits**
+- `ca83a22 feat(terminald): scaffold daemon and cli bins`
+- `ca93837 chore(ralph): update run logs`
+- `c8a11c9 chore(ralph): update progress entry`
+
+If you want a fully clean tree, the remaining run log change needs one last add/commit after all command logging is done.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 611ee4cc2583284e8338fa91f3778c3e6ae3b377..aca2d7d6ab38ba8f54cc96ccf2d5a0bdd85d393a
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -76,7 +76,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 55010f8 feat(pairing): add QR token pairing flow
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-1.log (auto-updated)
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/desktop/src/bin/terminald.rs b/desktop/src/bin/terminald.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..be8d19932ba3f60e38f3c2ab028a3f251070caf9
+--- /dev/null
++++ b/desktop/src/bin/terminald.rs
+@@ -0,0 +1,18 @@
++use clap::Parser;
++
++use desktop::terminal_core::{DEFAULT_TERMINALD_BIND, DEFAULT_TERMINALD_WS_PATH};
++
++#[derive(Debug, Parser)]
++#[command(name = "terminald", about = "Terminal daemon for Vibe", version)]
++struct TerminaldArgs {
++    /// Address to bind the WebSocket server.
++    #[arg(long, default_value = DEFAULT_TERMINALD_BIND)]
++    bind: String,
++    /// WebSocket path for the daemon.
++    #[arg(long, default_value = DEFAULT_TERMINALD_WS_PATH)]
++    ws_path: String,
++}
++
++fn main() {
++    let _args = TerminaldArgs::parse();
++}
+diff --git a/desktop/src/bin/vibe-ctl.rs b/desktop/src/bin/vibe-ctl.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce9b53b727eba94772e2e86e2d130d16cc9f654e
+--- /dev/null
++++ b/desktop/src/bin/vibe-ctl.rs
+@@ -0,0 +1,30 @@
++use clap::{Parser, Subcommand};
++
++use desktop::terminal_core::DEFAULT_TERMINALD_WS_URL;
++
++#[derive(Debug, Parser)]
++#[command(
++    name = "vibe-ctl",
++    about = "CLI for managing terminald sessions",
++    version,
++    arg_required_else_help = true
++)]
++struct Cli {
++    #[command(subcommand)]
++    command: Command,
++}
++
++#[derive(Debug, Subcommand)]
++enum Command {
++    /// Print the default terminald endpoint.
++    Defaults,
++}
++
++fn main() {
++    let cli = Cli::parse();
++    match cli.command {
++        Command::Defaults => {
++            println!("{DEFAULT_TERMINALD_WS_URL}");
++        }
++    }
++}
+diff --git a/desktop/src/lib.rs b/desktop/src/lib.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff38e455011a0e6b630bea02ceae10d3c8b1a24b
+--- /dev/null
++++ b/desktop/src/lib.rs
+@@ -0,0 +1 @@
++pub mod terminal_core;
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4bc5ec33fc0432fa50e9286f368430068fde530
+--- /dev/null
++++ b/desktop/src/terminal_core.rs
+@@ -0,0 +1,10 @@
++//! Shared terminal daemon core types and defaults.
++
++/// Default WebSocket URL for terminald.
++pub const DEFAULT_TERMINALD_WS_URL: &str = "ws://127.0.0.1:7078/ws";
++
++/// Default bind address for terminald.
++pub const DEFAULT_TERMINALD_BIND: &str = "127.0.0.1:7078";
++
++/// Default WebSocket path for terminald.
++pub const DEFAULT_TERMINALD_WS_PATH: &str = "/ws";
+
+tokens used
+119,810
+Scaffolded the terminald/vibe-ctl binaries and shared terminal_core module with clap hooks and defaults, plus added the CLI dependencies in the desktop crate while keeping the existing desktop runtime untouched.
+Skill used: commit (to format conventional commit messages).
+
+**Details**
+- Added shared defaults in `desktop/src/terminal_core.rs` and exported them from `desktop/src/lib.rs`.
+- Added `desktop/src/bin/terminald.rs` and `desktop/src/bin/vibe-ctl.rs` with clap parsing hooks; `vibe-ctl defaults` prints the default endpoint.
+- Installed `clap` (derive), `tokio-tungstenite`, and `crossterm` in `desktop/Cargo.toml`/`desktop/Cargo.lock`.
+
+**Verification**
+- `cargo run --bin vibe-ctl -- --help` -> PASS (vendor `scrap` warnings).
+- `cargo run --bin vibe-ctl -- unknown` -> PASS (expected non-zero).
+- `cd mobile && flutter test` -> PASS.
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing; known external issue).
+- `./scripts/flutter_test.sh` -> PASS.
+- `./scripts/flutter_analyze.sh` -> FAIL (same missing deps).
+
+**Review**
+- Security: no new attack surface; CLI parsing only.
+- Performance: no runtime changes; constants-only module.
+- Regression: desktop runtime untouched; new binaries are additive.
+
+**Repo status**
+- Working tree still shows `.ralph/runs/run-20260201-231810-31541-iter-1.log` modified due to auto-updated run logging after required commands.
+
+**Commits**
+- `ca83a22 feat(terminald): scaffold daemon and cli bins`
+- `ca93837 chore(ralph): update run logs`
+- `c8a11c9 chore(ralph): update progress entry`
+
+If you want a fully clean tree, the remaining run log change needs one last add/commit after all command logging is done.
+
+<promise>COMPLETE</promise>

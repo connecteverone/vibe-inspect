@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-02-01 23:30:09 | run=20260201-231810-31541 | iter=1 | mode=build | story=US-001 | duration=719s | status=success
 - 2026-02-01 14:49:24 | run=20260201-135030-22863 | iter=2 | mode=build | story=US-002 | duration=2774s | status=success
 - 2026-02-01 14:03:08 | run=20260201-135030-22863 | iter=1 | mode=build | story=US-001 | duration=758s | status=success
 - 2026-02-01 03:05:39 | run=20260131-221506-98331 | iter=11 | mode=build | story=US-010 | duration=2147s | status=success
@@ -292,3 +293,8 @@
 [2026-02-01 23:22:10] Added terminal_core module and terminald/vibe-ctl binaries
 [2026-02-01 23:23:35] Ran verification (flutter test/analyze, flutter scripts, vibe-ctl checks)
 [2026-02-01 23:26:49] Updated progress log for US-001
+[2026-02-01 23:30:09] ITERATION 1 end (duration=719s)
+[2026-02-01 23:30:11] ITERATION 2 start (mode=build story=US-002)
+[2026-02-01 23:30:33] Start US-002 work
+[2026-02-01 23:43:52] Moved terminal core logic into terminal_core module
+[2026-02-01 23:44:42] Completed required flutter test/analyze runs
