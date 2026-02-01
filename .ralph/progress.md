@@ -1421,3 +1421,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
   - Useful context: idle TTL defaults to 24h with 10m warning lead time; override via env.
 ---
+## [2026-02-02 02:46:38] - US-010: Desktop agent proxy to terminald
+Thread: 
+Run: 20260201-231810-31541 (iteration 10)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-10.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-10.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ca9251a feat(terminal): proxy agent terminal actions to daemon
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (missing third_party/flutter_quic build_tool deps)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (missing third_party/flutter_quic build_tool deps)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-10.md
+  - .ralph/.tmp/story-20260201-231810-31541-10.json
+  - .ralph/.tmp/story-20260201-231810-31541-10.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-9.log
+  - .ralph/runs/run-20260201-231810-31541-iter-9.md
+  - .ralph/runs/run-20260201-231810-31541-iter-10.log
+  - desktop/src/bin/terminald.rs
+  - desktop/src/terminal.rs
+- What was implemented
+  - Proxied agent terminal actions through a terminald WebSocket client.
+  - Added terminald status handling and stream proxying for session WebSockets.
+  - Added optional terminald auto-start and discovery/config resolution.
+- **Learnings for future iterations:**
+  - Patterns discovered: status payloads must include snapshots for mobile attach.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: auto-start uses VIBE_TERMINALD_AUTOSTART and VIBE_TERMINALD_BIN overrides.
+---
