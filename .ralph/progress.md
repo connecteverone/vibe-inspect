@@ -1093,3 +1093,54 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-135030-22863
   - flutter analyze failures originate from third_party/flutter_quic build_tool deps and can be recorded as known external issues.
   - Web UI checks can use import bundle JSON to seed a mock agent for navigating the VNC view in-browser.
 ---
+## [2026-02-01 23:26:28] - US-001: Scaffold terminald + vibe-ctl binaries and shared terminal_core module
+Thread: 
+Run: 20260201-231810-31541 (iteration 1)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-1.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: ca83a22 feat(terminald): scaffold daemon and cli bins
+- Post-commit status: clean
+- Verification:
+  - Command: cargo run --bin vibe-ctl -- --help -> PASS
+  - Command: cargo run --bin vibe-ctl -- unknown -> PASS (expected non-zero)
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .agents/tasks/prd-vnc-input-roi.json
+  - .ralph/.tmp/prd-prompt-20260201-230415-25220.md
+  - .ralph/.tmp/prompt-20260201-231810-31541-1.md
+  - .ralph/.tmp/story-20260201-135030-22863-3.json
+  - .ralph/.tmp/story-20260201-135030-22863-3.md
+  - .ralph/.tmp/story-20260201-231551-30653-1.json
+  - .ralph/.tmp/story-20260201-231551-30653-1.md
+  - .ralph/.tmp/story-20260201-231613-30845-1.json
+  - .ralph/.tmp/story-20260201-231613-30845-1.md
+  - .ralph/.tmp/story-20260201-231810-31541-1.json
+  - .ralph/.tmp/story-20260201-231810-31541-1.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-135030-22863-iter-2.log
+  - .ralph/runs/run-20260201-135030-22863-iter-2.md
+  - .ralph/runs/run-20260201-231810-31541-iter-1.log
+  - desktop/Cargo.lock
+  - desktop/Cargo.toml
+  - desktop/src/bin/terminald.rs
+  - desktop/src/bin/vibe-ctl.rs
+  - desktop/src/lib.rs
+  - desktop/src/terminal_core.rs
+  - docs/bugfix/high_perf_mode_review.md
+  - docs/terminal_daemon_plan.md
+- What was implemented
+  - Added terminal_core with shared terminald defaults and exported it from the desktop crate.
+  - Introduced terminald and vibe-ctl binaries with clap-based argument parsing hooks.
+  - Installed clap (derive), tokio-tungstenite, and crossterm dependencies for CLI/daemon scaffolding.
+  - Verified vibe-ctl help output and unknown subcommand error handling.
+- **Learnings for future iterations:**
+  - flutter analyze failures stem from missing third_party/flutter_quic build_tool deps and can be recorded as known external issues.
+---
