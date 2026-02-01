@@ -1278,3 +1278,39 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies
   - Useful context
 ---
+## [2026-02-02 00:52] - US-006: Attach/poll/input streaming + compatibility payloads
+Thread: 
+Run: 20260201-231810-31541 (iteration 6)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-6.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-6.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: cafd50f feat(terminald): add attach poll input
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/runs/run-20260201-231810-31541-iter-5.log
+  - .ralph/runs/run-20260201-231810-31541-iter-5.md
+  - .ralph/runs/run-20260201-231810-31541-iter-6.log
+  - .ralph/.tmp/prompt-20260201-231810-31541-6.md
+  - .ralph/.tmp/story-20260201-231810-31541-6.json
+  - .ralph/.tmp/story-20260201-231810-31541-6.md
+  - desktop/Cargo.lock
+  - desktop/Cargo.toml
+  - desktop/src/bin/terminald.rs
+  - desktop/src/command.rs
+  - desktop/src/terminal_core.rs
+- What was implemented
+  - Added terminald attach/detach subscriptions with streaming terminal_payload events, poll/input handling, and base64 input bytes support via terminal_core input_bytes.
+- **Learnings for future iterations:**
+  - Patterns discovered: reuse poll payloads for stream events by swapping action to stream.
+  - Gotchas encountered: flutter analyze fails due to missing third_party/flutter_quic build_tool dependencies.
+  - Useful context: terminal_core input_bytes plumbing keeps binary input support localized.
+---
