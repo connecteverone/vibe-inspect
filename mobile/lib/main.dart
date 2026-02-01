@@ -12182,17 +12182,13 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       _setPointerPosition(_pointerPosition + accelerated / _zoom);
       return;
     }
-    final scaleX = surfaceSize.width / _frameSize.width;
-    final scaleY = surfaceSize.height / _frameSize.height;
-    if (!scaleX.isFinite || !scaleY.isFinite || scaleX == 0 || scaleY == 0) {
+    final baseScale = _trackpadBaseScale(surfaceSize);
+    if (!baseScale.isFinite || baseScale <= 0) {
       return;
     }
-    final baseScale = _trackpadBaseScale(surfaceSize) * _zoom;
-    final accelerated = _applyTrackpadAcceleration(delta, scale: baseScale);
-    final scaled = Offset(
-      accelerated.dx / (scaleX * _zoom),
-      accelerated.dy / (scaleY * _zoom),
-    );
+    final scaledBase = baseScale * _zoom;
+    final accelerated = _applyTrackpadAcceleration(delta, scale: scaledBase);
+    final scaled = accelerated / scaledBase;
     _setPointerPosition(_pointerPosition + scaled);
   }
 

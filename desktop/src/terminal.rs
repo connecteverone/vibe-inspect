@@ -817,7 +817,7 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         manager.insert_session(session.clone());
     }
 
-    spawn_reader(session, reader);
+    spawn_reader(session.clone(), reader);
 
     if let Some(input) = request.input.as_ref() {
         if !input.is_empty() {

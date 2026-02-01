@@ -324,7 +324,7 @@
     {
       "id": "US-010",
       "title": "Standardize error handling and diagnostics across clients",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [],
       "description": "As a user and developer, I want errors to be friendly yet actionable with diagnostic details.",
       "acceptanceCriteria": [
@@ -334,8 +334,8 @@
         "Negative case: raw stack traces or empty error dialogs are not shown to users"
       ],
       "startedAt": "2026-01-31T18:29:52.781510+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-01-31T18:29:52.781625+00:00"
+      "completedAt": "2026-01-31T19:05:40.065717+00:00",
+      "updatedAt": "2026-01-31T19:05:40.065610+00:00"
     }
   ]
 }

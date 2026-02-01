@@ -1143,7 +1143,7 @@ fn encode_jpeg_rgb(
 ) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
     let mapped_quality = (10 + (quality.min(9) as u16) * 9).min(100) as u8;
-    let mut encoder = jpeg_encoder::Encoder::new(&mut output, mapped_quality);
+    let encoder = jpeg_encoder::Encoder::new(&mut output, mapped_quality);
     encoder
         .encode(rgb, width, height, jpeg_encoder::ColorType::Rgb)
         .map_err(|error| format!("Failed to encode JPEG: {error}"))?;

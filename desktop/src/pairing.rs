@@ -947,6 +947,7 @@ fn confirm_pairing_locked(
     if !pairing_state.requires_approval {
         pairing_state.connected_at = Some(now);
         pairing_state.pending_confirmation = None;
+        let bound_token = resolve_client_token(pairing_state, client_id.as_deref());
         register_client_pairing(
             pairing_state,
             client_id,
@@ -954,7 +955,6 @@ fn confirm_pairing_locked(
             source,
             now,
         );
-        let bound_token = resolve_client_token(pairing_state, client_id.as_deref());
         return Ok(PairingConfirmResponse {
             status: "connected".to_string(),
             connected_at: Some(now),
