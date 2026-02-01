@@ -1212,3 +1212,34 @@ Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541
   - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
   - Discovery writes should use temp file + rename for atomicity across restarts.
 ---
+## [2026-02-02 00:16:09] - US-004: terminald WebSocket server + auth handshake
+Thread: 
+Run: 20260201-231810-31541 (iteration 4)
+Run log: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-4.log
+Run summary: /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-4.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: a98a730 feat(terminald): add ws auth handshake
+- Post-commit status: clean
+- Verification:
+  - Command: cd mobile && flutter test -> PASS
+  - Command: cd mobile && flutter analyze -> FAIL (third_party/flutter_quic build_tool deps missing)
+  - Command: ./scripts/flutter_test.sh -> PASS
+  - Command: ./scripts/flutter_analyze.sh -> FAIL (third_party/flutter_quic build_tool deps missing)
+- Files changed:
+  - .agents/tasks/prd-terminal-daemon.json
+  - .ralph/.tmp/prompt-20260201-231810-31541-4.md
+  - .ralph/.tmp/story-20260201-231810-31541-4.json
+  - .ralph/.tmp/story-20260201-231810-31541-4.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260201-231810-31541-iter-3.log
+  - .ralph/runs/run-20260201-231810-31541-iter-3.md
+  - .ralph/runs/run-20260201-231810-31541-iter-4.log
+  - desktop/src/bin/terminald.rs
+- What was implemented: terminald now hosts a localhost-only WebSocket endpoint that enforces auth within 3 seconds, validates tokens/version, and returns server_info on success.
+- **Learnings for future iterations:**
+  - flutter analyze failures are from missing third_party/flutter_quic build_tool deps; treat as known external issues.
+  - WebSocket auth requires explicit timeout handling before accepting requests.
+---
