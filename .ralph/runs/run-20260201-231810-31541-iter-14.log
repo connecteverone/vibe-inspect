@@ -10396,4 +10396,1040 @@ thinking
 
 I'm staging all changes and committing them with a message reflecting the progress log update for US-014.
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 57ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 37ff29677ef50d61a33badacad11ffc00bce6c8f..66b3deb8724eb2017c2c1db0f9a6c7aeefd4c901
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1566,7 +1566,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 857a780 test(terminal-core): add unit coverage
+-- Post-commit status: dirty (progress log + run log updates)
++- Post-commit status: clean
+ - Verification:
+   - Command: cargo test -> FAIL (desktop bin compile errors in terminald/vibe-ctl/terminal)
+   - Command: cargo test --lib -> PASS (warnings in vendor/scrap)
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 6a9b4178ba9b474eff704cc82ba4bd18735afeee..01578f6458e0ca9d698a2167565b5a57e41cb4c4
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1888,3 +1888,227 @@
+     }
+     output
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use portable_pty::CommandBuilder;
++
++    struct ManagedSession {
++        session_id: String,
++        session: Arc<Mutex<TerminalSession>>,
++    }
++
++    impl ManagedSession {
++        fn new(session_id: &str, rows: u16, cols: u16) -> Self {
++            let session = Arc::new(Mutex::new(build_session(session_id, rows, cols)));
++            let manager = terminal_manager();
++            let mut manager = manager.lock().expect("manager lock");
++            manager.insert_session(session.clone());
++            Self {
++                session_id: session_id.to_string(),
++                session,
++            }
++        }
++    }
++
++    impl Drop for ManagedSession {
++        fn drop(&mut self) {
++            if let Ok(mut session) = self.session.lock() {
++                let _ = session.child.kill();
++            }
++            if let Ok(mut manager) = terminal_manager().lock() {
++                manager.remove_session(&self.session_id);
++            }
++        }
++    }
++
++    fn build_session(session_id: &str, rows: u16, cols: u16) -> TerminalSession {
++        let pty_system = native_pty_system();
++        let pair = pty_system
++            .openpty(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .expect("open pty");
++        let child = pair
++            .slave
++            .spawn_command(test_command())
++            .expect("spawn pty child");
++        let writer = pair.master.take_writer().expect("pty writer");
++        let now = now_ts();
++        TerminalSession {
++            id: session_id.to_string(),
++            label: format!("Test {session_id}"),
++            cols,
++            rows,
++            created_at: now,
++            last_activity: now,
++            status: TerminalSessionStatus::Running,
++            exit_code: None,
++            closed_reason: None,
++            buffer: VecDeque::new(),
++            buffer_bytes: 0,
++            next_seq: 0,
++            notification_seq: 0,
++            notifications: VecDeque::new(),
++            notification_cache: HashMap::new(),
++            parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
++            utf8_carry: Vec::new(),
++            master: pair.master,
++            child,
++            writer,
++        }
++    }
++
++    fn test_command() -> CommandBuilder {
++        if cfg!(windows) {
++            let mut cmd = CommandBuilder::new("cmd.exe");
++            cmd.arg("/C");
++            cmd.arg("ping");
++            cmd.arg("127.0.0.1");
++            cmd.arg("-n");
++            cmd.arg("5");
++            cmd
++        } else {
++            let mut cmd = CommandBuilder::new("sh");
++            cmd.arg("-c");
++            cmd.arg("sleep 5");
++            cmd
++        }
++    }
++
++    #[test]
++    fn seq_ordering_increments() {
++        let mut session = build_session("seq-order", 10, 20);
++        session.push_output_bytes(b"first");
++        session.push_output_bytes(b"second");
++        session.push_output_bytes(b"third");
++
++        let seqs = session
++            .buffer
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(seqs, vec![1, 2, 3]);
++
++        let output = session.output_since(0, 10);
++        let output_seqs = output
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(output_seqs, vec![1, 2, 3]);
++        assert_eq!(next_expected_seq(session.next_seq), 4);
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn utf8_chunks_reassemble() {
++        let mut session = build_session("utf8-reassemble", 10, 20);
++        let bytes = "\u{2603}".as_bytes();
++        session.push_output_bytes(&bytes[..2]);
++        assert!(session.buffer.is_empty());
++        session.push_output_bytes(&bytes[2..]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert_eq!(chunk.data, "\u{2603}");
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn malformed_utf8_replaced() {
++        let mut session = build_session("utf8-invalid", 10, 20);
++        session.push_output_bytes(&[0xF0]);
++        session.push_output_bytes(&[0x28, 0x8C, 0x28]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert!(chunk.data.contains('\u{FFFD}'));
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn buffer_truncation_triggers_snapshot() {
++        let managed = ManagedSession::new("truncate-buffer", 10, 20);
++        let chunk = vec![b'x'; 4096];
++        {
++            let mut session = managed.session.lock().expect("session lock");
++            let mut total = 0usize;
++            while total <= MAX_BUFFER_BYTES + chunk.len() {
++                session.push_output_bytes(&chunk);
++                total += chunk.len();
++            }
++            assert!(session.buffer_bytes <= MAX_BUFFER_BYTES);
++            let first_seq = session.first_seq().expect("first seq");
++            assert!(first_seq > 1);
++        }
++        let payload = match poll_session(TerminalActionRequest {
++            action: "poll".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: None,
++            rows: None,
++            since: Some(0),
++            limit: None,
++            notify_since: Some(0),
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("poll payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
++        assert!(payload.get("snapshot").and_then(Value::as_str).is_some());
++    }
++
++    #[test]
++    fn resize_updates_session_size() {
++        let managed = ManagedSession::new("resize-session", 12, 24);
++        let payload = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(80),
++            rows: Some(40),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("resize payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("action").and_then(Value::as_str), Some("resize"));
++        let session = managed.session.lock().expect("session lock");
++        assert_eq!(session.cols, 80);
++        assert_eq!(session.rows, 40);
++        assert_eq!(session.parser.screen().size(), (40, 80));
++    }
++
++    #[test]
++    fn resize_rejects_invalid_size() {
++        let managed = ManagedSession::new("resize-invalid", 12, 24);
++        let error = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(5),
++            rows: Some(2),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(_) => panic!("expected invalid size error"),
++            Err(error) => error,
++        };
++        assert_eq!(error.code, "invalid_size");
++    }
++}
+
+
+thinking
+**Committing changes**
+exec
+/bin/zsh -lc 'git commit -m "chore(progress): log US-014 run"' in /Users/mac/codes/vibe-inspect succeeded in 37ms:
+[main 39c1180] chore(progress): log US-014 run
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 2566 insertions(+)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 37ff29677ef50d61a33badacad11ffc00bce6c8f..66b3deb8724eb2017c2c1db0f9a6c7aeefd4c901
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1566,7 +1566,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 857a780 test(terminal-core): add unit coverage
+-- Post-commit status: dirty (progress log + run log updates)
++- Post-commit status: clean
+ - Verification:
+   - Command: cargo test -> FAIL (desktop bin compile errors in terminald/vibe-ctl/terminal)
+   - Command: cargo test --lib -> PASS (warnings in vendor/scrap)
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 6a9b4178ba9b474eff704cc82ba4bd18735afeee..01578f6458e0ca9d698a2167565b5a57e41cb4c4
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1888,3 +1888,227 @@
+     }
+     output
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use portable_pty::CommandBuilder;
++
++    struct ManagedSession {
++        session_id: String,
++        session: Arc<Mutex<TerminalSession>>,
++    }
++
++    impl ManagedSession {
++        fn new(session_id: &str, rows: u16, cols: u16) -> Self {
++            let session = Arc::new(Mutex::new(build_session(session_id, rows, cols)));
++            let manager = terminal_manager();
++            let mut manager = manager.lock().expect("manager lock");
++            manager.insert_session(session.clone());
++            Self {
++                session_id: session_id.to_string(),
++                session,
++            }
++        }
++    }
++
++    impl Drop for ManagedSession {
++        fn drop(&mut self) {
++            if let Ok(mut session) = self.session.lock() {
++                let _ = session.child.kill();
++            }
++            if let Ok(mut manager) = terminal_manager().lock() {
++                manager.remove_session(&self.session_id);
++            }
++        }
++    }
++
++    fn build_session(session_id: &str, rows: u16, cols: u16) -> TerminalSession {
++        let pty_system = native_pty_system();
++        let pair = pty_system
++            .openpty(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .expect("open pty");
++        let child = pair
++            .slave
++            .spawn_command(test_command())
++            .expect("spawn pty child");
++        let writer = pair.master.take_writer().expect("pty writer");
++        let now = now_ts();
++        TerminalSession {
++            id: session_id.to_string(),
++            label: format!("Test {session_id}"),
++            cols,
++            rows,
++            created_at: now,
++            last_activity: now,
++            status: TerminalSessionStatus::Running,
++            exit_code: None,
++            closed_reason: None,
++            buffer: VecDeque::new(),
++            buffer_bytes: 0,
++            next_seq: 0,
++            notification_seq: 0,
++            notifications: VecDeque::new(),
++            notification_cache: HashMap::new(),
++            parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
++            utf8_carry: Vec::new(),
++            master: pair.master,
++            child,
++            writer,
++        }
++    }
++
++    fn test_command() -> CommandBuilder {
++        if cfg!(windows) {
++            let mut cmd = CommandBuilder::new("cmd.exe");
++            cmd.arg("/C");
++            cmd.arg("ping");
++            cmd.arg("127.0.0.1");
++            cmd.arg("-n");
++            cmd.arg("5");
++            cmd
++        } else {
++            let mut cmd = CommandBuilder::new("sh");
++            cmd.arg("-c");
++            cmd.arg("sleep 5");
++            cmd
++        }
++    }
++
++    #[test]
++    fn seq_ordering_increments() {
++        let mut session = build_session("seq-order", 10, 20);
++        session.push_output_bytes(b"first");
++        session.push_output_bytes(b"second");
++        session.push_output_bytes(b"third");
++
++        let seqs = session
++            .buffer
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(seqs, vec![1, 2, 3]);
++
++        let output = session.output_since(0, 10);
++        let output_seqs = output
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(output_seqs, vec![1, 2, 3]);
++        assert_eq!(next_expected_seq(session.next_seq), 4);
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn utf8_chunks_reassemble() {
++        let mut session = build_session("utf8-reassemble", 10, 20);
++        let bytes = "\u{2603}".as_bytes();
++        session.push_output_bytes(&bytes[..2]);
++        assert!(session.buffer.is_empty());
++        session.push_output_bytes(&bytes[2..]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert_eq!(chunk.data, "\u{2603}");
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn malformed_utf8_replaced() {
++        let mut session = build_session("utf8-invalid", 10, 20);
++        session.push_output_bytes(&[0xF0]);
++        session.push_output_bytes(&[0x28, 0x8C, 0x28]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert!(chunk.data.contains('\u{FFFD}'));
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn buffer_truncation_triggers_snapshot() {
++        let managed = ManagedSession::new("truncate-buffer", 10, 20);
++        let chunk = vec![b'x'; 4096];
++        {
++            let mut session = managed.session.lock().expect("session lock");
++            let mut total = 0usize;
++            while total <= MAX_BUFFER_BYTES + chunk.len() {
++                session.push_output_bytes(&chunk);
++                total += chunk.len();
++            }
++            assert!(session.buffer_bytes <= MAX_BUFFER_BYTES);
++            let first_seq = session.first_seq().expect("first seq");
++            assert!(first_seq > 1);
++        }
++        let payload = match poll_session(TerminalActionRequest {
++            action: "poll".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: None,
++            rows: None,
++            since: Some(0),
++            limit: None,
++            notify_since: Some(0),
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("poll payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
++        assert!(payload.get("snapshot").and_then(Value::as_str).is_some());
++    }
++
++    #[test]
++    fn resize_updates_session_size() {
++        let managed = ManagedSession::new("resize-session", 12, 24);
++        let payload = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(80),
++            rows: Some(40),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("resize payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("action").and_then(Value::as_str), Some("resize"));
++        let session = managed.session.lock().expect("session lock");
++        assert_eq!(session.cols, 80);
++        assert_eq!(session.rows, 40);
++        assert_eq!(session.parser.screen().size(), (40, 80));
++    }
++
++    #[test]
++    fn resize_rejects_invalid_size() {
++        let managed = ManagedSession::new("resize-invalid", 12, 24);
++        let error = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(5),
++            rows: Some(2),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(_) => panic!("expected invalid size error"),
++            Err(error) => error,
++        };
++        assert_eq!(error.code, "invalid_size");
++    }
++}
+
+
+thinking
+**Verifying clean working tree**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-14.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 37ff29677ef50d61a33badacad11ffc00bce6c8f..66b3deb8724eb2017c2c1db0f9a6c7aeefd4c901
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1566,7 +1566,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 857a780 test(terminal-core): add unit coverage
+-- Post-commit status: dirty (progress log + run log updates)
++- Post-commit status: clean
+ - Verification:
+   - Command: cargo test -> FAIL (desktop bin compile errors in terminald/vibe-ctl/terminal)
+   - Command: cargo test --lib -> PASS (warnings in vendor/scrap)
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 6a9b4178ba9b474eff704cc82ba4bd18735afeee..01578f6458e0ca9d698a2167565b5a57e41cb4c4
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1888,3 +1888,227 @@
+     }
+     output
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use portable_pty::CommandBuilder;
++
++    struct ManagedSession {
++        session_id: String,
++        session: Arc<Mutex<TerminalSession>>,
++    }
++
++    impl ManagedSession {
++        fn new(session_id: &str, rows: u16, cols: u16) -> Self {
++            let session = Arc::new(Mutex::new(build_session(session_id, rows, cols)));
++            let manager = terminal_manager();
++            let mut manager = manager.lock().expect("manager lock");
++            manager.insert_session(session.clone());
++            Self {
++                session_id: session_id.to_string(),
++                session,
++            }
++        }
++    }
++
++    impl Drop for ManagedSession {
++        fn drop(&mut self) {
++            if let Ok(mut session) = self.session.lock() {
++                let _ = session.child.kill();
++            }
++            if let Ok(mut manager) = terminal_manager().lock() {
++                manager.remove_session(&self.session_id);
++            }
++        }
++    }
++
++    fn build_session(session_id: &str, rows: u16, cols: u16) -> TerminalSession {
++        let pty_system = native_pty_system();
++        let pair = pty_system
++            .openpty(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .expect("open pty");
++        let child = pair
++            .slave
++            .spawn_command(test_command())
++            .expect("spawn pty child");
++        let writer = pair.master.take_writer().expect("pty writer");
++        let now = now_ts();
++        TerminalSession {
++            id: session_id.to_string(),
++            label: format!("Test {session_id}"),
++            cols,
++            rows,
++            created_at: now,
++            last_activity: now,
++            status: TerminalSessionStatus::Running,
++            exit_code: None,
++            closed_reason: None,
++            buffer: VecDeque::new(),
++            buffer_bytes: 0,
++            next_seq: 0,
++            notification_seq: 0,
++            notifications: VecDeque::new(),
++            notification_cache: HashMap::new(),
++            parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
++            utf8_carry: Vec::new(),
++            master: pair.master,
++            child,
++            writer,
++        }
++    }
++
++    fn test_command() -> CommandBuilder {
++        if cfg!(windows) {
++            let mut cmd = CommandBuilder::new("cmd.exe");
++            cmd.arg("/C");
++            cmd.arg("ping");
++            cmd.arg("127.0.0.1");
++            cmd.arg("-n");
++            cmd.arg("5");
++            cmd
++        } else {
++            let mut cmd = CommandBuilder::new("sh");
++            cmd.arg("-c");
++            cmd.arg("sleep 5");
++            cmd
++        }
++    }
++
++    #[test]
++    fn seq_ordering_increments() {
++        let mut session = build_session("seq-order", 10, 20);
++        session.push_output_bytes(b"first");
++        session.push_output_bytes(b"second");
++        session.push_output_bytes(b"third");
++
++        let seqs = session
++            .buffer
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(seqs, vec![1, 2, 3]);
++
++        let output = session.output_since(0, 10);
++        let output_seqs = output
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(output_seqs, vec![1, 2, 3]);
++        assert_eq!(next_expected_seq(session.next_seq), 4);
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn utf8_chunks_reassemble() {
++        let mut session = build_session("utf8-reassemble", 10, 20);
++        let bytes = "\u{2603}".as_bytes();
++        session.push_output_bytes(&bytes[..2]);
++        assert!(session.buffer.is_empty());
++        session.push_output_bytes(&bytes[2..]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert_eq!(chunk.data, "\u{2603}");
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn malformed_utf8_replaced() {
++        let mut session = build_session("utf8-invalid", 10, 20);
++        session.push_output_bytes(&[0xF0]);
++        session.push_output_bytes(&[0x28, 0x8C, 0x28]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert!(chunk.data.contains('\u{FFFD}'));
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn buffer_truncation_triggers_snapshot() {
++        let managed = ManagedSession::new("truncate-buffer", 10, 20);
++        let chunk = vec![b'x'; 4096];
++        {
++            let mut session = managed.session.lock().expect("session lock");
++            let mut total = 0usize;
++            while total <= MAX_BUFFER_BYTES + chunk.len() {
++                session.push_output_bytes(&chunk);
++                total += chunk.len();
++            }
++            assert!(session.buffer_bytes <= MAX_BUFFER_BYTES);
++            let first_seq = session.first_seq().expect("first seq");
++            assert!(first_seq > 1);
++        }
++        let payload = match poll_session(TerminalActionRequest {
++            action: "poll".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: None,
++            rows: None,
++            since: Some(0),
++            limit: None,
++            notify_since: Some(0),
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("poll payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
++        assert!(payload.get("snapshot").and_then(Value::as_str).is_some());
++    }
++
++    #[test]
++    fn resize_updates_session_size() {
++        let managed = ManagedSession::new("resize-session", 12, 24);
++        let payload = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(80),
++            rows: Some(40),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("resize payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("action").and_then(Value::as_str), Some("resize"));
++        let session = managed.session.lock().expect("session lock");
++        assert_eq!(session.cols, 80);
++        assert_eq!(session.rows, 40);
++        assert_eq!(session.parser.screen().size(), (40, 80));
++    }
++
++    #[test]
++    fn resize_rejects_invalid_size() {
++        let managed = ManagedSession::new("resize-invalid", 12, 24);
++        let error = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(5),
++            rows: Some(2),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(_) => panic!("expected invalid size error"),
++            Err(error) => error,
++        };
++        assert_eq!(error.code, "invalid_size");
++    }
++}
+
+
+thinking
+**Inspecting run log modifications**
+
+The run log remains modified after committing, possibly due to automatic updates like appended progress or activity logs; next, I'll examine the git diff for the run log to identify the exact changes.
+exec
+/bin/zsh -lc 'git diff --stat /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-14.log' in /Users/mac/codes/vibe-inspect succeeded in 47ms:
+ .ralph/runs/run-20260201-231810-31541-iter-14.log | 777 +++++++++++++++++++++-
+ 1 file changed, 776 insertions(+), 1 deletion(-)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 37ff29677ef50d61a33badacad11ffc00bce6c8f..66b3deb8724eb2017c2c1db0f9a6c7aeefd4c901
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -1566,7 +1566,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 857a780 test(terminal-core): add unit coverage
+-- Post-commit status: dirty (progress log + run log updates)
++- Post-commit status: clean
+ - Verification:
+   - Command: cargo test -> FAIL (desktop bin compile errors in terminald/vibe-ctl/terminal)
+   - Command: cargo test --lib -> PASS (warnings in vendor/scrap)
+diff --git a/desktop/src/terminal_core.rs b/desktop/src/terminal_core.rs
+index 6a9b4178ba9b474eff704cc82ba4bd18735afeee..01578f6458e0ca9d698a2167565b5a57e41cb4c4
+--- a/desktop/src/terminal_core.rs
++++ b/desktop/src/terminal_core.rs
+@@ -1888,3 +1888,227 @@
+     }
+     output
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use portable_pty::CommandBuilder;
++
++    struct ManagedSession {
++        session_id: String,
++        session: Arc<Mutex<TerminalSession>>,
++    }
++
++    impl ManagedSession {
++        fn new(session_id: &str, rows: u16, cols: u16) -> Self {
++            let session = Arc::new(Mutex::new(build_session(session_id, rows, cols)));
++            let manager = terminal_manager();
++            let mut manager = manager.lock().expect("manager lock");
++            manager.insert_session(session.clone());
++            Self {
++                session_id: session_id.to_string(),
++                session,
++            }
++        }
++    }
++
++    impl Drop for ManagedSession {
++        fn drop(&mut self) {
++            if let Ok(mut session) = self.session.lock() {
++                let _ = session.child.kill();
++            }
++            if let Ok(mut manager) = terminal_manager().lock() {
++                manager.remove_session(&self.session_id);
++            }
++        }
++    }
++
++    fn build_session(session_id: &str, rows: u16, cols: u16) -> TerminalSession {
++        let pty_system = native_pty_system();
++        let pair = pty_system
++            .openpty(PtySize {
++                rows,
++                cols,
++                pixel_width: 0,
++                pixel_height: 0,
++            })
++            .expect("open pty");
++        let child = pair
++            .slave
++            .spawn_command(test_command())
++            .expect("spawn pty child");
++        let writer = pair.master.take_writer().expect("pty writer");
++        let now = now_ts();
++        TerminalSession {
++            id: session_id.to_string(),
++            label: format!("Test {session_id}"),
++            cols,
++            rows,
++            created_at: now,
++            last_activity: now,
++            status: TerminalSessionStatus::Running,
++            exit_code: None,
++            closed_reason: None,
++            buffer: VecDeque::new(),
++            buffer_bytes: 0,
++            next_seq: 0,
++            notification_seq: 0,
++            notifications: VecDeque::new(),
++            notification_cache: HashMap::new(),
++            parser: vt100::Parser::new(rows, cols, SNAPSHOT_SCROLLBACK),
++            utf8_carry: Vec::new(),
++            master: pair.master,
++            child,
++            writer,
++        }
++    }
++
++    fn test_command() -> CommandBuilder {
++        if cfg!(windows) {
++            let mut cmd = CommandBuilder::new("cmd.exe");
++            cmd.arg("/C");
++            cmd.arg("ping");
++            cmd.arg("127.0.0.1");
++            cmd.arg("-n");
++            cmd.arg("5");
++            cmd
++        } else {
++            let mut cmd = CommandBuilder::new("sh");
++            cmd.arg("-c");
++            cmd.arg("sleep 5");
++            cmd
++        }
++    }
++
++    #[test]
++    fn seq_ordering_increments() {
++        let mut session = build_session("seq-order", 10, 20);
++        session.push_output_bytes(b"first");
++        session.push_output_bytes(b"second");
++        session.push_output_bytes(b"third");
++
++        let seqs = session
++            .buffer
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(seqs, vec![1, 2, 3]);
++
++        let output = session.output_since(0, 10);
++        let output_seqs = output
++            .iter()
++            .map(|chunk| chunk.seq)
++            .collect::<Vec<_>>();
++        assert_eq!(output_seqs, vec![1, 2, 3]);
++        assert_eq!(next_expected_seq(session.next_seq), 4);
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn utf8_chunks_reassemble() {
++        let mut session = build_session("utf8-reassemble", 10, 20);
++        let bytes = "\u{2603}".as_bytes();
++        session.push_output_bytes(&bytes[..2]);
++        assert!(session.buffer.is_empty());
++        session.push_output_bytes(&bytes[2..]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert_eq!(chunk.data, "\u{2603}");
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn malformed_utf8_replaced() {
++        let mut session = build_session("utf8-invalid", 10, 20);
++        session.push_output_bytes(&[0xF0]);
++        session.push_output_bytes(&[0x28, 0x8C, 0x28]);
++        let chunk = session.buffer.back().expect("chunk");
++        assert!(chunk.data.contains('\u{FFFD}'));
++        let _ = session.child.kill();
++    }
++
++    #[test]
++    fn buffer_truncation_triggers_snapshot() {
++        let managed = ManagedSession::new("truncate-buffer", 10, 20);
++        let chunk = vec![b'x'; 4096];
++        {
++            let mut session = managed.session.lock().expect("session lock");
++            let mut total = 0usize;
++            while total <= MAX_BUFFER_BYTES + chunk.len() {
++                session.push_output_bytes(&chunk);
++                total += chunk.len();
++            }
++            assert!(session.buffer_bytes <= MAX_BUFFER_BYTES);
++            let first_seq = session.first_seq().expect("first seq");
++            assert!(first_seq > 1);
++        }
++        let payload = match poll_session(TerminalActionRequest {
++            action: "poll".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: None,
++            rows: None,
++            since: Some(0),
++            limit: None,
++            notify_since: Some(0),
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("poll payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
++        assert!(payload.get("snapshot").and_then(Value::as_str).is_some());
++    }
++
++    #[test]
++    fn resize_updates_session_size() {
++        let managed = ManagedSession::new("resize-session", 12, 24);
++        let payload = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(80),
++            rows: Some(40),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(payload) => payload,
++            Err(error) => panic!("resize payload failed: {}", error.code),
++        };
++        assert_eq!(payload.get("action").and_then(Value::as_str), Some("resize"));
++        let session = managed.session.lock().expect("session lock");
++        assert_eq!(session.cols, 80);
++        assert_eq!(session.rows, 40);
++        assert_eq!(session.parser.screen().size(), (40, 80));
++    }
++
++    #[test]
++    fn resize_rejects_invalid_size() {
++        let managed = ManagedSession::new("resize-invalid", 12, 24);
++        let error = match resize_session(TerminalActionRequest {
++            action: "resize".to_string(),
++            session_id: Some(managed.session_id.clone()),
++            label: None,
++            input: None,
++            input_bytes: None,
++            cols: Some(5),
++            rows: Some(2),
++            since: None,
++            limit: None,
++            notify_since: None,
++            working_dir: None,
++            env: None,
++        }) {
++            Ok(_) => panic!("expected invalid size error"),
++            Err(error) => error,
++        };
++        assert_eq!(error.code, "invalid_size");
++    }
++}
+
+
+
+thinking
+**Deciding how to handle updated run log**
+
+Noticed the run log changed after prior commits and must be committed per requirements; opting to commit it as a separate commit rather than revert or combine with earlier commits. I'll verify if run log updates continue before staging and committing it.
+thinking
+**Planning final run log commit and progress log update**
+
+Preparing to stage and commit the updated run log as commit C with a clear message, while ensuring the progress log reflects the latest post-commit status accurately. I'll confirm no separate activity log entry is needed since this is a minor update.
+exec
+/bin/zsh -lc 'git add /Users/mac/codes/vibe-inspect/.ralph/runs/run-20260201-231810-31541-iter-14.log' in /Users/mac/codes/vibe-inspect
