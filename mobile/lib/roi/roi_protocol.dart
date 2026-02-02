@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 const int roiDatagramHeaderSize = 28;
 const String roiDatagramMagic = 'ROI1';
+const int roiCodecRaw = 0;
+const int roiCodecZlib = 1;
 
 class RoiTileChunk {
   RoiTileChunk({

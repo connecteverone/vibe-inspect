@@ -1,4 +1,5 @@
 use crate::terminal;
+use desktop::terminal_core::TerminalActionRequest;
 use reqwest::blocking::Client;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -125,7 +126,7 @@ pub fn handle_agent_command(request: AgentCommandRequest) -> AgentCommandRespons
             &request.request_id,
         ) {
             Ok(payload) => {
-                let terminal_request = terminal::TerminalActionRequest {
+                let terminal_request = TerminalActionRequest {
                     action: resolve_terminal_action(&payload).to_lowercase(),
                     session_id: payload.session_id.clone(),
                     label: payload.label.clone(),

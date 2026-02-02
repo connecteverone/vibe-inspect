@@ -5,6 +5,68 @@ import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+abstract class VncTransport {
+  Stream<Uint8List> get stream;
+  Future<void> connect();
+  void send(Uint8List data);
+  Future<void> close();
+}
+
+class WebSocketVncTransport implements VncTransport {
+  WebSocketVncTransport({required this.uri});
+
+  final Uri uri;
+  WebSocketChannel? _channel;
+  StreamSubscription? _subscription;
+  final StreamController<Uint8List> _controller =
+      StreamController<Uint8List>.broadcast();
+  bool _closing = false;
+
+  @override
+  Stream<Uint8List> get stream => _controller.stream;
+
+  @override
+  Future<void> connect() async {
+    _channel = WebSocketChannel.connect(uri);
+    _subscription = _channel!.stream.listen(
+      (event) {
+        if (event is List<int>) {
+          _controller.add(Uint8List.fromList(event));
+        } else if (event is String) {
+          _controller.add(Uint8List.fromList(event.codeUnits));
+        }
+      },
+      onError: (Object error) {
+        if (_closing) {
+          return;
+        }
+        _controller.addError(error);
+      },
+      onDone: () {
+        if (_closing) {
+          return;
+        }
+        _controller.close();
+      },
+    );
+  }
+
+  @override
+  void send(Uint8List data) {
+    _channel?.sink.add(data);
+  }
+
+  @override
+  Future<void> close() async {
+    _closing = true;
+    await _subscription?.cancel();
+    _subscription = null;
+    _channel?.sink.close();
+    _channel = null;
+    await _controller.close();
+  }
+}
+
 class VncFrame {
   const VncFrame({
     required this.width,
@@ -41,20 +103,20 @@ class VncCursor {
 
 class VncRfbClient {
   VncRfbClient({
-    required this.uri,
+    required this.transport,
     required this.onFrame,
     required this.onError,
     this.onCursor,
     this.preferredEncodings,
   });
 
-  final Uri uri;
+  final VncTransport transport;
   final void Function(VncFrame frame) onFrame;
   final void Function(String message) onError;
   final void Function(VncCursor? cursor)? onCursor;
   final List<int>? preferredEncodings;
 
-  WebSocketChannel? _channel;
+  StreamSubscription<Uint8List>? _subscription;
   final List<int> _buffer = [];
   Completer<void>? _waiter;
   bool _handshakeComplete = false;
@@ -103,22 +165,22 @@ class VncRfbClient {
     if (preferredEncodings != null) {
       _preferredEncodings = List<int>.from(preferredEncodings!);
     }
-    _channel = WebSocketChannel.connect(uri);
-    _channel!.stream.listen(
+    await transport.connect();
+    _subscription = transport.stream.listen(
       _handleMessage,
       onError: (Object error) {
         if (_closing) {
           return;
         }
         _closed = true;
-        onError('VNC socket error: $error');
+        onError('VNC transport error: $error');
       },
       onDone: () {
         if (_closing) {
           return;
         }
         _closed = true;
-        onError('VNC socket closed.');
+        onError('VNC transport closed.');
       },
     );
     try {
@@ -135,7 +197,9 @@ class VncRfbClient {
   void close() {
     _closing = true;
     _closed = true;
-    _channel?.sink.close();
+    transport.close();
+    _subscription?.cancel();
+    _subscription = null;
   }
 
   void setEncodings(List<int> encodings) {
@@ -223,16 +287,11 @@ class VncRfbClient {
     return 0x01000000 | rune;
   }
 
-  void _handleMessage(dynamic message) {
+  void _handleMessage(Uint8List message) {
     if (_closed) {
       return;
     }
-    if (message is String) {
-      final bytes = message.codeUnits;
-      _buffer.addAll(bytes);
-    } else if (message is List<int>) {
-      _buffer.addAll(message);
-    }
+    _buffer.addAll(message);
     _waiter?.complete();
     _waiter = null;
     if (_handshakeComplete) {
@@ -1362,7 +1421,7 @@ class VncRfbClient {
     if (_closed) {
       return;
     }
-    _channel?.sink.add(payload);
+    transport.send(payload);
   }
 }
 

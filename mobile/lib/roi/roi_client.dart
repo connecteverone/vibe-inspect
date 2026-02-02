@@ -81,7 +81,7 @@ class RoiTileAssembler {
 
   RoiTilePayload _buildPayload(RoiTileChunk chunk, Uint8List payload) {
     Uint8List pixels = payload;
-    if (chunk.codec == 1) {
+    if (chunk.codec == roiCodecZlib) {
       final decoded = ZLibDecoder().decodeBytes(payload);
       pixels = Uint8List.fromList(decoded);
     }

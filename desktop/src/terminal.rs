@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
-use crate::terminal_core::{
+use desktop::terminal_core::{
     read_discovery_file, terminal_discovery_path, TerminalActionRequest, TerminalError,
     TerminalSessionSummary, DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
 };
@@ -74,7 +74,7 @@ pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
         }
     });
     if terminald_sender
-        .send(TungsteniteMessage::Text(attach_request.to_string()))
+        .send(TungsteniteMessage::Text(attach_request.to_string().into()))
         .await
         .is_err()
     {
@@ -98,13 +98,17 @@ pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
                 match message {
                     Ok(Message::Text(text)) => {
                         if let Some(request) = build_terminald_request_from_client(&text, &session_id) {
-                            let _ = terminald_sender.send(TungsteniteMessage::Text(request.to_string())).await;
+                            let _ = terminald_sender
+                                .send(TungsteniteMessage::Text(request.to_string().into()))
+                                .await;
                         }
                     }
                     Ok(Message::Binary(bytes)) => {
-                        if let Ok(text) = String::from_utf8(bytes) {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                             if let Some(request) = build_terminald_request_from_client(&text, &session_id) {
-                                let _ = terminald_sender.send(TungsteniteMessage::Text(request.to_string())).await;
+                                let _ = terminald_sender
+                                    .send(TungsteniteMessage::Text(request.to_string().into()))
+                                    .await;
                             }
                         }
                     }
@@ -127,7 +131,7 @@ pub async fn serve_terminal_socket(socket: WebSocket, session_id: String) {
                         }
                     }
                     Ok(TungsteniteMessage::Binary(bytes)) => {
-                        if let Ok(text) = String::from_utf8(bytes) {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                             if let Some(payload) = extract_terminal_payload(&text, &session_id) {
                                 let _ = client_sender.send(Message::Text(payload.to_string().into())).await;
                             }
@@ -315,7 +319,7 @@ fn build_input_payload_from_parts(
         (None, None) => {}
     }
     if payload.is_empty() {
-        None
+        Ok(None)
     } else {
         Ok(Some(Value::Object(payload)))
     }
@@ -358,7 +362,7 @@ async fn terminald_request(
     let request_id = random_request_id();
     let request = build_terminald_request(&request_id, action, session_id, payload);
     socket
-        .send(TungsteniteMessage::Text(request.to_string()))
+        .send(TungsteniteMessage::Text(request.to_string().into()))
         .await
         .map_err(|error| connection_failed(format!("Failed to send request: {error}")))?;
 
@@ -370,7 +374,7 @@ async fn terminald_request(
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, &request_id) {
                         return result;
                     }
@@ -457,7 +461,7 @@ async fn connect_and_auth(
         }
     });
     socket
-        .send(TungsteniteMessage::Text(auth_request.to_string()))
+        .send(TungsteniteMessage::Text(auth_request.to_string().into()))
         .await
         .map_err(|error| connection_failed(format!("Failed to send auth request: {error}")))?;
 
@@ -469,7 +473,7 @@ async fn connect_and_auth(
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, &auth_id) {
                         return result.map(|_| socket);
                     }
@@ -505,7 +509,7 @@ async fn wait_for_attach(
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, attach_id) {
                         return result.map(|_| ());
                     }

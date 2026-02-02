@@ -10,6 +10,7 @@ mod server;
 mod vnc;
 mod roi;
 mod quic;
+mod auth;
 
 fn main() {
     #[cfg(target_os = "windows")]

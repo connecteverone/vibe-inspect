@@ -1,7 +1,13 @@
+use crate::auth::{
+    ensure_auth_not_blocked, ensure_client_allowed, record_client_activity, track_client_connection,
+    validate_auth_token, AuthError,
+};
+use crate::pairing::PairingState;
 use crate::roi::{
     build_tiles, RoiCapturer, RoiFrame, RoiManager, RoiSessionInfo, RoiTile, RoiTileCache,
     RoiViewport,
 };
+use crate::vnc::serve_vnc_quic;
 use bytes::Bytes;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -9,6 +15,7 @@ use quinn::{Endpoint, ServerConfig};
 use rcgen::generate_simple_self_signed;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,10 +24,18 @@ use std::thread;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+pub mod protocol;
+use protocol::{
+    RoiHello, RoiReady, RoiRequest, VncError, VncHello, VncReady, ROI_CODEC_RAW, ROI_CODEC_ZLIB,
+    ROI_DATAGRAM_HEADER_SIZE, ROI_DATAGRAM_MAGIC,
+};
+
 #[derive(Clone)]
 pub struct QuicServerConfig {
     pub port: u16,
     pub roi: Option<Arc<Mutex<RoiManager>>>,
+    pub vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
+    pub pairing: Option<Arc<Mutex<PairingState>>>,
 }
 
 pub struct QuicServerHandle {
@@ -43,18 +58,17 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
             "ROI QUIC port must be between 1 and 65535.",
         ));
     }
-    let roi = match config.roi {
-        Some(manager) => manager,
-        None => {
-            return Ok(QuicServerHandle {
-                port,
-                running,
-            })
-        }
-    };
+    let roi = config.roi;
+    let vnc = config.vnc;
+    let pairing = config.pairing;
+    if roi.is_none() && vnc.is_none() {
+        return Ok(QuicServerHandle { port, running });
+    }
     let (tx, rx) = mpsc::channel();
     let running_handle = running.clone();
     let roi_handle = roi.clone();
+    let vnc_handle = vnc.clone();
+    let pairing_handle = pairing.clone();
     thread::spawn(move || {
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(runtime) => runtime,
@@ -86,7 +100,14 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
             match result {
                 Ok((endpoint, actual_port)) => {
                     let _ = tx.send(Ok(actual_port));
-                    run_quic_server(endpoint, roi_handle, running_handle).await;
+                    run_quic_server(
+                        endpoint,
+                        roi_handle,
+                        vnc_handle,
+                        pairing_handle,
+                        running_handle,
+                    )
+                    .await;
                 }
                 Err(error) => {
                     let _ = tx.send(Err(error));
@@ -106,7 +127,9 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
 
 async fn run_quic_server(
     endpoint: Endpoint,
-    roi: Arc<Mutex<RoiManager>>,
+    roi: Option<Arc<Mutex<RoiManager>>>,
+    vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
+    pairing: Option<Arc<Mutex<PairingState>>>,
     running: Arc<AtomicBool>,
 ) {
     while running.load(Ordering::SeqCst) {
@@ -114,53 +137,71 @@ async fn run_quic_server(
             continue;
         };
         let roi = roi.clone();
+        let vnc = vnc.clone();
+        let pairing = pairing.clone();
         tokio::spawn(async move {
             if let Ok(connection) = connecting.await {
                 let remote = connection.remote_address();
-                eprintln!("ROI QUIC accepted: remote={remote}");
-                if let Err(error) = handle_connection(connection, roi).await {
-                    eprintln!("ROI QUIC connection error: {error}");
+                eprintln!("QUIC accepted: remote={remote}");
+                if let Err(error) = handle_connection(connection, roi, vnc, pairing).await {
+                eprintln!("QUIC connection error: {error}");
                 }
             }
         });
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct RoiHello {
-    session_id: String,
-    token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RoiReady {
-    status: String,
-    session_id: String,
-    max_datagram_size: usize,
-    quic_port: u16,
-    display_index: Option<usize>,
-    framebuffer_width: u32,
-    framebuffer_height: u32,
-    screen_width: u32,
-    screen_height: u32,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct RoiRequest {
-    center_x: f64,
-    center_y: f64,
-    zoom: f64,
-    viewport_width: f64,
-    viewport_height: f64,
-    prefetch_radius: f64,
-}
-
 async fn handle_connection(
     connection: quinn::Connection,
-    roi: Arc<Mutex<RoiManager>>,
+    roi: Option<Arc<Mutex<RoiManager>>>,
+    vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
+    pairing: Option<Arc<Mutex<PairingState>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut send, mut recv) = connection.accept_bi().await?;
-    let hello: RoiHello = read_json_message(&mut recv).await?;
+    let hello_value: JsonValue = read_json_message(&mut recv).await?;
+    let protocol = hello_value
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("roi");
+    if protocol == "vnc" {
+        let Some(vnc) = vnc else {
+            send_json_message(
+                &mut send,
+                &VncError {
+                    status: "error".to_string(),
+                    code: "unsupported".to_string(),
+                    message: "VNC over QUIC is not enabled.".to_string(),
+                    retry_after: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+        let Some(pairing) = pairing else {
+            send_json_message(
+                &mut send,
+                &VncError {
+                    status: "error".to_string(),
+                    code: "state_locked".to_string(),
+                    message: "Pairing state unavailable.".to_string(),
+                    retry_after: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+        return handle_vnc_quic_connection(connection, vnc, pairing, hello_value, send, recv).await;
+    }
+    let roi = match roi {
+        Some(manager) => manager,
+        None => {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "roi disabled",
+            )))
+        }
+    };
+    let hello: RoiHello = serde_json::from_value(hello_value)?;
     eprintln!(
         "ROI QUIC hello: session_id={} token_len={}",
         hello.session_id,
@@ -205,6 +246,10 @@ async fn handle_connection(
         loop {
             match read_json_message::<RoiRequest>(&mut recv).await {
                 Ok(request) => {
+                    if !request.is_valid() {
+                        eprintln!("ROI QUIC request ignored: invalid numeric values");
+                        continue;
+                    }
                     if !logged_request {
                         eprintln!(
                             "ROI QUIC request: center=({:.1},{:.1}) zoom={:.2} viewport={:.1}x{:.1} prefetch={:.1}",
@@ -239,6 +284,89 @@ async fn handle_connection(
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
     eprintln!("ROI QUIC closed: session_id={}", session_id);
+    Ok(())
+}
+
+async fn handle_vnc_quic_connection(
+    connection: quinn::Connection,
+    vnc: Arc<Mutex<crate::vnc::VncManager>>,
+    pairing: Arc<Mutex<PairingState>>,
+    hello_value: JsonValue,
+    mut send: quinn::SendStream,
+    recv: quinn::RecvStream,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let hello: VncHello = serde_json::from_value(hello_value)?;
+    let auth_token = hello.auth_token.clone().unwrap_or_default();
+    let client_id = hello.client_id.clone();
+    let client_name = hello.client_name.clone();
+    if let Err(error) = ensure_auth_not_blocked(&pairing, client_id.as_deref()) {
+        send_vnc_error(&mut send, error).await?;
+        return Ok(());
+    }
+    if let Err(error) = validate_auth_token(&pairing, &auth_token, client_id.as_deref()) {
+        send_vnc_error(&mut send, error).await?;
+        return Ok(());
+    }
+    if let Err(error) = ensure_client_allowed(&pairing, &client_id) {
+        send_vnc_error(&mut send, error).await?;
+        return Ok(());
+    }
+    record_client_activity(&pairing, client_id.clone(), client_name, None);
+    let _guard = track_client_connection(&pairing, client_id);
+    let session_valid = {
+        let manager = vnc.lock().map_err(|_| "vnc lock")?;
+        manager.session_exists(&hello.session_id, &hello.token)
+    };
+    if !session_valid {
+        send_json_message(
+            &mut send,
+            &VncError {
+                status: "error".to_string(),
+                code: "invalid_session".to_string(),
+                message: "Invalid VNC session.".to_string(),
+                retry_after: None,
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    send_json_message(
+        &mut send,
+        &VncReady {
+            status: "ready".to_string(),
+            session_id: hello.session_id.clone(),
+        },
+    )
+    .await?;
+    if let Err(error) = serve_vnc_quic(
+        send,
+        recv,
+        connection,
+        vnc,
+        hello.session_id.clone(),
+        hello.token,
+    )
+    .await
+    {
+        eprintln!("VNC QUIC session error: {error}");
+    }
+    Ok(())
+}
+
+async fn send_vnc_error(
+    send: &mut quinn::SendStream,
+    error: AuthError,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    send_json_message(
+        send,
+        &VncError {
+            status: "error".to_string(),
+            code: error.code.to_string(),
+            message: error.message,
+            retry_after: error.retry_after,
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -314,7 +442,6 @@ fn run_roi_stream(
     let mut frame_id: u32 = 0;
     let max_datagram = connection.max_datagram_size().unwrap_or(1200);
     let tile_size = 64u32;
-    let budget = 120usize;
     while running.load(Ordering::SeqCst) {
         let request = {
             if let Ok(guard) = request_state.lock() {
@@ -327,6 +454,8 @@ fn run_roi_stream(
             thread::sleep(Duration::from_millis(80));
             continue;
         };
+        let interval = resolve_roi_interval(request.zoom);
+        let budget = resolve_roi_budget(request.zoom);
         if let Some(frame) = fake_frame.as_ref() {
             frame_id = frame_id.wrapping_add(1);
             let viewport = RoiViewport {
@@ -343,6 +472,7 @@ fn run_roi_stream(
                 &viewport,
                 tile_size,
                 frame_id,
+                frame_id & 1 == 1,
                 budget,
                 &mut cache,
             );
@@ -369,6 +499,7 @@ fn run_roi_stream(
                 &viewport,
                 tile_size,
                 frame_id,
+                frame_id & 1 == 1,
                 budget,
                 &mut cache,
             );
@@ -380,7 +511,37 @@ fn run_roi_stream(
             }
             }
         }
-        thread::sleep(Duration::from_millis(80));
+        thread::sleep(interval);
+    }
+}
+
+fn resolve_roi_interval(zoom: f64) -> Duration {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return Duration::from_millis(32);
+    }
+    if zoom >= 2.0 {
+        Duration::from_millis(12)
+    } else if zoom >= 1.5 {
+        Duration::from_millis(16)
+    } else if zoom >= 1.2 {
+        Duration::from_millis(24)
+    } else {
+        Duration::from_millis(32)
+    }
+}
+
+fn resolve_roi_budget(zoom: f64) -> usize {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return 180;
+    }
+    if zoom >= 2.0 {
+        320
+    } else if zoom >= 1.5 {
+        260
+    } else if zoom >= 1.2 {
+        220
+    } else {
+        180
     }
 }
 
@@ -405,17 +566,16 @@ fn send_tile_datagrams(
     tile: &RoiTile,
     max_datagram: usize,
 ) -> Result<(), ()> {
-    const HEADER_SIZE: usize = 28;
-    if max_datagram <= HEADER_SIZE + 8 {
+    if max_datagram <= ROI_DATAGRAM_HEADER_SIZE + 8 {
         return Err(());
     }
-    let max_payload = max_datagram - HEADER_SIZE;
+    let max_payload = max_datagram - ROI_DATAGRAM_HEADER_SIZE;
     let raw_payload = &tile.pixels;
-    let mut codec = 0u8;
+    let mut codec = ROI_CODEC_RAW;
     let payload = if raw_payload.len() > max_payload {
         if let Ok(compressed) = compress_zlib(raw_payload) {
             if compressed.len() < raw_payload.len() {
-                codec = 1;
+                codec = ROI_CODEC_ZLIB;
                 compressed
             } else {
                 raw_payload.to_vec()
@@ -434,8 +594,8 @@ fn send_tile_datagrams(
         let start = chunk_index * max_payload;
         let end = (start + max_payload).min(payload.len());
         let chunk = &payload[start..end];
-        let mut buffer = Vec::with_capacity(HEADER_SIZE + chunk.len());
-        buffer.extend_from_slice(b"ROI1");
+        let mut buffer = Vec::with_capacity(ROI_DATAGRAM_HEADER_SIZE + chunk.len());
+        buffer.extend_from_slice(ROI_DATAGRAM_MAGIC);
         buffer.extend_from_slice(&tile.frame_id.to_le_bytes());
         buffer.extend_from_slice(&tile.logical_x.to_le_bytes());
         buffer.extend_from_slice(&tile.logical_y.to_le_bytes());
@@ -485,7 +645,7 @@ mod tests {
             let roi = roi_manager.clone();
             let running = running.clone();
             tokio::spawn(async move {
-                run_quic_server(endpoint, roi, running).await;
+                run_quic_server(endpoint, Some(roi), None, None, running).await;
             })
         };
 

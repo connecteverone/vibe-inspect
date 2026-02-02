@@ -1,4 +1,5 @@
 use crate::identity::{load_or_create_identity, AgentIdentity};
+use crate::roi::RoiErrorCode;
 use crate::server;
 use crate::terminal;
 use get_if_addrs::get_if_addrs;
@@ -130,7 +131,7 @@ pub struct PairingStatusResponse {
     pub paired_devices: Vec<ClientSnapshot>,
     pub active_devices: Vec<ClientSnapshot>,
     pub connected_devices: Vec<ClientSnapshot>,
-    pub terminal_sessions: Vec<terminal::TerminalSessionSummary>,
+    pub terminal_sessions: Vec<desktop::terminal_core::TerminalSessionSummary>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -562,7 +563,7 @@ pub fn set_roi_quic_port(
                         eprintln!("Failed to revert ROI QUIC port {previous_port}: {error}");
                     }
                     return Err(PairingError::new(
-                        "roi_quic_port_busy",
+                        RoiErrorCode::RoiQuicPortBusy.as_str(),
                         "ROI QUIC port change deferred while active sessions are connected. Disconnect active sessions and retry.",
                     ));
                 }
@@ -1197,7 +1198,7 @@ fn ensure_local_server(
                 };
                 eprintln!("{formatted}");
                 return Err(PairingError {
-                    code: "roi_quic_port_unavailable".to_string(),
+                    code: RoiErrorCode::RoiQuicPortUnavailable.as_str().to_string(),
                     message: formatted,
                 });
             }

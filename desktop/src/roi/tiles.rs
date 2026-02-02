@@ -59,6 +59,7 @@ pub fn build_tiles(
     viewport: &RoiViewport,
     tile_size: u32,
     frame_id: u32,
+    scan_reverse: bool,
     budget: usize,
     cache: &mut RoiTileCache,
 ) -> Vec<RoiTile> {
@@ -101,12 +102,62 @@ pub fn build_tiles(
     let mut sent = 0usize;
     let max_x = phys_right.min(frame.width);
     let max_y = phys_bottom.min(frame.height);
-    let mut y = phys_top;
-    while y < max_y {
-        let mut x = phys_left;
-        let tile_h = tile_size.min(max_y - y);
-        while x < max_x {
-            let tile_w = tile_size.min(max_x - x);
+    if !scan_reverse {
+        let mut y = phys_top;
+        while y < max_y {
+            let mut x = phys_left;
+            let tile_h = tile_size.min(max_y - y);
+            while x < max_x {
+                let tile_w = tile_size.min(max_x - x);
+                if tile_w == 0 || tile_h == 0 {
+                    break;
+                }
+                let (logical_left, logical_right) = map_physical_to_logical_bounds(
+                    x,
+                    x + tile_w,
+                    info.framebuffer_width,
+                    frame.width,
+                );
+                let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
+                    y,
+                    y + tile_h,
+                    info.framebuffer_height,
+                    frame.height,
+                );
+                let logical_w = logical_right.saturating_sub(logical_left).max(1);
+                let logical_h = logical_bottom.saturating_sub(logical_top).max(1);
+                let tile = RoiTile {
+                    logical_x: logical_left.min(u16::MAX as u32) as u16,
+                    logical_y: logical_top.min(u16::MAX as u32) as u16,
+                    logical_w: logical_w.min(u16::MAX as u32) as u16,
+                    logical_h: logical_h.min(u16::MAX as u32) as u16,
+                    pixel_w: tile_w as u16,
+                    pixel_h: tile_h as u16,
+                    pixels: extract_tile(frame, x, y, tile_w, tile_h),
+                    frame_id,
+                };
+                if cache.should_send(&tile) {
+                    tiles.push(tile);
+                    sent += 1;
+                    if sent >= budget {
+                        return tiles;
+                    }
+                }
+                x += tile_w;
+            }
+            y += tile_h;
+        }
+        return tiles;
+    }
+
+    let mut y = max_y;
+    while y > phys_top {
+        let tile_h = tile_size.min(y - phys_top);
+        y -= tile_h;
+        let mut x = max_x;
+        while x > phys_left {
+            let tile_w = tile_size.min(x - phys_left);
+            x -= tile_w;
             if tile_w == 0 || tile_h == 0 {
                 break;
             }
@@ -141,9 +192,7 @@ pub fn build_tiles(
                     return tiles;
                 }
             }
-            x += tile_w;
         }
-        y += tile_h;
     }
     tiles
 }

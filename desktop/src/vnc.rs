@@ -3,6 +3,8 @@ use enigo::{Enigo, KeyboardControllable, Key, MouseButton, MouseControllable};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use futures_util::{SinkExt, StreamExt};
+use bytes::Bytes;
+use quinn::{Connection, RecvStream, SendStream};
 use rand::{distributions::Alphanumeric, Rng};
 use rfb_encodings::{PixelFormat, zrle::encode_zrle};
 use scrap::{Capturer, Display};
@@ -16,16 +18,20 @@ use std::env;
 
 #[cfg(target_os = "macos")]
 use crate::cursor_macos::{capture_cursor, cursor_changed, SystemCursor};
+use crate::quic::protocol::{
+    encode_vnc_datagram_chunks, VNC_CHANNEL_VIDEO_DELTA, VNC_CODEC_RFB,
+    VNC_DATAGRAM_HEADER_SIZE,
+};
 
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 const VNC_NAME: &str = "Vibe Inspect Agent";
-const MAX_FRAME_RATE_MS: u64 = 33;
-const DEFAULT_IDLE_FRAME_RATE_MS: u64 = 120;
+const MAX_FRAME_RATE_MS: u64 = 16;
+const DEFAULT_IDLE_FRAME_RATE_MS: u64 = 60;
 const DEFAULT_KEEPALIVE_MS: u64 = 250;
 const DEFAULT_HIGH_PERF_FRAME_INTERVAL_MS: u64 = 10;
 const HIGH_PERF_INTERVAL_MIN_MS: u64 = 5;
 const HIGH_PERF_INTERVAL_MAX_MS: u64 = 10;
-const ACTIVE_INPUT_WINDOW_MS: u64 = 250;
+const ACTIVE_INPUT_WINDOW_MS: u64 = 1500;
 const VNC_IDLE_POLL_MS: u64 = 5;
 const ENCODING_RAW: i32 = 0;
 const ENCODING_COPYRECT: i32 = 1;
@@ -315,6 +321,10 @@ impl VncManager {
             .get(session_id)
             .and_then(|session| if session.token == token { Some(session.clone()) } else { None })
     }
+
+    pub(crate) fn session_exists(&self, session_id: &str, token: &str) -> bool {
+        self.get_session(session_id, token).is_some()
+    }
 }
 
 fn preflight_capture_access() -> Result<(), String> {
@@ -414,6 +424,28 @@ pub async fn serve_vnc_socket(
     if let Err(error) = run_vnc_session(socket, session).await {
         eprintln!("VNC session error: {error}");
     }
+}
+
+pub async fn serve_vnc_quic(
+    mut send: SendStream,
+    mut recv: RecvStream,
+    connection: Connection,
+    manager: Arc<Mutex<VncManager>>,
+    session_id: String,
+    token: String,
+) -> Result<(), String> {
+    vnc_log(&format!("vnc quic connect: session={session_id}"));
+    let session = {
+        let manager = manager.lock().unwrap();
+        manager.get_session(&session_id, &token)
+    };
+
+    let Some(session) = session else {
+        return Err("Invalid VNC session".to_string());
+    };
+
+    run_vnc_session_quic(&mut send, &mut recv, &connection, session).await?;
+    Ok(())
 }
 
 async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), String> {
@@ -589,6 +621,229 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     }
 
     running.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+async fn run_vnc_session_quic(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    connection: &Connection,
+    session: VncSession,
+) -> Result<(), String> {
+    let mut buffer = Vec::new();
+    vnc_log(&format!(
+        "vnc quic session init: display={} size={}x{}",
+        session.display_index, session.width, session.height
+    ));
+    vnc_log(&format!(
+        "vnc quic input map: input={}x{} scale=({:.3},{:.3}) origin=({:.1},{:.1})",
+        session.input_width,
+        session.input_height,
+        session.input_scale_x,
+        session.input_scale_y,
+        session.input_origin_x,
+        session.input_origin_y
+    ));
+
+    send.write_all(RFB_VERSION)
+        .await
+        .map_err(|error| format!("Failed to send RFB version: {error}"))?;
+
+    let mut client_version = vec![0u8; 12];
+    recv.read_exact(&mut client_version)
+        .await
+        .map_err(|error| format!("Failed to read RFB version: {error}"))?;
+    if client_version != RFB_VERSION {
+        return Err("Unsupported RFB client version".to_string());
+    }
+
+    send.write_all(&[1, 1])
+        .await
+        .map_err(|error| format!("Failed to send security types: {error}"))?;
+
+    let mut security_choice = [0u8; 1];
+    recv.read_exact(&mut security_choice)
+        .await
+        .map_err(|error| format!("Failed to read security type: {error}"))?;
+    if security_choice[0] != 1 {
+        return Err("Unsupported VNC security type".to_string());
+    }
+
+    send.write_all(&[0, 0, 0, 0])
+        .await
+        .map_err(|error| format!("Failed to send security result: {error}"))?;
+
+    let mut client_init = [0u8; 1];
+    recv.read_exact(&mut client_init)
+        .await
+        .map_err(|error| format!("Failed to read client init: {error}"))?;
+
+    let server_init = build_server_init(session.width, session.height);
+    send.write_all(&server_init)
+        .await
+        .map_err(|error| format!("Failed to send server init: {error}"))?;
+
+    let ready_for_updates = Arc::new(AtomicBool::new(false));
+    let force_full = Arc::new(AtomicBool::new(true));
+    let running = Arc::new(AtomicBool::new(true));
+    let copyrect_supported = Arc::new(AtomicBool::new(false));
+    let cursor_supported = Arc::new(AtomicBool::new(false));
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(4);
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
+    let last_input_at = Arc::new(AtomicU64::new(current_millis()));
+    let data_saver_enabled = Arc::new(AtomicBool::new(false));
+    let high_perf_enabled = Arc::new(AtomicBool::new(false));
+    let _capture_handle = spawn_capture_thread(
+        session.clone(),
+        ready_for_updates.clone(),
+        force_full.clone(),
+        running.clone(),
+        session.guard.clone(),
+        session.generation,
+        copyrect_supported.clone(),
+        cursor_supported.clone(),
+        last_input_at.clone(),
+        data_saver_enabled.clone(),
+        high_perf_enabled.clone(),
+        frame_tx,
+    );
+    let _input_handle =
+        spawn_input_thread(session.clone(), running.clone(), session.guard.clone(), input_rx);
+    let mut encoding_prefs = EncodingPreferences {
+        encoding: ENCODING_ZLIB,
+        tight_compression: 6,
+        tight_quality: None,
+        allow_jpeg: false,
+        copyrect_supported: false,
+        cursor_supported: false,
+    };
+    let mut pixel_format = default_pixel_format_spec();
+    let mut update_request_seen = false;
+    let mut read_buf = [0u8; 4096];
+    let max_datagram = connection.max_datagram_size().unwrap_or(1200) as usize;
+    if max_datagram <= VNC_DATAGRAM_HEADER_SIZE {
+        return Err("QUIC datagram size too small for VNC updates.".to_string());
+    }
+    let mut datagram_seq: u32 = 0;
+    let mut datagram_frame_id: u32 = 0;
+
+    loop {
+        tokio::select! {
+            Some(update) = frame_rx.recv() => {
+                let message = build_framebuffer_update(
+                    update,
+                    &encoding_prefs,
+                    &pixel_format,
+                    session.width,
+                    session.height,
+                )?;
+                if let Err(error) = send_vnc_datagrams(
+                    connection,
+                    &message,
+                    &mut datagram_seq,
+                    &mut datagram_frame_id,
+                    max_datagram,
+                )
+                .await {
+                    eprintln!("VNC QUIC datagram send error: {error}");
+                    break;
+                }
+            }
+            read_result = recv.read(&mut read_buf) => {
+                let read_len = match read_result {
+                    Ok(Some(0)) => break,
+                    Ok(Some(value)) => value,
+                    Ok(None) => break,
+                    Err(error) => return Err(format!("QUIC read error: {error}")),
+                };
+                buffer.extend_from_slice(&read_buf[..read_len]);
+                while let Some(event) = parse_client_message(&mut buffer) {
+                    match event {
+                        ClientMessage::FramebufferUpdateRequest { incremental, .. } => {
+                            if !update_request_seen {
+                                update_request_seen = true;
+                                vnc_log(&format!(
+                                    "vnc update request: incremental={}",
+                                    incremental
+                                ));
+                            }
+                            ready_for_updates.store(true, Ordering::SeqCst);
+                            if !incremental {
+                                force_full.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        ClientMessage::PointerEvent { mask, x, y } => {
+                            last_input_at.store(current_millis(), Ordering::Relaxed);
+                            let _ = input_tx.send(InputEvent::Pointer { mask, x, y });
+                        }
+                        ClientMessage::KeyEvent { down, keysym } => {
+                            last_input_at.store(current_millis(), Ordering::Relaxed);
+                            let _ = input_tx.send(InputEvent::Key { down, keysym });
+                        }
+                        ClientMessage::SetEncodings { encodings } => {
+                            encoding_prefs = apply_pixel_format_constraints(
+                                parse_encoding_preferences(&encodings),
+                                &pixel_format,
+                            );
+                            data_saver_enabled.store(
+                                parse_data_saver(&encodings),
+                                Ordering::Relaxed,
+                            );
+                            high_perf_enabled.store(
+                                parse_high_perf(&encodings),
+                                Ordering::Relaxed,
+                            );
+                            copyrect_supported.store(
+                                encoding_prefs.copyrect_supported,
+                                Ordering::Relaxed,
+                            );
+                            cursor_supported.store(
+                                encoding_prefs.cursor_supported,
+                                Ordering::Relaxed,
+                            );
+                        }
+                        ClientMessage::SetPixelFormat { format } => {
+                            pixel_format = sanitize_pixel_format(format);
+                            encoding_prefs =
+                                apply_pixel_format_constraints(encoding_prefs, &pixel_format);
+                        }
+                        ClientMessage::ClientCutText => {}
+                    }
+                }
+            }
+        }
+    }
+
+    running.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+async fn send_vnc_datagrams(
+    connection: &Connection,
+    payload: &[u8],
+    seq: &mut u32,
+    frame_id: &mut u32,
+    max_datagram: usize,
+) -> Result<(), String> {
+    let current_seq = *seq;
+    let current_frame = *frame_id;
+    *seq = seq.wrapping_add(1);
+    *frame_id = frame_id.wrapping_add(1);
+    let chunks = encode_vnc_datagram_chunks(
+        payload,
+        current_seq,
+        current_frame,
+        VNC_CHANNEL_VIDEO_DELTA,
+        0,
+        VNC_CODEC_RFB,
+        max_datagram,
+    )?;
+    for chunk in chunks {
+        connection
+            .send_datagram_wait(Bytes::from(chunk))
+            .await
+            .map_err(|error| format!("QUIC datagram send failed: {error}"))?;
+    }
     Ok(())
 }
 
@@ -1046,20 +1301,35 @@ fn diff_rect_with_threshold(
     let mut max_x = 0usize;
     let mut max_y = 0usize;
     let mut changed = false;
+    let row_bytes = width * 4;
     for y in 0..height {
+        let row_start = y * row_bytes;
+        let row_end = row_start + row_bytes;
+        if current[row_start..row_end] == previous[row_start..row_end] {
+            continue;
+        }
+        let mut row_min = width;
+        let mut row_max = 0usize;
+        let mut row_changed = false;
         for x in 0..width {
-            let idx = (y * width + x) * 4;
+            let idx = row_start + x * 4;
             if current[idx..idx + 4] != previous[idx..idx + 4] {
-                changed = true;
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
-                let rect_area = (max_x - min_x + 1) * (max_y - min_y + 1);
-                if rect_area >= threshold_area {
-                    return DiffOutcome::Full;
-                }
+                row_changed = true;
+                row_min = row_min.min(x);
+                row_max = row_max.max(x);
             }
+        }
+        if !row_changed {
+            continue;
+        }
+        changed = true;
+        min_x = min_x.min(row_min);
+        min_y = min_y.min(y);
+        max_x = max_x.max(row_max);
+        max_y = max_y.max(y);
+        let rect_area = (max_x - min_x + 1) * (max_y - min_y + 1);
+        if rect_area >= threshold_area {
+            return DiffOutcome::Full;
         }
     }
     if !changed {

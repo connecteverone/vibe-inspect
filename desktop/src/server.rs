@@ -11,17 +11,20 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::SystemTime;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::command::{AgentCommandRequest, AgentCommandResponse, AgentCommandStatus};
 use crate::pairing::{
     confirm_pairing_with_state, current_local_ips, current_local_urls, current_wifi_ssid,
-    record_client_seen, PairingError, PairingState,
+    PairingError, PairingState,
 };
 use crate::terminal::serve_terminal_socket;
 use crate::vnc::{serve_vnc_socket, VncManager};
-use crate::roi::{RoiManager, RoiSessionRequest};
+use crate::auth::{
+    ensure_auth_not_blocked, ensure_client_allowed, record_client_activity,
+    track_client_connection, validate_auth_token, AuthError,
+};
+use crate::roi::{RoiErrorCode, RoiManager, RoiSessionRequest};
 use crate::quic::{start_quic_server, QuicServerConfig, QuicServerHandle};
 
 pub struct LocalServerHandle {
@@ -50,36 +53,6 @@ struct LocalServerState {
     pairing: Arc<Mutex<PairingState>>,
     vnc: Arc<Mutex<VncManager>>,
     roi: Arc<Mutex<RoiManager>>,
-}
-
-struct ClientConnectionGuard {
-    state: Arc<Mutex<PairingState>>,
-    client_id: Option<String>,
-}
-
-impl Drop for ClientConnectionGuard {
-    fn drop(&mut self) {
-        if let Some(id) = self.client_id.as_deref() {
-            if let Ok(mut state) = self.state.lock() {
-                state.disconnect_client(id);
-            }
-        }
-    }
-}
-
-fn track_client_connection(
-    state: &Arc<Mutex<PairingState>>,
-    client_id: Option<String>,
-) -> ClientConnectionGuard {
-    if let Some(id) = client_id.as_deref() {
-        if let Ok(mut state) = state.lock() {
-            state.connect_client(id);
-        }
-    }
-    ClientConnectionGuard {
-        state: state.clone(),
-        client_id,
-    }
 }
 
 pub fn start_local_server(
@@ -120,6 +93,8 @@ pub fn start_local_server(
     let quic_handle = match start_quic_server(QuicServerConfig {
         port: roi_port,
         roi: Some(roi_manager.clone()),
+        vnc: Some(vnc_manager.clone()),
+        pairing: Some(state.clone()),
     }) {
         Ok(handle) => handle,
         Err(error) => {
@@ -184,8 +159,8 @@ async fn handle_command(
     }
 
     let (client_id, client_name, source) = extract_client_headers(&headers);
-    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
-        return response;
+    if let Err(error) = ensure_client_allowed(&state.pairing, &client_id) {
+        return auth_error_response(error);
     }
     record_client_activity(
         &state.pairing,
@@ -252,7 +227,7 @@ async fn handle_command(
     }
 
     if request.command == "vnc" {
-        let response = handle_vnc_command(&request, &state.vnc);
+        let response = handle_vnc_command(&request, &state.vnc, &state.pairing);
         return (StatusCode::OK, Json(json!(response)));
     }
 
@@ -290,6 +265,7 @@ struct RoiCommandPayload {
 fn handle_vnc_command(
     request: &AgentCommandRequest,
     manager: &Arc<Mutex<VncManager>>,
+    pairing: &Arc<Mutex<PairingState>>,
 ) -> AgentCommandResponse {
     let payload: VncCommandPayload = match request.payload.clone() {
         Some(payload) => match serde_json::from_value(payload) {
@@ -359,6 +335,11 @@ fn handle_vnc_command(
             .clone()
             .unwrap_or_else(|| request.request_id.clone());
         let mut manager = manager.lock().unwrap();
+        let quic_port = pairing
+            .lock()
+            .ok()
+            .map(|guard| guard.roi_quic_port())
+            .unwrap_or(0);
         match manager.start_session(
             session_id.clone(),
             payload.width,
@@ -375,6 +356,7 @@ fn handle_vnc_command(
                     "session_id": info.session_id,
                     "token": info.token,
                     "ws_path": info.ws_path,
+                    "quic_port": quic_port,
                     "width": info.width,
                     "height": info.height,
                     "display_index": info.display_index,
@@ -443,7 +425,7 @@ fn handle_roi_command(
                     status: AgentCommandStatus::Error,
                     payload: None,
                     error: Some(crate::command::AgentCommandError {
-                        code: "invalid_payload".to_string(),
+                        code: RoiErrorCode::InvalidPayload.as_str().to_string(),
                         message: format!("Invalid payload for roi command: {error}"),
                         details: None,
                     }),
@@ -455,11 +437,11 @@ fn handle_roi_command(
                 request_id: request.request_id.clone(),
                 status: AgentCommandStatus::Error,
                 payload: None,
-                error: Some(crate::command::AgentCommandError {
-                    code: "missing_payload".to_string(),
-                    message: "Missing payload for roi command.".to_string(),
-                    details: Some(json!({ "command": "roi" })),
-                }),
+                    error: Some(crate::command::AgentCommandError {
+                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
+                        message: "Missing payload for roi command.".to_string(),
+                        details: Some(json!({ "command": "roi" })),
+                    }),
             };
         }
     };
@@ -482,7 +464,7 @@ fn handle_roi_command(
                     status: AgentCommandStatus::Error,
                     payload: None,
                     error: Some(crate::command::AgentCommandError {
-                        code: "missing_payload".to_string(),
+                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
                         message: "Missing framebuffer_width for roi command.".to_string(),
                         details: Some(json!({ "command": "roi" })),
                     }),
@@ -497,7 +479,7 @@ fn handle_roi_command(
                     status: AgentCommandStatus::Error,
                     payload: None,
                     error: Some(crate::command::AgentCommandError {
-                        code: "missing_payload".to_string(),
+                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
                         message: "Missing framebuffer_height for roi command.".to_string(),
                         details: Some(json!({ "command": "roi" })),
                     }),
@@ -512,7 +494,7 @@ fn handle_roi_command(
                     status: AgentCommandStatus::Error,
                     payload: None,
                     error: Some(crate::command::AgentCommandError {
-                        code: "missing_payload".to_string(),
+                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
                         message: "Missing screen_width for roi command.".to_string(),
                         details: Some(json!({ "command": "roi" })),
                     }),
@@ -527,7 +509,7 @@ fn handle_roi_command(
                     status: AgentCommandStatus::Error,
                     payload: None,
                     error: Some(crate::command::AgentCommandError {
-                        code: "missing_payload".to_string(),
+                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
                         message: "Missing screen_height for roi command.".to_string(),
                         details: Some(json!({ "command": "roi" })),
                     }),
@@ -608,7 +590,7 @@ fn handle_roi_command(
         status: AgentCommandStatus::Error,
         payload: None,
         error: Some(crate::command::AgentCommandError {
-            code: "unsupported_action".to_string(),
+            code: RoiErrorCode::UnsupportedAction.as_str().to_string(),
             message: format!("Unsupported ROI action: {}", payload.action),
             details: Some(json!({ "command": "roi" })),
         }),
@@ -742,8 +724,8 @@ async fn handle_pairing_confirm(
         }
     };
 
-    if let Err(response) = ensure_client_allowed(&state.pairing, &confirm_request.client_id) {
-        return response;
+    if let Err(error) = ensure_client_allowed(&state.pairing, &confirm_request.client_id) {
+        return auth_error_response(error);
     }
 
     match confirm_pairing_with_state(
@@ -771,6 +753,28 @@ fn build_pairing_error(error: PairingError) -> serde_json::Value {
     })
 }
 
+fn auth_error_response(error: AuthError) -> (StatusCode, Json<serde_json::Value>) {
+    let status = match error.code {
+        "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
+        "client_blocked" => StatusCode::FORBIDDEN,
+        "unauthorized" => StatusCode::UNAUTHORIZED,
+        "state_locked" => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_REQUEST,
+    };
+    let mut payload = json!({
+        "error": {
+            "code": error.code,
+            "message": error.message,
+        }
+    });
+    if let Some(retry_after) = error.retry_after {
+        if let Some(error_obj) = payload.get_mut("error") {
+            error_obj["retry_after"] = json!(retry_after);
+        }
+    }
+    (status, Json(payload))
+}
+
 async fn handle_vnc_ws(
     State(state): State<LocalServerState>,
     Path(session_id): Path<String>,
@@ -781,16 +785,14 @@ async fn handle_vnc_ws(
     let auth_token = params.get("auth_token").cloned().unwrap_or_default();
     let client_id = params.get("client_id").cloned();
     let client_name = params.get("client_name").cloned();
-    if let Err(response) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
-        return response.into_response();
+    if let Err(error) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+        return auth_error_response(error).into_response();
     }
-    if !is_auth_token_valid(&state.pairing, &auth_token, client_id.as_deref()) {
-        record_auth_failure(&state.pairing, client_id.as_deref());
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(error) = validate_auth_token(&state.pairing, &auth_token, client_id.as_deref()) {
+        return auth_error_response(error).into_response();
     }
-    record_auth_success(&state.pairing, client_id.as_deref());
-    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
-        return response.into_response();
+    if let Err(error) = ensure_client_allowed(&state.pairing, &client_id) {
+        return auth_error_response(error).into_response();
     }
     let guard_id = client_id.clone();
     record_client_activity(&state.pairing, client_id, client_name, None);
@@ -811,16 +813,14 @@ async fn handle_terminal_ws(
     let auth_token = params.get("auth_token").cloned().unwrap_or_default();
     let client_id = params.get("client_id").cloned();
     let client_name = params.get("client_name").cloned();
-    if let Err(response) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
-        return response.into_response();
+    if let Err(error) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+        return auth_error_response(error).into_response();
     }
-    if !is_auth_token_valid(&state.pairing, &auth_token, client_id.as_deref()) {
-        record_auth_failure(&state.pairing, client_id.as_deref());
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(error) = validate_auth_token(&state.pairing, &auth_token, client_id.as_deref()) {
+        return auth_error_response(error).into_response();
     }
-    record_auth_success(&state.pairing, client_id.as_deref());
-    if let Err(response) = ensure_client_allowed(&state.pairing, &client_id) {
-        return response.into_response();
+    if let Err(error) = ensure_client_allowed(&state.pairing, &client_id) {
+        return auth_error_response(error).into_response();
     }
     let guard_id = client_id.clone();
     record_client_activity(&state.pairing, client_id, client_name, None);
@@ -836,141 +836,14 @@ fn ensure_authorized(
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let (client_id, _, _) = extract_client_headers(headers);
-    if let Err(response) = ensure_auth_not_blocked(state, client_id.as_deref()) {
-        return Err(response);
+    if let Err(error) = ensure_auth_not_blocked(state, client_id.as_deref()) {
+        return Err(auth_error_response(error));
     }
     let token = extract_auth_token(headers).unwrap_or_default();
-    if token.is_empty() || !is_auth_token_valid(state, &token, client_id.as_deref()) {
-        if let Some(until) = record_auth_failure(state, client_id.as_deref()) {
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "error": {
-                        "code": "rate_limited",
-                        "message": "Too many invalid tokens. Try again later.",
-                        "retry_after": until
-                    }
-                })),
-            ));
-        }
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": {
-                    "code": "unauthorized",
-                    "message": "Missing or invalid agent token."
-                }
-            })),
-        ));
-    }
-    record_auth_success(state, client_id.as_deref());
-    Ok(())
-}
-
-fn ensure_auth_not_blocked(
-    state: &Arc<Mutex<PairingState>>,
-    client_id: Option<&str>,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or_default();
-    let mut guard = state
-        .lock()
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": {
-                        "code": "state_locked",
-                        "message": "Pairing state unavailable."
-                    }
-                })),
-            )
-        })?;
-    if guard.is_auth_blocked(client_id, now) {
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": {
-                    "code": "rate_limited",
-                    "message": "Too many invalid tokens. Try again later."
-                }
-            })),
-        ));
+    if let Err(error) = validate_auth_token(state, &token, client_id.as_deref()) {
+        return Err(auth_error_response(error));
     }
     Ok(())
-}
-
-fn record_auth_failure(
-    state: &Arc<Mutex<PairingState>>,
-    client_id: Option<&str>,
-) -> Option<u64> {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or_default();
-    if let Ok(mut guard) = state.lock() {
-        return guard.record_auth_failure(client_id, now);
-    }
-    None
-}
-
-fn record_auth_success(state: &Arc<Mutex<PairingState>>, client_id: Option<&str>) {
-    if let Ok(mut guard) = state.lock() {
-        guard.record_auth_success(client_id);
-    }
-}
-
-fn ensure_client_allowed(
-    state: &Arc<Mutex<PairingState>>,
-    client_id: &Option<String>,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let client_id = match client_id {
-        Some(value) if !value.trim().is_empty() => value.trim(),
-        _ => return Ok(()),
-    };
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or_default();
-    let mut state = state
-        .lock()
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": {
-                        "code": "state_locked",
-                        "message": "Pairing state unavailable."
-                    }
-                })),
-            )
-        })?;
-    if state.is_client_blocked(client_id, now) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "error": {
-                    "code": "client_blocked",
-                    "message": "Client has been disabled."
-                }
-            })),
-        ));
-    }
-    Ok(())
-}
-
-fn is_auth_token_valid(
-    state: &Arc<Mutex<PairingState>>,
-    token: &str,
-    client_id: Option<&str>,
-) -> bool {
-    let guard = state.lock();
-    if let Ok(state) = guard {
-        return state.is_auth_token_valid(token, client_id);
-    }
-    false
 }
 
 fn extract_auth_token(headers: &HeaderMap) -> Option<String> {
@@ -1013,19 +886,4 @@ fn extract_client_headers(headers: &HeaderMap) -> (Option<String>, Option<String
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     (client_id, client_name, source)
-}
-
-fn record_client_activity(
-    state: &Arc<Mutex<PairingState>>,
-    client_id: Option<String>,
-    client_name: Option<String>,
-    source: Option<String>,
-) {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or_default();
-    if let Ok(mut state) = state.lock() {
-        record_client_seen(&mut state, client_id, client_name, source, now);
-    }
 }

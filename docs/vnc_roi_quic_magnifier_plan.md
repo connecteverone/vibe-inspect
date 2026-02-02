@@ -14,7 +14,7 @@ This plan is designed for correctness of input mapping, high perceived responsiv
 
 ## 0.1 Implementation Status (as of 2026-01-31)
 - Desktop agent: QUIC server is live, ROI sessions are validated, tiles are captured from the native display, chunked, and sent via QUIC DATAGRAM (`ROI1` header).
-- Desktop agent: QUIC endpoint is created inside the Tokio runtime, logs ROI start/ready/request/close, and reports the actual bound port (including ephemeral fallback). Auto-restart is disabled while sessions are active to avoid ROI drops.
+- Desktop agent: QUIC endpoint is created inside the Tokio runtime, logs ROI start/ready/request/close, and **requires the configured QUIC port to bind successfully** (no ephemeral fallback). Auto-restart is disabled while sessions are active to avoid ROI drops.
 - Mobile app: QUIC DATAGRAM client implemented via `flutter_quic` (FRB + Quinn). ROI control stream and datagram receive path are wired; overlay pipeline is active.
 - Mobile app: ROI send stream is retained after writes (prevents immediate QUIC close). ROI requests fire immediately after connect and when view size is unknown a frame-size fallback is used.
 - Zoom UX: continuous zoom slider is enabled; when zoom > 1.01 the base layer uses `FilterQuality.none` to reduce blur.
@@ -28,7 +28,7 @@ This plan is designed for correctness of input mapping, high perceived responsiv
 - Fixed ROI QUIC send stream lifetime on mobile so the server does not close immediately after handshake.
 - Added ROI lifecycle logs on desktop for diagnosis and verification.
 - Removed server auto-restart during active sessions to prevent VNC/ROI disconnect loops.
-- Ensured QUIC port updates propagate when the server binds to an ephemeral port.
+- Ensured QUIC port binding failures surface clear errors (no ephemeral fallback).
 
 ## 1. Context From Current Code (Local Inspection)
 ### Desktop Agent (Rust)
@@ -68,12 +68,12 @@ Implication:
 ## 5. High-Level Architecture
 ```
 Mobile
- ├─ VNC Client (TCP) ............. Base layer (low-res full frame)
- └─ QUIC DATAGRAM Client ......... ROI tiles (high-res)
+ - VNC Client (TCP) ............. Base layer (low-res full frame)
+ - QUIC DATAGRAM Client ......... ROI tiles (high-res)
 
 Desktop Agent
- ├─ VNC Server (TCP) ............. Existing
- └─ QUIC DATAGRAM Server ......... New ROI service
+ - VNC Server (TCP) ............. Existing
+ - QUIC DATAGRAM Server ......... New ROI service
 ```
 
 ### Data Flow
@@ -86,49 +86,30 @@ Desktop Agent
 
 ## 6. ROI Protocol Design
 
+NOTE: This section mixes **current implementation** and **future extensions**. The authoritative contract is in `docs/vnc-quic-fast/README.md`. Any change here must stay consistent with that contract.
+
 ### 6.1 Control Plane (Reliable Stream on QUIC)
 Use QUIC stream within the same connection for handshake and requests.
 
-**ROI_START (client -> agent)**
-- session_id
-- vnc_session_id
-- client_id
-- desired_tile_size
-- capabilities (lz4/zlib/raw)
+Current implementation (as of 2026-02-02):
+- Client sends `RoiHello { session_id, token }`.
+- Server replies `RoiReady { status, session_id, max_datagram_size, quic_port, display_index, framebuffer_width, framebuffer_height, screen_width, screen_height }`.
+- Client sends repeated `RoiRequest { center_x, center_y, zoom, viewport_width, viewport_height, prefetch_radius }`.
 
-**ROI_READY (agent -> client)**
-- roi_session_id
-- framebuffer_size (logical)
-- screen_size (physical)
-- max_datagram_size
-- quic_port
+Future extensions (not implemented yet):
+- Additional metadata (capabilities, desired_tile_size, priority hints).
+- Optional client hints (velocity/direction).
 
-**ROI_REQUEST (client -> agent)**
-- center_x, center_y (logical framebuffer coords)
-- zoom (float)
-- viewport_w, viewport_h
-- prefetch_radius
-- priority_hint
-
-**ROI_HINT (client -> agent)**
-- velocity
-- direction
+Planned fields (not currently in use):
+- `desired_tile_size`, `capabilities`, `priority_hint`, `velocity`, `direction`.
 
 ### 6.2 Data Plane (QUIC DATAGRAM)
 Each datagram carries **one tile or tile chunk**.
 
-Header (fixed size, little-endian):
-- roi_session_id (u64)
-- frame_id (u32)
-- tile_x (u16)
-- tile_y (u16)
-- tile_w (u16)
-- tile_h (u16)
-- scale_level (u8)  // typically 1 for native
-- codec (u8)        // 0=raw,1=zlib,2=lz4
-- chunk_index (u8)
-- chunk_count (u8)
-- payload_len (u16)
+Planned (future) header extensions:
+- `roi_session_id` in header
+- `lz4` codec support
+- `priority` or `ring` hints
 
 Payload:
 - compressed tile pixels (BGRA or RGBX)
@@ -163,7 +144,8 @@ Notes:
 ## 7. Tile Engine & Prefetch Strategy
 
 ### 7.1 Tile Grid
-- Tile size: 64x64 or 128x128 (experiment-driven).
+- Current tile size: 64x64 (see `desktop/src/quic/mod.rs`).
+- 128x128 is a possible future option if profiling shows it improves throughput.
 - Grid over **full logical framebuffer** (not ROI only).
 
 ### 7.2 Prefetch Rings
@@ -199,12 +181,12 @@ Coordinate mapping:
 ## 9. Compression & Performance
 
 - Raw: fastest, large bandwidth.
-- Zlib: lossless, CPU heavy.
-- LZ4: fast compression, moderate ratio.
+- Zlib: lossless, CPU heavy. (current optional compression)
+- LZ4: fast compression, moderate ratio. (planned; not implemented)
 
-Heuristic:
-- Small tiles -> raw
-- Large or busy tiles -> lz4/zlib
+Heuristic (current vs planned):
+- Current: raw by default; zlib when payload > max datagram and compression wins.
+- Planned: consider lz4/zlib for large or busy tiles.
 
 CPU budget:
 - ROI encoding should be done in worker threads.
