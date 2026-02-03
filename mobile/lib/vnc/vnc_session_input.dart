@@ -394,6 +394,27 @@ extension _VncSessionInput on _VncSessionScreenState {
     return frameAspect.toDouble();
   }
 
+  int _maxStreamPixels(bool isLandscape) {
+    if (_dataSaverEnabled) {
+      return isLandscape ? 1400000 : 1800000;
+    }
+    if (_isFullscreen && isLandscape) {
+      return 1800000;
+    }
+    if (_isFullscreen) {
+      return 2400000;
+    }
+    return 3200000;
+  }
+
+  double _effectiveStreamDpr(double dpr, bool isLandscape) {
+    if (!_isFullscreen) {
+      return dpr;
+    }
+    final cap = isLandscape ? 2.0 : 2.5;
+    return dpr > cap ? cap : dpr;
+  }
+
   Size? _preferredStreamSize() {
     if (!mounted) {
       return null;
@@ -413,7 +434,12 @@ extension _VncSessionInput on _VncSessionScreenState {
         aspect = display.width / display.height;
       }
     }
-    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final orientation = MediaQuery.of(context).orientation;
+    final isLandscape = orientation == Orientation.landscape;
+    final dpr = _effectiveStreamDpr(
+      MediaQuery.of(context).devicePixelRatio,
+      isLandscape,
+    );
     final zoomFactor = _zoom.clamp(0.7, _zoomMax);
     final display = _availableDisplays.isNotEmpty
         ? _availableDisplays.firstWhere(
@@ -425,23 +451,39 @@ extension _VncSessionInput on _VncSessionScreenState {
         (display?.width ?? 4096) > 0 ? (display?.width ?? 4096) : 4096;
     final maxDisplayHeight =
         (display?.height ?? 4096) > 0 ? (display?.height ?? 4096) : 4096;
+    final maxPixels = _maxStreamPixels(isLandscape);
+    final displayPixels = display == null
+        ? 0
+        : (display.width > 0 && display.height > 0)
+            ? display.width * display.height
+            : 0;
     final preferNative = _zoom > 1.05 &&
         display != null &&
         display.width > 0 &&
-        display.height > 0;
+        display.height > 0 &&
+        displayPixels > 0 &&
+        displayPixels <= maxPixels;
+    final nativeWidth = display?.width ?? 0;
+    final nativeHeight = display?.height ?? 0;
     var targetWidth = preferNative
-        ? display!.width
+        ? nativeWidth
         : (_lastViewSize.width * dpr * zoomFactor)
             .round()
             .clamp(1, maxDisplayWidth);
     var targetHeight = preferNative
-        ? display!.height
+        ? nativeHeight
         : (targetWidth / aspect).round().clamp(1, maxDisplayHeight);
     final viewMaxHeight = (_lastViewSize.height * dpr).round();
     if (zoomFactor <= 1.05 && viewMaxHeight > 0 && targetHeight > viewMaxHeight) {
       targetHeight = viewMaxHeight;
       targetWidth =
           (targetHeight * aspect).round().clamp(1, maxDisplayWidth);
+    }
+    final currentPixels = targetWidth * targetHeight;
+    if (currentPixels > maxPixels && currentPixels > 0) {
+      final scale = math.sqrt(maxPixels / currentPixels);
+      targetWidth = (targetWidth * scale).round().clamp(1, maxDisplayWidth);
+      targetHeight = (targetHeight * scale).round().clamp(1, maxDisplayHeight);
     }
     return Size(targetWidth.toDouble(), targetHeight.toDouble());
   }

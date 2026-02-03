@@ -30,7 +30,9 @@ class WebSocketVncTransport implements VncTransport {
     _channel = WebSocketChannel.connect(uri);
     _subscription = _channel!.stream.listen(
       (event) {
-        if (event is List<int>) {
+        if (event is Uint8List) {
+          _controller.add(event);
+        } else if (event is List<int>) {
           _controller.add(Uint8List.fromList(event));
         } else if (event is String) {
           _controller.add(Uint8List.fromList(event.codeUnits));
@@ -117,7 +119,7 @@ class VncRfbClient {
   final List<int>? preferredEncodings;
 
   StreamSubscription<Uint8List>? _subscription;
-  final List<int> _buffer = [];
+  final _ByteQueue _buffer = _ByteQueue();
   Completer<void>? _waiter;
   bool _handshakeComplete = false;
   bool _closed = false;
@@ -291,7 +293,7 @@ class VncRfbClient {
     if (_closed) {
       return;
     }
-    _buffer.addAll(message);
+    _buffer.add(message);
     _waiter?.complete();
     _waiter = null;
     if (_handshakeComplete) {
@@ -377,40 +379,41 @@ class VncRfbClient {
       if (_buffer.isEmpty) {
         return;
       }
-      final messageType = _buffer[0];
+      final buffer = _buffer;
+      final messageType = buffer[0];
       if (messageType != 0) {
-        _buffer.removeAt(0);
+        buffer.consume(1);
         continue;
       }
-      if (_buffer.length < 4) {
+      if (buffer.length < 4) {
         return;
       }
-      final rectCount = (_buffer[2] << 8) | _buffer[3];
+      final rectCount = (buffer[2] << 8) | buffer[3];
       final updateId = ++_framebufferUpdateId;
       final requestLatency = _computeLatencyMs();
       var offset = 4;
       var updated = false;
       var hasAsyncUpdate = false;
       for (var rect = 0; rect < rectCount; rect += 1) {
-        if (_buffer.length < offset + 12) {
+        if (buffer.length < offset + 12) {
           return;
         }
-        final x = (_buffer[offset] << 8) | _buffer[offset + 1];
-        final y = (_buffer[offset + 2] << 8) | _buffer[offset + 3];
-        final width = (_buffer[offset + 4] << 8) | _buffer[offset + 5];
-        final height = (_buffer[offset + 6] << 8) | _buffer[offset + 7];
+        final x = (buffer[offset] << 8) | buffer[offset + 1];
+        final y = (buffer[offset + 2] << 8) | buffer[offset + 3];
+        final width = (buffer[offset + 4] << 8) | buffer[offset + 5];
+        final height = (buffer[offset + 6] << 8) | buffer[offset + 7];
         final encoding = _decodeEncoding(
-          (_buffer[offset + 8] << 24) |
-              (_buffer[offset + 9] << 16) |
-              (_buffer[offset + 10] << 8) |
-              _buffer[offset + 11],
+          (buffer[offset + 8] << 24) |
+              (buffer[offset + 9] << 16) |
+              (buffer[offset + 10] << 8) |
+              buffer[offset + 11],
         );
         offset += 12;
         if (encoding == _encodingCursor) {
           final pixelBytes = width * height * _bytesPerPixel;
           final maskStride = (width + 7) ~/ 8;
           final maskBytes = maskStride * height;
-          if (_buffer.length < offset + pixelBytes + maskBytes) {
+          if (buffer.length < offset + pixelBytes + maskBytes) {
             return;
           }
           if (width == 0 || height == 0) {
@@ -419,13 +422,10 @@ class VncRfbClient {
             continue;
           }
           final pixels = Uint8List.fromList(
-            _buffer.sublist(offset, offset + pixelBytes),
+            buffer.view(offset, offset + pixelBytes),
           );
           final mask = Uint8List.fromList(
-            _buffer.sublist(
-              offset + pixelBytes,
-              offset + pixelBytes + maskBytes,
-            ),
+            buffer.view(offset + pixelBytes, offset + pixelBytes + maskBytes),
           );
           offset += pixelBytes + maskBytes;
           final cursorPixels = _decodeCursorPixels(pixels, mask, width, height);
@@ -448,11 +448,11 @@ class VncRfbClient {
         }
         Uint8List rectPixels;
         if (encoding == _encodingCopyRect) {
-          if (_buffer.length < offset + 4) {
+          if (buffer.length < offset + 4) {
             return;
           }
-          final srcX = (_buffer[offset] << 8) | _buffer[offset + 1];
-          final srcY = (_buffer[offset + 2] << 8) | _buffer[offset + 3];
+          final srcX = (buffer[offset] << 8) | buffer[offset + 1];
+          final srcY = (buffer[offset + 2] << 8) | buffer[offset + 3];
           offset += 4;
           if (!_validateRect(srcX, srcY, width, height)) {
             onError('Invalid VNC CopyRect source.');
@@ -463,23 +463,26 @@ class VncRfbClient {
           updated = true;
           continue;
         } else if (encoding == _encodingZrle) {
-          if (_buffer.length < offset + 4) {
+          if (buffer.length < offset + 4) {
             return;
           }
-          final dataLength = (_buffer[offset] << 24) |
-              (_buffer[offset + 1] << 16) |
-              (_buffer[offset + 2] << 8) |
-              _buffer[offset + 3];
-          if (dataLength < 0 || _buffer.length < offset + 4 + dataLength) {
+          final dataLength = (buffer[offset] << 24) |
+              (buffer[offset + 1] << 16) |
+              (buffer[offset + 2] << 8) |
+              buffer[offset + 3];
+          if (dataLength < 0 || buffer.length < offset + 4 + dataLength) {
             return;
           }
-          final compressed =
-              _buffer.sublist(offset + 4, offset + 4 + dataLength);
+          final compressed = buffer.view(
+            offset + 4,
+            offset + 4 + dataLength,
+          );
           Uint8List decoded;
           try {
-            decoded = Uint8List.fromList(
-              ZLibDecoder().decodeBytes(compressed),
-            );
+            final decodedRaw = ZLibDecoder().decodeBytes(compressed);
+            decoded = decodedRaw is Uint8List
+                ? decodedRaw
+                : Uint8List.fromList(decodedRaw);
           } catch (error) {
             onError('VNC ZRLE decode failed: $error');
             close();
@@ -498,11 +501,20 @@ class VncRfbClient {
             close();
             return;
           }
-          _blitRect(rectPixels, x, y, width, height);
+          _blitRect(
+            rectPixels,
+            x,
+            y,
+            width,
+            height,
+            inputBytesPerPixel: _bytesPerPixel,
+            allowSwap: true,
+          );
           updated = true;
           continue;
         } else if (encoding == _encodingTight) {
           final nextOffset = _tryDecodeTightRect(
+            buffer,
             offset,
             x,
             y,
@@ -528,34 +540,37 @@ class VncRfbClient {
           return;
         }
         if (encoding == _encodingRaw) {
-          if (_buffer.length < offset + bytesNeeded) {
+          if (buffer.length < offset + bytesNeeded) {
             return;
           }
-          rectPixels = Uint8List.fromList(
-            _buffer.sublist(offset, offset + bytesNeeded),
-          );
+          rectPixels = buffer.view(offset, offset + bytesNeeded);
           offset += bytesNeeded;
         } else if (encoding == _encodingZlib) {
-          if (_buffer.length < offset + 4) {
+          if (buffer.length < offset + 4) {
             return;
           }
-          final dataLength = (_buffer[offset] << 24) |
-              (_buffer[offset + 1] << 16) |
-              (_buffer[offset + 2] << 8) |
-              _buffer[offset + 3];
-          if (dataLength < 0 || _buffer.length < offset + 4 + dataLength) {
+          final dataLength = (buffer[offset] << 24) |
+              (buffer[offset + 1] << 16) |
+              (buffer[offset + 2] << 8) |
+              buffer[offset + 3];
+          if (dataLength < 0 || buffer.length < offset + 4 + dataLength) {
             return;
           }
-          final compressed =
-              _buffer.sublist(offset + 4, offset + 4 + dataLength);
+          final compressed = buffer.view(
+            offset + 4,
+            offset + 4 + dataLength,
+          );
           try {
-            final decoded = ZLibDecoder().decodeBytes(compressed);
+            final decodedRaw = ZLibDecoder().decodeBytes(compressed);
+            final decoded = decodedRaw is Uint8List
+                ? decodedRaw
+                : Uint8List.fromList(decodedRaw);
             if (decoded.length < bytesNeeded) {
               onError('VNC zlib frame truncated.');
               close();
               return;
             }
-            rectPixels = Uint8List.fromList(decoded);
+            rectPixels = decoded;
           } catch (error) {
             onError('VNC zlib decode failed: $error');
             close();
@@ -567,10 +582,18 @@ class VncRfbClient {
           close();
           return;
         }
-        _blitRect(rectPixels, x, y, width, height);
+        _blitRect(
+          rectPixels,
+          x,
+          y,
+          width,
+          height,
+          inputBytesPerPixel: _bytesPerPixel,
+          allowSwap: encoding != _encodingRaw,
+        );
         updated = true;
       }
-      _buffer.removeRange(0, offset);
+      buffer.consume(offset);
       if (updated && !hasAsyncUpdate) {
         onFrame(
           VncFrame(
@@ -614,8 +637,24 @@ class VncRfbClient {
     int width,
     int height, {
     int? inputBytesPerPixel,
+    bool allowSwap = false,
   }) {
     final inputBpp = inputBytesPerPixel ?? _bytesPerPixel;
+    if (inputBpp == _outputBytesPerPixel &&
+        x == 0 &&
+        y == 0 &&
+        width == _width &&
+        height == _height) {
+      final expected = width * height * inputBpp;
+      if (rectPixels.length >= expected) {
+        if (allowSwap && rectPixels.length == _framebuffer.length) {
+          _framebuffer = rectPixels;
+        } else {
+          _framebuffer.setRange(0, expected, rectPixels);
+        }
+        return;
+      }
+    }
     final sourceStride = width * inputBpp;
     final outputStride = _width * _outputBytesPerPixel;
     if (inputBpp == _outputBytesPerPixel) {
@@ -654,6 +693,7 @@ class VncRfbClient {
   }
 
   _TightDecodeResult? _tryDecodeTightRect(
+    _ByteQueue buffer,
     int offset,
     int x,
     int y,
@@ -663,18 +703,18 @@ class VncRfbClient {
     int? requestLatency,
   ) {
     var cursor = offset;
-    if (_buffer.length < cursor + 1) {
+    if (buffer.length < cursor + 1) {
       return null;
     }
-    final control = _buffer[cursor++];
+    final control = buffer[cursor++];
     final compressionType = control >> 4;
     final hasExplicitFilter = (control & 0x40) != 0;
 
     if (compressionType == 0x08) {
-      if (_buffer.length < cursor + _cpixelSize) {
+      if (buffer.length < cursor + _cpixelSize) {
         return null;
       }
-      final packed = _readPackedCpixelFromBuffer(cursor);
+      final packed = _readPackedCpixelFromBuffer(buffer, cursor);
       cursor += _cpixelSize;
       final rectPixels = Uint8List(width * height * _bytesPerPixel);
       for (var row = 0; row < height; row += 1) {
@@ -684,21 +724,29 @@ class VncRfbClient {
           outIndex += _bytesPerPixel;
         }
       }
-      _blitRect(rectPixels, x, y, width, height);
+      _blitRect(
+        rectPixels,
+        x,
+        y,
+        width,
+        height,
+        inputBytesPerPixel: _bytesPerPixel,
+        allowSwap: true,
+      );
       return _TightDecodeResult(cursor, false);
     }
 
     if (compressionType == 0x09) {
-      final lengthResult = _readCompactLength(cursor);
+      final lengthResult = _readCompactLength(buffer, cursor);
       if (lengthResult == null) {
         return null;
       }
       cursor = lengthResult.nextOffset;
-      if (_buffer.length < cursor + lengthResult.length) {
+      if (buffer.length < cursor + lengthResult.length) {
         return null;
       }
       final jpegData = Uint8List.fromList(
-        _buffer.sublist(cursor, cursor + lengthResult.length),
+        buffer.view(cursor, cursor + lengthResult.length),
       );
       cursor += lengthResult.length;
       _registerPendingJpeg(updateId, requestLatency);
@@ -714,26 +762,26 @@ class VncRfbClient {
 
     var filterId = 0;
     if (hasExplicitFilter) {
-      if (_buffer.length < cursor + 1) {
+      if (buffer.length < cursor + 1) {
         return null;
       }
-      filterId = _buffer[cursor++];
+      filterId = buffer[cursor++];
     }
 
     List<int>? palette;
     var expectedLen = 0;
     var monoBitmap = false;
     if (hasExplicitFilter && filterId == 1) {
-      if (_buffer.length < cursor + 1) {
+      if (buffer.length < cursor + 1) {
         return null;
       }
-      final paletteSize = _buffer[cursor++] + 1;
+      final paletteSize = buffer[cursor++] + 1;
       final paletteBytes = paletteSize * _cpixelSize;
-      if (_buffer.length < cursor + paletteBytes) {
+      if (buffer.length < cursor + paletteBytes) {
         return null;
       }
       final paletteRaw =
-          Uint8List.fromList(_buffer.sublist(cursor, cursor + paletteBytes));
+          buffer.view(cursor, cursor + paletteBytes);
       cursor += paletteBytes;
       palette = List<int>.filled(paletteSize, 0);
       var palOffset = 0;
@@ -758,26 +806,27 @@ class VncRfbClient {
 
     Uint8List payload;
     if (expectedLen < 12) {
-      if (_buffer.length < cursor + expectedLen) {
+      if (buffer.length < cursor + expectedLen) {
         return null;
       }
-      payload = Uint8List.fromList(_buffer.sublist(cursor, cursor + expectedLen));
+      payload = buffer.view(cursor, cursor + expectedLen);
       cursor += expectedLen;
     } else {
-      final lengthResult = _readCompactLength(cursor);
+      final lengthResult = _readCompactLength(buffer, cursor);
       if (lengthResult == null) {
         return null;
       }
       cursor = lengthResult.nextOffset;
-      if (_buffer.length < cursor + lengthResult.length) {
+      if (buffer.length < cursor + lengthResult.length) {
         return null;
       }
-      final rawData = Uint8List.fromList(
-        _buffer.sublist(cursor, cursor + lengthResult.length),
-      );
+      final rawData = buffer.view(cursor, cursor + lengthResult.length);
       cursor += lengthResult.length;
       try {
-        payload = Uint8List.fromList(ZLibDecoder().decodeBytes(rawData));
+        final decodedRaw = ZLibDecoder().decodeBytes(rawData);
+        payload = decodedRaw is Uint8List
+            ? decodedRaw
+            : Uint8List.fromList(decodedRaw);
       } catch (error) {
         if (rawData.length == expectedLen) {
           payload = rawData;
@@ -831,19 +880,27 @@ class VncRfbClient {
       }
     }
 
-      _blitRect(rectPixels, x, y, width, height);
+    _blitRect(
+      rectPixels,
+      x,
+      y,
+      width,
+      height,
+      inputBytesPerPixel: _bytesPerPixel,
+      allowSwap: true,
+    );
     return _TightDecodeResult(cursor, false);
   }
 
-  _CompactLength? _readCompactLength(int offset) {
+  _CompactLength? _readCompactLength(_ByteQueue buffer, int offset) {
     var cursor = offset;
     var result = 0;
     var shift = 0;
     for (var i = 0; i < 3; i += 1) {
-      if (_buffer.length <= cursor) {
+      if (buffer.length <= cursor) {
         return null;
       }
-      final byte = _buffer[cursor++];
+      final byte = buffer[cursor++];
       result |= (byte & 0x7f) << shift;
       if (byte & 0x80 == 0) {
         return _CompactLength(result, cursor);
@@ -853,8 +910,8 @@ class VncRfbClient {
     return _CompactLength(result, cursor);
   }
 
-  int _readPackedCpixelFromBuffer(int offset) {
-    return _readPackedPixelFromList(_buffer, offset, _cpixelSize);
+  int _readPackedCpixelFromBuffer(_ByteQueue buffer, int offset) {
+    return _readPackedPixelFromQueue(buffer, offset, _cpixelSize);
   }
 
   void _decodeTightJpegRect(
@@ -884,33 +941,36 @@ class VncRfbClient {
         return;
       }
       final rgba = byteData.buffer.asUint8List();
-      final rectPixels = Uint8List(width * height * _outputBytesPerPixel);
-      var src = 0;
-      var dst = 0;
-      final totalPixels = width * height;
-      for (var i = 0; i < totalPixels; i += 1) {
+      _blitRgbaToFramebuffer(rgba, x, y, width, height);
+      _completePendingJpeg(updateId);
+      image.dispose();
+    });
+  }
+
+  void _blitRgbaToFramebuffer(
+    Uint8List rgba,
+    int x,
+    int y,
+    int width,
+    int height,
+  ) {
+    final outputStride = _width * _outputBytesPerPixel;
+    var src = 0;
+    for (var row = 0; row < height; row += 1) {
+      var dst = (y + row) * outputStride + x * _outputBytesPerPixel;
+      for (var col = 0; col < width; col += 1) {
         final r = rgba[src];
         final g = rgba[src + 1];
         final b = rgba[src + 2];
         final a = rgba[src + 3];
-        rectPixels[dst] = b;
-        rectPixels[dst + 1] = g;
-        rectPixels[dst + 2] = r;
-        rectPixels[dst + 3] = a;
+        _framebuffer[dst] = b;
+        _framebuffer[dst + 1] = g;
+        _framebuffer[dst + 2] = r;
+        _framebuffer[dst + 3] = a;
         src += 4;
         dst += 4;
       }
-      _blitRect(
-        rectPixels,
-        x,
-        y,
-        width,
-        height,
-        inputBytesPerPixel: _outputBytesPerPixel,
-      );
-      _completePendingJpeg(updateId);
-      image.dispose();
-    });
+    }
   }
 
   void _registerPendingJpeg(int updateId, int? requestLatency) {
@@ -1113,37 +1173,41 @@ class VncRfbClient {
     return _readPackedPixelFromBytes(data, offset, _bytesPerPixel);
   }
 
-  int _readPackedPixelFromList(List<int> data, int offset, int bytesPerPixel) {
+  int _readPackedPixelFromQueue(
+    _ByteQueue buffer,
+    int offset,
+    int bytesPerPixel,
+  ) {
     if (bytesPerPixel == 4) {
       if (_bigEndian) {
-        final a = data[offset];
-        final r = data[offset + 1];
-        final g = data[offset + 2];
-        final b = data[offset + 3];
+        final a = buffer[offset];
+        final r = buffer[offset + 1];
+        final g = buffer[offset + 2];
+        final b = buffer[offset + 3];
         return (a << 24) | (r << 16) | (g << 8) | b;
       }
-      final b = data[offset];
-      final g = data[offset + 1];
-      final r = data[offset + 2];
-      final a = data[offset + 3];
+      final b = buffer[offset];
+      final g = buffer[offset + 1];
+      final r = buffer[offset + 2];
+      final a = buffer[offset + 3];
       return (a << 24) | (r << 16) | (g << 8) | b;
     }
     if (bytesPerPixel == 3) {
       if (_bigEndian) {
-        final r = data[offset];
-        final g = data[offset + 1];
-        final b = data[offset + 2];
+        final r = buffer[offset];
+        final g = buffer[offset + 1];
+        final b = buffer[offset + 2];
         return (0xff << 24) | (r << 16) | (g << 8) | b;
       }
-      final b = data[offset];
-      final g = data[offset + 1];
-      final r = data[offset + 2];
+      final b = buffer[offset];
+      final g = buffer[offset + 1];
+      final r = buffer[offset + 2];
       return (0xff << 24) | (r << 16) | (g << 8) | b;
     }
     if (bytesPerPixel == 2) {
       final value = _bigEndian
-          ? ((data[offset] << 8) | data[offset + 1])
-          : ((data[offset + 1] << 8) | data[offset]);
+          ? ((buffer[offset] << 8) | buffer[offset + 1])
+          : ((buffer[offset + 1] << 8) | buffer[offset]);
       return _decodePackedValue(value);
     }
     return 0;
@@ -1359,8 +1423,8 @@ class VncRfbClient {
       _waiter = Completer<void>();
       await _waiter!.future;
     }
-    final data = _buffer.sublist(0, length);
-    _buffer.removeRange(0, length);
+    final data = Uint8List.fromList(_buffer.view(0, length));
+    _buffer.consume(length);
     return data;
   }
 
@@ -1422,6 +1486,87 @@ class VncRfbClient {
       return;
     }
     transport.send(payload);
+  }
+}
+
+class _ByteQueue {
+  _ByteQueue([int initialCapacity = 0])
+      : _buffer = Uint8List(initialCapacity);
+
+  Uint8List _buffer;
+  int _start = 0;
+  int _end = 0;
+
+  int get length => _end - _start;
+  bool get isEmpty => length == 0;
+
+  int operator [](int index) => _buffer[_start + index];
+
+  Uint8List view(int start, int end) {
+    return Uint8List.sublistView(
+      _buffer,
+      _start + start,
+      _start + end,
+    );
+  }
+
+  void add(Uint8List data) {
+    if (data.isEmpty) {
+      return;
+    }
+    if (_buffer.isEmpty) {
+      final capacity = data.length < 1024 ? 1024 : data.length;
+      _buffer = Uint8List(capacity);
+    }
+    final required = length + data.length;
+    if (_start > 0 && _end + data.length > _buffer.length) {
+      _compact();
+    }
+    if (_end + data.length > _buffer.length) {
+      var newLength = _buffer.length == 0 ? 1024 : _buffer.length;
+      while (newLength < required) {
+        newLength = newLength < 1024 ? 1024 : newLength * 2;
+      }
+      final next = Uint8List(newLength);
+      if (length > 0) {
+        next.setRange(0, length, _buffer, _start);
+      }
+      _buffer = next;
+      _end = length;
+      _start = 0;
+    }
+    _buffer.setRange(_end, _end + data.length, data);
+    _end += data.length;
+  }
+
+  void consume(int count) {
+    if (count <= 0) {
+      return;
+    }
+    if (count >= length) {
+      _start = 0;
+      _end = 0;
+      return;
+    }
+    _start += count;
+    if (_start > _buffer.length ~/ 2) {
+      _compact();
+    }
+  }
+
+  void _compact() {
+    if (_start == 0) {
+      return;
+    }
+    if (_start >= _end) {
+      _start = 0;
+      _end = 0;
+      return;
+    }
+    final len = length;
+    _buffer.setRange(0, len, _buffer, _start);
+    _start = 0;
+    _end = len;
   }
 }
 

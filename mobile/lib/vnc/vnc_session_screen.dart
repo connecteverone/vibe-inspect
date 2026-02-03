@@ -131,6 +131,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
   bool _debugPanelOpen = false;
   bool _debugPanelVisible = false;
   ui.Image? _frameImage;
+  Uint8List? _frameDecodeBuffer;
   ui.Image? _cursorImage;
   Size _cursorSize = Size.zero;
   Offset _cursorHotspot = Offset.zero;
@@ -750,6 +751,16 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     );
   }
 
+  Uint8List _acquireFrameDecodeBuffer(int length) {
+    final buffer = _frameDecodeBuffer;
+    if (buffer == null || buffer.length != length) {
+      final next = Uint8List(length);
+      _frameDecodeBuffer = next;
+      return next;
+    }
+    return buffer;
+  }
+
   void _handleFrame(VncFrame frame) {
     if (!mounted || _isDisposed) {
       return;
@@ -767,11 +778,14 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
     _pendingFrame = null;
     final pixels = frame.pixels;
     final expectedLength = frame.width * frame.height * 4;
-    final safePixels = Uint8List(expectedLength);
+    final safePixels = _acquireFrameDecodeBuffer(expectedLength);
     if (pixels.length >= expectedLength) {
       safePixels.setRange(0, expectedLength, pixels);
     } else {
       safePixels.setRange(0, pixels.length, pixels);
+      if (pixels.length < expectedLength) {
+        safePixels.fillRange(pixels.length, expectedLength, 0);
+      }
     }
     ui.decodeImageFromPixels(
       safePixels,

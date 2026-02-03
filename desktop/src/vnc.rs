@@ -1128,6 +1128,9 @@ fn extract_frame(frame: &[u8], stride: usize, width: usize, height: usize) -> Op
     if expected == 0 || frame.len() < stride.saturating_mul(height) {
         return None;
     }
+    if stride == width.saturating_mul(4) && frame.len() >= expected {
+        return Some(frame[..expected].to_vec());
+    }
     let mut data = vec![0u8; expected];
     for y in 0..height {
         let src_start = y * stride;
@@ -1295,13 +1298,47 @@ fn diff_rect_with_threshold(
     if full_area == 0 {
         return DiffOutcome::None;
     }
+    let row_bytes = width.saturating_mul(4);
+    if full_area >= 640usize.saturating_mul(360) && row_bytes > 0 {
+        let sample_rows = 6usize;
+        let sample_cols = 8usize;
+        let mut changed = 0usize;
+        let mut total = 0usize;
+        for ry in 0..sample_rows {
+            let y = if sample_rows <= 1 {
+                0
+            } else {
+                ry.saturating_mul(height.saturating_sub(1)) / (sample_rows - 1)
+            };
+            let row_start = y.saturating_mul(row_bytes);
+            for rx in 0..sample_cols {
+                let x = if sample_cols <= 1 {
+                    0
+                } else {
+                    rx.saturating_mul(width.saturating_sub(1)) / (sample_cols - 1)
+                };
+                let idx = row_start.saturating_add(x.saturating_mul(4));
+                if idx + 4 <= current.len() && idx + 4 <= previous.len() {
+                    if current[idx..idx + 4] != previous[idx..idx + 4] {
+                        changed += 1;
+                    }
+                    total += 1;
+                }
+            }
+        }
+        if total > 0 {
+            let ratio = changed as f32 / total as f32;
+            if ratio >= 0.6 {
+                return DiffOutcome::Full;
+            }
+        }
+    }
     let threshold_area = ((full_area as f32) * threshold).ceil() as usize;
     let mut min_x = width;
     let mut min_y = height;
     let mut max_x = 0usize;
     let mut max_y = 0usize;
     let mut changed = false;
-    let row_bytes = width * 4;
     for y in 0..height {
         let row_start = y * row_bytes;
         let row_end = row_start + row_bytes;

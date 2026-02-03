@@ -413,7 +413,7 @@
     {
       "id": "US-016",
       "title": "Documentation updates and manual test checklist",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-010",
         "US-011"
@@ -426,8 +426,8 @@
         "Negative: docs must explicitly state localhost-only binding by default"
       ],
       "startedAt": "2026-02-01T20:20:10.946244+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-02-01T20:20:10.946360+00:00"
+      "completedAt": "2026-02-01T20:29:15.581011+00:00",
+      "updatedAt": "2026-02-01T20:29:15.580916+00:00"
     }
   ]
 }

@@ -262,7 +262,7 @@ class VncQuicTransport implements VncTransport {
         if (_controller.isClosed || !_running) {
           return;
         }
-        _controller.add(Uint8List.fromList(data));
+        _controller.add(data);
       } catch (_) {
         await Future.delayed(const Duration(milliseconds: 20));
       }

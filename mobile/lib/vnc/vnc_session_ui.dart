@@ -730,6 +730,9 @@ extension _VncSessionUi on _VncSessionScreenState {
         final roiImages = _roiImages;
         final roiRevision = _roiRevision;
         final hasFrame = _frameImage != null;
+        final filterQuality = (isFullscreen && isLandscape)
+            ? FilterQuality.none
+            : (_zoom > 1.01 ? FilterQuality.none : FilterQuality.medium);
         return ClipRRect(
           borderRadius: BorderRadius.circular(isFullscreen ? 0 : 18),
           child: Stack(
@@ -769,16 +772,14 @@ extension _VncSessionUi on _VncSessionScreenState {
                       child: SizedBox(
                         width: _frameSize.width,
                         height: _frameSize.height,
-                        child: RawImage(
-                          image: _frameImage,
-                          fit: BoxFit.fill,
-                          filterQuality: _zoom > 1.01
-                              ? FilterQuality.none
-                              : FilterQuality.medium,
-                        ),
+                      child: RawImage(
+                        image: _frameImage,
+                        fit: BoxFit.fill,
+                        filterQuality: filterQuality,
                       ),
                     ),
                   ),
+                ),
                 ),
               if (hasFrame &&
                   _zoom > _roiZoomThreshold &&

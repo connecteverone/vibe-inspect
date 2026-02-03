@@ -3320,4 +3320,398 @@ index 4be74a7bfb2cc12ee1374bea5b35d588042b1dcc..289457de10b0a3161f9495fbf92ebfaf
 thinking
 **Staging and committing final changes**
 exec
-/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect
+/bin/zsh -lc 'git add -A' in /Users/mac/codes/vibe-inspect succeeded in 37ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 603477642372b46409a244608167333e931dee3f..662b609c64c29a38225a9a14d114e0f1a928f326
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -416,7 +416,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 66667c9 feat(api): add agent-backed api explorer
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-16.log
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/docs/terminal_daemon_plan.md b/docs/terminal_daemon_plan.md
+index 4be74a7bfb2cc12ee1374bea5b35d588042b1dcc..289457de10b0a3161f9495fbf92ebfafe8cd556a
+--- a/docs/terminal_daemon_plan.md
++++ b/docs/terminal_daemon_plan.md
+@@ -59,7 +59,7 @@
+ ## WebSocket Protocol (Primary)
+ 
+ ### Connection Discovery
+-terminald writes a discovery file in the OS config directory so any client can find it:
++terminald writes a discovery file in the OS config directory so any client can find it. The intent is to avoid manual configuration while keeping the auth token local to the machine.
+ 
+ Path (examples):
+ - macOS: `~/Library/Application Support/VibeInspect/terminald.json`
+@@ -78,9 +78,17 @@
+ }
+ ```
+ 
+-Clients may override this via environment variables:
+-- `VIBE_CTL_ENDPOINT` (WS URL)
+-- `VIBE_CTL_TOKEN` (auth token)
++Field notes:
++- `ws_url`: WebSocket endpoint. By default terminald binds to localhost only (`127.0.0.1`) and rejects non-localhost connections unless explicitly configured otherwise.
++- `token`: Auth token required on every connection.
++- `version`: Protocol version for compatibility checks.
++- `pid`: terminald process ID for basic health verification.
++- `created_at`: Unix timestamp (seconds) when the discovery file was created.
++- `capabilities`: Feature flags for clients (attach, poll, notifications, etc).
++
++Clients may override discovery via environment variables (useful for CI or alternate configs):
++- `VIBE_CTL_ENDPOINT` (WS URL override)
++- `VIBE_CTL_TOKEN` (auth token override)
+ - `VIBE_CTL_CONFIG` (path to discovery file)
+ 
+ ### Connection
+@@ -955,13 +963,19 @@
+ 5) Persisted summaries:
+    - Restart daemon, ensure `list` contains previous summaries marked exited.
+ 
+-### End-to-End (Manual)
+-1) Desktop agent restart while session active:
+-   - Session keeps running; `vibe-ctl attach` works.
+-2) Mobile view:
+-   - Start via mobile, output appears, resize works.
++### Manual Test Checklist
++Why: these checks confirm sessions survive desktop agent restarts and that the mobile UI remains compatible with the existing payload schema.
++
++1) Desktop agent restart (session continuity):
++   - Start a session via `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40` and attach.
++   - Restart the desktop agent process/app while the session is active.
++   - Expected: `vibe-ctl ls` shows the same session id, `vibe-ctl attach -t <id>` resumes output, and the session keeps running in terminald.
++2) Mobile compatibility (payload + controls):
++   - Start a session from the mobile UI and verify output streaming.
++   - Resize the terminal and send input; ensure output continues without UI errors.
++   - Expected: no schema-related warnings, and the session id matches the one listed by `vibe-ctl ls`.
+ 3) CLI raw mode:
+-   - Verify detach key and window resize handling.
++   - Verify detach key (`Ctrl-b d`) returns to shell and SIGWINCH resize updates the session.
+ 
+ ## Acceptance Checklist (Ship Gate)
+ - [ ] WS protocol matches schema; auth required on all connections.
+
+
+thinking
+**Committing progress status adjustment**
+exec
+/bin/zsh -lc 'git commit -m "chore(ralph): adjust progress status" -m "Align post-commit status with updated run log."' in /Users/mac/codes/vibe-inspect succeeded in 62ms:
+[main bc09353] chore(ralph): adjust progress status
+ Committer: mac <mac@SilvanMacBook-Pro.local>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 647 insertions(+), 1 deletion(-)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 603477642372b46409a244608167333e931dee3f..662b609c64c29a38225a9a14d114e0f1a928f326
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -416,7 +416,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 66667c9 feat(api): add agent-backed api explorer
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-16.log
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/docs/terminal_daemon_plan.md b/docs/terminal_daemon_plan.md
+index 4be74a7bfb2cc12ee1374bea5b35d588042b1dcc..289457de10b0a3161f9495fbf92ebfafe8cd556a
+--- a/docs/terminal_daemon_plan.md
++++ b/docs/terminal_daemon_plan.md
+@@ -59,7 +59,7 @@
+ ## WebSocket Protocol (Primary)
+ 
+ ### Connection Discovery
+-terminald writes a discovery file in the OS config directory so any client can find it:
++terminald writes a discovery file in the OS config directory so any client can find it. The intent is to avoid manual configuration while keeping the auth token local to the machine.
+ 
+ Path (examples):
+ - macOS: `~/Library/Application Support/VibeInspect/terminald.json`
+@@ -78,9 +78,17 @@
+ }
+ ```
+ 
+-Clients may override this via environment variables:
+-- `VIBE_CTL_ENDPOINT` (WS URL)
+-- `VIBE_CTL_TOKEN` (auth token)
++Field notes:
++- `ws_url`: WebSocket endpoint. By default terminald binds to localhost only (`127.0.0.1`) and rejects non-localhost connections unless explicitly configured otherwise.
++- `token`: Auth token required on every connection.
++- `version`: Protocol version for compatibility checks.
++- `pid`: terminald process ID for basic health verification.
++- `created_at`: Unix timestamp (seconds) when the discovery file was created.
++- `capabilities`: Feature flags for clients (attach, poll, notifications, etc).
++
++Clients may override discovery via environment variables (useful for CI or alternate configs):
++- `VIBE_CTL_ENDPOINT` (WS URL override)
++- `VIBE_CTL_TOKEN` (auth token override)
+ - `VIBE_CTL_CONFIG` (path to discovery file)
+ 
+ ### Connection
+@@ -955,13 +963,19 @@
+ 5) Persisted summaries:
+    - Restart daemon, ensure `list` contains previous summaries marked exited.
+ 
+-### End-to-End (Manual)
+-1) Desktop agent restart while session active:
+-   - Session keeps running; `vibe-ctl attach` works.
+-2) Mobile view:
+-   - Start via mobile, output appears, resize works.
++### Manual Test Checklist
++Why: these checks confirm sessions survive desktop agent restarts and that the mobile UI remains compatible with the existing payload schema.
++
++1) Desktop agent restart (session continuity):
++   - Start a session via `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40` and attach.
++   - Restart the desktop agent process/app while the session is active.
++   - Expected: `vibe-ctl ls` shows the same session id, `vibe-ctl attach -t <id>` resumes output, and the session keeps running in terminald.
++2) Mobile compatibility (payload + controls):
++   - Start a session from the mobile UI and verify output streaming.
++   - Resize the terminal and send input; ensure output continues without UI errors.
++   - Expected: no schema-related warnings, and the session id matches the one listed by `vibe-ctl ls`.
+ 3) CLI raw mode:
+-   - Verify detach key and window resize handling.
++   - Verify detach key (`Ctrl-b d`) returns to shell and SIGWINCH resize updates the session.
+ 
+ ## Acceptance Checklist (Ship Gate)
+ - [ ] WS protocol matches schema; auth required on all connections.
+
+
+thinking
+**Confirming final clean working tree**
+
+I'm running a last git status to verify the final state despite it updating the run log and causing a dirty flag, to ensure the working tree is confirmed clean after the commit.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/mac/codes/vibe-inspect succeeded in 48ms:
+ M .ralph/runs/run-20260201-231810-31541-iter-16.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 603477642372b46409a244608167333e931dee3f..662b609c64c29a38225a9a14d114e0f1a928f326
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -416,7 +416,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 66667c9 feat(api): add agent-backed api explorer
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-16.log
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/docs/terminal_daemon_plan.md b/docs/terminal_daemon_plan.md
+index 4be74a7bfb2cc12ee1374bea5b35d588042b1dcc..289457de10b0a3161f9495fbf92ebfafe8cd556a
+--- a/docs/terminal_daemon_plan.md
++++ b/docs/terminal_daemon_plan.md
+@@ -59,7 +59,7 @@
+ ## WebSocket Protocol (Primary)
+ 
+ ### Connection Discovery
+-terminald writes a discovery file in the OS config directory so any client can find it:
++terminald writes a discovery file in the OS config directory so any client can find it. The intent is to avoid manual configuration while keeping the auth token local to the machine.
+ 
+ Path (examples):
+ - macOS: `~/Library/Application Support/VibeInspect/terminald.json`
+@@ -78,9 +78,17 @@
+ }
+ ```
+ 
+-Clients may override this via environment variables:
+-- `VIBE_CTL_ENDPOINT` (WS URL)
+-- `VIBE_CTL_TOKEN` (auth token)
++Field notes:
++- `ws_url`: WebSocket endpoint. By default terminald binds to localhost only (`127.0.0.1`) and rejects non-localhost connections unless explicitly configured otherwise.
++- `token`: Auth token required on every connection.
++- `version`: Protocol version for compatibility checks.
++- `pid`: terminald process ID for basic health verification.
++- `created_at`: Unix timestamp (seconds) when the discovery file was created.
++- `capabilities`: Feature flags for clients (attach, poll, notifications, etc).
++
++Clients may override discovery via environment variables (useful for CI or alternate configs):
++- `VIBE_CTL_ENDPOINT` (WS URL override)
++- `VIBE_CTL_TOKEN` (auth token override)
+ - `VIBE_CTL_CONFIG` (path to discovery file)
+ 
+ ### Connection
+@@ -955,13 +963,19 @@
+ 5) Persisted summaries:
+    - Restart daemon, ensure `list` contains previous summaries marked exited.
+ 
+-### End-to-End (Manual)
+-1) Desktop agent restart while session active:
+-   - Session keeps running; `vibe-ctl attach` works.
+-2) Mobile view:
+-   - Start via mobile, output appears, resize works.
++### Manual Test Checklist
++Why: these checks confirm sessions survive desktop agent restarts and that the mobile UI remains compatible with the existing payload schema.
++
++1) Desktop agent restart (session continuity):
++   - Start a session via `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40` and attach.
++   - Restart the desktop agent process/app while the session is active.
++   - Expected: `vibe-ctl ls` shows the same session id, `vibe-ctl attach -t <id>` resumes output, and the session keeps running in terminald.
++2) Mobile compatibility (payload + controls):
++   - Start a session from the mobile UI and verify output streaming.
++   - Resize the terminal and send input; ensure output continues without UI errors.
++   - Expected: no schema-related warnings, and the session id matches the one listed by `vibe-ctl ls`.
+ 3) CLI raw mode:
+-   - Verify detach key and window resize handling.
++   - Verify detach key (`Ctrl-b d`) returns to shell and SIGWINCH resize updates the session.
+ 
+ ## Acceptance Checklist (Ship Gate)
+ - [ ] WS protocol matches schema; auth required on all connections.
+
+
+
+thinking
+**Noting run log auto-updates**
+
+The run log keeps updating after commands, leaving it modified and preventing a fully clean commit state; the final summary will note that only the run log remains uncommitted due to auto-updates.
+thinking
+**Preparing detailed final summary**
+
+I'm consolidating changes, verification results including known analyze failures, build warnings, security/performance review, and git commit info; noting run log file remains modified due to active logging. Next, I'll provide clear sections with explanations, verification, review, repository state, commits, and logical next steps followed by completion signal.
+codex
+Updated the terminal daemon plan documentation to add discovery field notes (including explicit localhost-only default binding), clarify env override intent, and expand the manual test checklist with desktop agent restart + mobile compatibility steps in `docs/terminal_daemon_plan.md`.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `cd mobile && flutter build web` -> PASS (FlutterLoader deprecation + wasm dry-run warnings)
+
+**Review**
+- Security: doc-only updates, no runtime impact.
+- Performance: no code changes.
+- Regression: no behavior changes; checklist validates existing flows.
+
+**Repo State**
+- `git status --porcelain` shows `.ralph/runs/run-20260201-231810-31541-iter-16.log` modified due to ongoing run-log updates.
+
+**Commits**
+- `b7ab0c0 docs(terminald): add discovery notes and checklist`
+- `d6a97ba chore(ralph): update progress log`
+- `bc09353 chore(ralph): adjust progress status`
+
+**Next Steps**
+1. Re-run `flutter analyze` once third_party/flutter_quic build_tool deps are available if a clean analyze is required.
+
+<promise>COMPLETE</promise>
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 603477642372b46409a244608167333e931dee3f..662b609c64c29a38225a9a14d114e0f1a928f326
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -416,7 +416,7 @@
+ - Guardrails reviewed: yes
+ - No-commit run: false
+ - Commit: 66667c9 feat(api): add agent-backed api explorer
+-- Post-commit status: clean
++- Post-commit status: .ralph/runs/run-20260201-231810-31541-iter-16.log
+ - Verification:
+   - Command: cd mobile && flutter test -> PASS
+   - Command: cd mobile && flutter analyze -> PASS
+diff --git a/docs/terminal_daemon_plan.md b/docs/terminal_daemon_plan.md
+index 4be74a7bfb2cc12ee1374bea5b35d588042b1dcc..289457de10b0a3161f9495fbf92ebfafe8cd556a
+--- a/docs/terminal_daemon_plan.md
++++ b/docs/terminal_daemon_plan.md
+@@ -59,7 +59,7 @@
+ ## WebSocket Protocol (Primary)
+ 
+ ### Connection Discovery
+-terminald writes a discovery file in the OS config directory so any client can find it:
++terminald writes a discovery file in the OS config directory so any client can find it. The intent is to avoid manual configuration while keeping the auth token local to the machine.
+ 
+ Path (examples):
+ - macOS: `~/Library/Application Support/VibeInspect/terminald.json`
+@@ -78,9 +78,17 @@
+ }
+ ```
+ 
+-Clients may override this via environment variables:
+-- `VIBE_CTL_ENDPOINT` (WS URL)
+-- `VIBE_CTL_TOKEN` (auth token)
++Field notes:
++- `ws_url`: WebSocket endpoint. By default terminald binds to localhost only (`127.0.0.1`) and rejects non-localhost connections unless explicitly configured otherwise.
++- `token`: Auth token required on every connection.
++- `version`: Protocol version for compatibility checks.
++- `pid`: terminald process ID for basic health verification.
++- `created_at`: Unix timestamp (seconds) when the discovery file was created.
++- `capabilities`: Feature flags for clients (attach, poll, notifications, etc).
++
++Clients may override discovery via environment variables (useful for CI or alternate configs):
++- `VIBE_CTL_ENDPOINT` (WS URL override)
++- `VIBE_CTL_TOKEN` (auth token override)
+ - `VIBE_CTL_CONFIG` (path to discovery file)
+ 
+ ### Connection
+@@ -955,13 +963,19 @@
+ 5) Persisted summaries:
+    - Restart daemon, ensure `list` contains previous summaries marked exited.
+ 
+-### End-to-End (Manual)
+-1) Desktop agent restart while session active:
+-   - Session keeps running; `vibe-ctl attach` works.
+-2) Mobile view:
+-   - Start via mobile, output appears, resize works.
++### Manual Test Checklist
++Why: these checks confirm sessions survive desktop agent restarts and that the mobile UI remains compatible with the existing payload schema.
++
++1) Desktop agent restart (session continuity):
++   - Start a session via `vibe-ctl new -s build --cwd ~/repo --cols 140 --rows 40` and attach.
++   - Restart the desktop agent process/app while the session is active.
++   - Expected: `vibe-ctl ls` shows the same session id, `vibe-ctl attach -t <id>` resumes output, and the session keeps running in terminald.
++2) Mobile compatibility (payload + controls):
++   - Start a session from the mobile UI and verify output streaming.
++   - Resize the terminal and send input; ensure output continues without UI errors.
++   - Expected: no schema-related warnings, and the session id matches the one listed by `vibe-ctl ls`.
+ 3) CLI raw mode:
+-   - Verify detach key and window resize handling.
++   - Verify detach key (`Ctrl-b d`) returns to shell and SIGWINCH resize updates the session.
+ 
+ ## Acceptance Checklist (Ship Gate)
+ - [ ] WS protocol matches schema; auth required on all connections.
+
+tokens used
+124,867
+Updated the terminal daemon plan documentation to add discovery field notes (including explicit localhost-only default binding), clarify env override intent, and expand the manual test checklist with desktop agent restart + mobile compatibility steps in `docs/terminal_daemon_plan.md`.
+
+**Verification**
+- `cd mobile && flutter test` -> PASS
+- `cd mobile && flutter analyze` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `./scripts/flutter_test.sh` -> PASS
+- `./scripts/flutter_analyze.sh` -> FAIL (third_party/flutter_quic build_tool deps missing)
+- `cd mobile && flutter build web` -> PASS (FlutterLoader deprecation + wasm dry-run warnings)
+
+**Review**
+- Security: doc-only updates, no runtime impact.
+- Performance: no code changes.
+- Regression: no behavior changes; checklist validates existing flows.
+
+**Repo State**
+- `git status --porcelain` shows `.ralph/runs/run-20260201-231810-31541-iter-16.log` modified due to ongoing run-log updates.
+
+**Commits**
+- `b7ab0c0 docs(terminald): add discovery notes and checklist`
+- `d6a97ba chore(ralph): update progress log`
+- `bc09353 chore(ralph): adjust progress status`
+
+**Next Steps**
+1. Re-run `flutter analyze` once third_party/flutter_quic build_tool deps are available if a clean analyze is required.
+
+<promise>COMPLETE</promise>
