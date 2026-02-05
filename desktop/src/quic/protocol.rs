@@ -183,3 +183,32 @@ pub struct VncError {
     pub message: String,
     pub retry_after: Option<u64>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RemoteHello {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub session_id: String,
+    pub token: String,
+    pub auth_token: Option<String>,
+    pub client_id: Option<String>,
+    pub client_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RemoteReady {
+    pub status: String,
+    pub session_id: String,
+    pub data_stream: String,
+    pub codec_preference: Option<String>,
+    pub hwcodec: Option<bool>,
+    pub idle_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RemoteError {
+    pub status: String,
+    pub code: String,
+    pub message: String,
+    pub retry_after: Option<u64>,
+}

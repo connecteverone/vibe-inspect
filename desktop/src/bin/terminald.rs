@@ -180,7 +180,7 @@ impl OutboundQueue {
         if self.items.is_empty() {
             return 0;
         }
-        let mut removed_bytes = 0;
+        let mut removed_bytes: usize = 0;
         let mut retained = VecDeque::with_capacity(self.items.len());
         while let Some(message) = self.items.pop_front() {
             let matches_session = session_id
@@ -205,6 +205,7 @@ struct BackpressureState {
 }
 
 #[derive(Debug)]
+#[derive(PartialEq)]
 enum EnqueueResult {
     Enqueued,
     Dropped,
@@ -781,7 +782,7 @@ async fn handle_request(
             };
             let request = TerminalActionRequest {
                 action: "poll".to_string(),
-                session_id: Some(session_id),
+                session_id: Some(session_id.clone()),
                 label: None,
                 input: None,
                 input_bytes: None,
@@ -847,7 +848,7 @@ async fn handle_request(
             };
             let request = TerminalActionRequest {
                 action: "status".to_string(),
-                session_id: Some(session_id),
+                session_id: Some(session_id.clone()),
                 label: None,
                 input: None,
                 input_bytes: None,
@@ -930,7 +931,7 @@ async fn handle_request(
             };
             let request = TerminalActionRequest {
                 action: "input".to_string(),
-                session_id: Some(session_id),
+                session_id: Some(session_id.clone()),
                 label: None,
                 input: None,
                 input_bytes,

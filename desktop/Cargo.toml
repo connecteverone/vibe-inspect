@@ -3,6 +3,14 @@ name = "desktop"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["rustdesk-backend"]
+rustdesk-backend = ["dep:rustdesk", "dep:hbb_common"]
+rustdesk-hwcodec = ["rustdesk-backend", "rustdesk/hwcodec", "scrap/hwcodec"]
+
+[patch."https://github.com/rustdesk-org/hwcodec"]
+hwcodec = { path = "../third_party/hwcodec" }
+
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
@@ -17,7 +25,7 @@ axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tower-http = { version = "0.5", features = ["cors"] }
-scrap = "0.5"
+scrap = { path = "../third_party/rustdesk/libs/scrap" }
 enigo = "0.1"
 flate2 = "1"
 rfb-encodings = "0.1"
@@ -33,6 +41,8 @@ clap = { version = "4.5.56", features = ["derive"] }
 tokio-tungstenite = "0.28.0"
 crossterm = "0.29.0"
 base64 = "0.22"
+rustdesk = { path = "../third_party/rustdesk", default-features = false, features = ["use_dasp"], optional = true }
+hbb_common = { path = "../third_party/rustdesk/libs/hbb_common", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
@@ -54,6 +64,3 @@ tauri-build = { version = "2", features = [] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(x11)"] }
-
-[patch.crates-io]
-scrap = { path = "vendor/scrap" }

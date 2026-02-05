@@ -270,6 +270,101 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
         .then((_) => _loadWorkspace());
   }
 
+  Future<void> _openRemoteView() async {
+    final baseUrl = _agentBaseUrl;
+    if (baseUrl == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Agent URL missing. Re-pair to enable remote control.'),
+        ),
+      );
+      return;
+    }
+    final existingSession = _sessions.firstWhere(
+      (session) => session.type == 'remote',
+      orElse: () => ToolSession(
+        id: '',
+        type: 'remote',
+        label: '',
+        status: 'queued',
+        createdAt: DateTime.now(),
+      ),
+    );
+    final now = DateTime.now();
+    final session = existingSession.id.isEmpty
+        ? ToolSession(
+            id: createStorageId(),
+            type: 'remote',
+            label: 'Remote Control',
+            status: 'queued',
+            agentId: _activeAgent.id,
+            createdAt: now,
+          )
+        : existingSession;
+    if (existingSession.id.isEmpty) {
+      try {
+        await widget.storage.insertToolSession(session);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to create remote session: ${error.toString()}',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    final event = TimelineEvent(
+      id: createStorageId(),
+      sessionId: session.id,
+      type: 'remote',
+      title: 'Remote: ${_agentLabel(_activeAgent)}',
+      payload: {
+        'target': _agentLabel(_activeAgent),
+        'status': 'queued',
+      },
+      createdAt: now,
+    );
+    try {
+      await widget.storage.insertTimelineEvent(event);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start remote: ${error.toString()}'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => RemoteSessionScreen(
+              event: event,
+              session: session,
+              storage: widget.storage,
+              agentBaseUrl: baseUrl,
+              authToken: _activeAgent.token,
+              clientId: widget.clientId,
+              clientName: widget.clientName,
+            ),
+          ),
+        )
+        .then((_) => _loadWorkspace());
+  }
+
   Future<void> _removeActiveAgent() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -383,6 +478,35 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
           .then((_) => _loadWorkspace());
       return;
     }
+    if (session.type == 'remote') {
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => RemoteSessionScreen(
+                event: latestEvent ??
+                    TimelineEvent(
+                      id: createStorageId(),
+                      sessionId: session.id,
+                      type: 'remote',
+                      title: 'Remote: ${_agentLabel(_activeAgent)}',
+                      payload: const {'status': 'queued'},
+                      createdAt: DateTime.now(),
+                    ),
+                session: session,
+                storage: widget.storage,
+                agentBaseUrl: baseUrl,
+                authToken: _activeAgent.token,
+                clientId: widget.clientId,
+                clientName: widget.clientName,
+              ),
+            ),
+          )
+          .then((_) => _loadWorkspace());
+      return;
+    }
     _showMissingContext('This session type is not supported yet.');
   }
 
@@ -415,7 +539,9 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
   List<ToolSession> _visibleSessions() {
     return _sessions
         .where((session) =>
-            session.type != 'pairing' && session.type != 'vnc')
+            session.type != 'pairing' &&
+            session.type != 'vnc' &&
+            session.type != 'remote')
         .toList();
   }
 
@@ -509,7 +635,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
             const SizedBox(height: 16),
             _ContextSectionCard(
               title: 'Actions',
-              subtitle: 'Create sessions or launch the VNC view.',
+              subtitle: 'Create sessions or launch remote control.',
               child: Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -524,11 +650,18 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
                     icon: const Icon(Icons.http),
                     label: const Text('New API request'),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: hasAgentUrl ? _openVncView : null,
-                    icon: const Icon(Icons.desktop_windows_outlined),
-                    label: const Text('Open VNC view'),
-                  ),
+                  if (kEnableRemoteControl)
+                    OutlinedButton.icon(
+                      onPressed: hasAgentUrl ? _openRemoteView : null,
+                      icon: const Icon(Icons.computer_outlined),
+                      label: const Text('Open remote control'),
+                    ),
+                  if (kEnableLegacyVnc)
+                    OutlinedButton.icon(
+                      onPressed: hasAgentUrl ? _openVncView : null,
+                      icon: const Icon(Icons.desktop_windows_outlined),
+                      label: const Text('Open VNC view'),
+                    ),
                 ],
               ),
             ),
@@ -1106,7 +1239,7 @@ class _PairingHeader extends StatelessWidget {
           children: const [
             _FeatureChip(label: 'Multi-agent'),
             _FeatureChip(label: 'Session workspaces'),
-            _FeatureChip(label: 'VNC ready'),
+            _FeatureChip(label: 'Remote ready'),
           ],
         ),
       ],
@@ -2189,4 +2322,3 @@ List<String> _coerceStringList(dynamic raw) {
   }
   return [raw.toString()];
 }
-

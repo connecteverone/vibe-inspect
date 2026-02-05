@@ -15,7 +15,7 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
-		A32D9DF5420554D920CE1A5C /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59631608B1BB368F7D5A9329 /* Pods_Runner.framework */; };
+		BFDC1994114646FAC02697B2 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F4CBD372354456061A1F583D /* Pods_Runner.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -49,7 +49,6 @@
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		4A26BB7B61CE55E773A5F9B5 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
-		59631608B1BB368F7D5A9329 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		65591442B0B71B38768A03D8 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -64,6 +63,7 @@
 		A0FA0376E5289717BFFBA0EE /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		BBA5FBD57B5A67B9B178837A /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		DEEA979D811104842DE214A9 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
+		F4CBD372354456061A1F583D /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		F98029BC88E47A6D5B71FF18 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -80,7 +80,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A32D9DF5420554D920CE1A5C /* Pods_Runner.framework in Frameworks */,
+				BFDC1994114646FAC02697B2 /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -98,8 +98,8 @@
 		3F45C8FBB3D031C85770DB7D /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				59631608B1BB368F7D5A9329 /* Pods_Runner.framework */,
 				BBA5FBD57B5A67B9B178837A /* Pods_RunnerTests.framework */,
+				F4CBD372354456061A1F583D /* Pods_Runner.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -161,7 +161,6 @@
 				1D598F35AB610A39F3D5C28B /* Pods-RunnerTests.release.xcconfig */,
 				DEEA979D811104842DE214A9 /* Pods-RunnerTests.profile.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -471,15 +470,64 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = 43MQPH3RH3;
+				DEVELOPMENT_TEAM = 8GDL8Y3SZ7;
 				ENABLE_BITCODE = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/",
+					"$(HOME)/vcpkg/installed/arm64-ios/lib",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"-Wl,-u,_rustdesk_main_init",
+					"-Wl,-u,_rustdesk_session_add",
+					"-Wl,-u,_rustdesk_session_start_no_ui",
+					"-Wl,-u,_rustdesk_session_close",
+					"-Wl,-u,_rustdesk_quic_connect",
+					"-Wl,-u,_rustdesk_quic_disconnect",
+					"-Wl,-u,_rustdesk_session_get_display_size",
+					"-Wl,-u,_rustdesk_session_set_size",
+					"-Wl,-u,_rustdesk_session_get_rgba_size",
+					"-Wl,-u,_session_get_rgba",
+					"-Wl,-u,_rustdesk_session_next_rgba",
+					"-Wl,-u,_rustdesk_session_send_mouse",
+					"-Wl,-u,_rustdesk_session_login",
+					"-Wl,-u,_rustdesk_session_bootstrap",
+					"-Wl,-u,_rustdesk_session_switch_display",
+					"-l\"c++\"",
+					"-l\"jpeg\"",
+					"-l\"sqlite3\"",
+					"-framework",
+					"\"AVFoundation\"",
+					"-framework",
+					"\"CoreFoundation\"",
+					"-framework",
+					"\"SystemConfiguration\"",
+					"-framework",
+					"\"CoreMedia\"",
+					"-framework",
+					"\"CoreVideo\"",
+					"-framework",
+					"\"ImageIO\"",
+					"-framework",
+					"\"Photos\"",
+					"-framework",
+					"\"QuartzCore\"",
+					"-framework",
+					"\"UIKit\"",
+					"-framework",
+					"\"VideoToolbox\"",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibeinspect.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRIP_STYLE = "non-global";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -654,15 +702,64 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = 43MQPH3RH3;
+				DEVELOPMENT_TEAM = 8GDL8Y3SZ7;
 				ENABLE_BITCODE = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/",
+					"$(HOME)/vcpkg/installed/arm64-ios/lib",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"-Wl,-u,_rustdesk_main_init",
+					"-Wl,-u,_rustdesk_session_add",
+					"-Wl,-u,_rustdesk_session_start_no_ui",
+					"-Wl,-u,_rustdesk_session_close",
+					"-Wl,-u,_rustdesk_quic_connect",
+					"-Wl,-u,_rustdesk_quic_disconnect",
+					"-Wl,-u,_rustdesk_session_get_display_size",
+					"-Wl,-u,_rustdesk_session_set_size",
+					"-Wl,-u,_rustdesk_session_get_rgba_size",
+					"-Wl,-u,_session_get_rgba",
+					"-Wl,-u,_rustdesk_session_next_rgba",
+					"-Wl,-u,_rustdesk_session_send_mouse",
+					"-Wl,-u,_rustdesk_session_login",
+					"-Wl,-u,_rustdesk_session_bootstrap",
+					"-Wl,-u,_rustdesk_session_switch_display",
+					"-l\"c++\"",
+					"-l\"jpeg\"",
+					"-l\"sqlite3\"",
+					"-framework",
+					"\"AVFoundation\"",
+					"-framework",
+					"\"CoreFoundation\"",
+					"-framework",
+					"\"SystemConfiguration\"",
+					"-framework",
+					"\"CoreMedia\"",
+					"-framework",
+					"\"CoreVideo\"",
+					"-framework",
+					"\"ImageIO\"",
+					"-framework",
+					"\"Photos\"",
+					"-framework",
+					"\"QuartzCore\"",
+					"-framework",
+					"\"UIKit\"",
+					"-framework",
+					"\"VideoToolbox\"",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibeinspect.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRIP_STYLE = "non-global";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -677,15 +774,63 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = 43MQPH3RH3;
+				DEVELOPMENT_TEAM = 8GDL8Y3SZ7;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/",
+					"$(HOME)/vcpkg/installed/arm64-ios/lib",
+				);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../../third_party/rustdesk/target/aarch64-apple-ios/release/liblibrustdesk.a",
+					"-Wl,-u,_rustdesk_main_init",
+					"-Wl,-u,_rustdesk_session_add",
+					"-Wl,-u,_rustdesk_session_start_no_ui",
+					"-Wl,-u,_rustdesk_session_close",
+					"-Wl,-u,_rustdesk_quic_connect",
+					"-Wl,-u,_rustdesk_quic_disconnect",
+					"-Wl,-u,_rustdesk_session_get_display_size",
+					"-Wl,-u,_rustdesk_session_set_size",
+					"-Wl,-u,_rustdesk_session_get_rgba_size",
+					"-Wl,-u,_session_get_rgba",
+					"-Wl,-u,_rustdesk_session_next_rgba",
+					"-Wl,-u,_rustdesk_session_send_mouse",
+					"-Wl,-u,_rustdesk_session_login",
+					"-Wl,-u,_rustdesk_session_bootstrap",
+					"-Wl,-u,_rustdesk_session_switch_display",
+					"-l\"c++\"",
+					"-l\"jpeg\"",
+					"-l\"sqlite3\"",
+					"-framework",
+					"\"AVFoundation\"",
+					"-framework",
+					"\"CoreFoundation\"",
+					"-framework",
+					"\"SystemConfiguration\"",
+					"-framework",
+					"\"CoreMedia\"",
+					"-framework",
+					"\"CoreVideo\"",
+					"-framework",
+					"\"ImageIO\"",
+					"-framework",
+					"\"Photos\"",
+					"-framework",
+					"\"QuartzCore\"",
+					"-framework",
+					"\"UIKit\"",
+					"-framework",
+					"\"VideoToolbox\"",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibeinspect.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRIP_STYLE = "non-global";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";

@@ -557,6 +557,173 @@ class AgentCommandClient {
     final commandPath = basePath.isEmpty ? '/command' : '$basePath/command';
     return base.replace(path: commandPath);
   }
+
+  Future<RemoteSessionInfo> sendRemoteCommand({
+    required String action,
+    String? sessionId,
+    int? width,
+    int? height,
+    int? displayIndex,
+  }) async {
+    final payload = <String, dynamic>{
+      'action': action,
+    };
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      payload['session_id'] = sessionId;
+    }
+    if (width != null) {
+      payload['width'] = width;
+    }
+    if (height != null) {
+      payload['height'] = height;
+    }
+    if (displayIndex != null) {
+      payload['display_index'] = displayIndex;
+    }
+    final response = await _sendCommand(
+      command: 'remote',
+      payload: payload,
+    );
+    final payloadData = response.payload;
+    if (payloadData == null) {
+      throw AgentCommandFailure(
+        'Remote response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
+    }
+    return RemoteSessionInfo.fromPayload(
+      Map<String, dynamic>.from(payloadData),
+    );
+  }
+}
+
+class RemoteSessionInfo {
+  const RemoteSessionInfo({
+    required this.sessionId,
+    required this.backend,
+    this.connectUri,
+    this.token,
+    this.displayIndex,
+    this.width,
+    this.height,
+    this.quicPort,
+    this.codecPreference,
+    this.hwcodecEnabled,
+    this.capabilities,
+  });
+
+  final String sessionId;
+  final String backend;
+  final String? connectUri;
+  final String? token;
+  final int? displayIndex;
+  final int? width;
+  final int? height;
+  final int? quicPort;
+  final String? codecPreference;
+  final bool? hwcodecEnabled;
+  final RemoteCodecCapabilities? capabilities;
+
+  factory RemoteSessionInfo.fromPayload(Map<String, dynamic> payload) {
+    final sessionPayload = payload['session'] is Map
+        ? Map<String, dynamic>.from(payload['session'] as Map)
+        : payload;
+    bool? parseBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      if (value is String) {
+        final normalized = value.trim().toLowerCase();
+        if (normalized == 'true' || normalized == 'yes' || normalized == 'y') {
+          return true;
+        }
+        if (normalized == 'false' || normalized == 'no' || normalized == 'n') {
+          return false;
+        }
+        final parsed = int.tryParse(normalized);
+        if (parsed != null) return parsed != 0;
+      }
+      return null;
+    }
+    RemoteCodecCapabilities? capabilities;
+    final capabilitiesPayload = sessionPayload['capabilities'];
+    if (capabilitiesPayload is Map) {
+      capabilities = RemoteCodecCapabilities.fromPayload(
+        Map<String, dynamic>.from(capabilitiesPayload),
+      );
+    }
+    return RemoteSessionInfo(
+      sessionId: sessionPayload['session_id']?.toString() ?? '',
+      backend: sessionPayload['backend']?.toString() ?? 'rustdesk',
+      connectUri: sessionPayload['connect_uri']?.toString(),
+      token: sessionPayload['token']?.toString(),
+      displayIndex: sessionPayload['display_index'] is int
+          ? sessionPayload['display_index'] as int
+          : int.tryParse(sessionPayload['display_index']?.toString() ?? ''),
+      width: sessionPayload['width'] is int
+          ? sessionPayload['width'] as int
+          : int.tryParse(sessionPayload['width']?.toString() ?? ''),
+      height: sessionPayload['height'] is int
+          ? sessionPayload['height'] as int
+          : int.tryParse(sessionPayload['height']?.toString() ?? ''),
+      quicPort: sessionPayload['quic_port'] is int
+          ? sessionPayload['quic_port'] as int
+          : int.tryParse(sessionPayload['quic_port']?.toString() ?? ''),
+      codecPreference: sessionPayload['codec_preference']?.toString(),
+      hwcodecEnabled: parseBool(sessionPayload['hwcodec']),
+      capabilities: capabilities,
+    );
+  }
+}
+
+class RemoteCodecCapabilities {
+  const RemoteCodecCapabilities({
+    required this.h264,
+    required this.h265,
+    required this.av1,
+    required this.zeroCopy,
+  });
+
+  final bool h264;
+  final bool h265;
+  final bool av1;
+  final bool zeroCopy;
+
+  String get summary {
+    final codecs = <String>[];
+    if (h264) codecs.add('H264');
+    if (h265) codecs.add('H265');
+    if (av1) codecs.add('AV1');
+    if (codecs.isEmpty) return 'None';
+    return codecs.join('/');
+  }
+
+  factory RemoteCodecCapabilities.fromPayload(Map<String, dynamic> payload) {
+    bool readBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      if (value is String) {
+        final normalized = value.trim().toLowerCase();
+        if (normalized == 'true' || normalized == 'yes' || normalized == 'y') {
+          return true;
+        }
+        if (normalized == 'false' || normalized == 'no' || normalized == 'n') {
+          return false;
+        }
+        final parsed = int.tryParse(normalized);
+        if (parsed != null) return parsed != 0;
+      }
+      return false;
+    }
+
+    return RemoteCodecCapabilities(
+      h264: readBool(payload['h264']),
+      h265: readBool(payload['h265']),
+      av1: readBool(payload['av1']),
+      zeroCopy: readBool(payload['zero_copy']),
+    );
+  }
 }
 
 class _AgentCommandResponse {
@@ -614,7 +781,7 @@ class _AgentCommandError {
   }
 }
 
-enum CommandTool { api, terminal, ai, vnc }
+enum CommandTool { api, terminal, ai, vnc, remote }
 
 extension CommandToolMetadata on CommandTool {
   String get label {
@@ -627,6 +794,8 @@ extension CommandToolMetadata on CommandTool {
         return 'AI Insight';
       case CommandTool.vnc:
         return 'VNC Viewer';
+      case CommandTool.remote:
+        return 'Remote Control';
     }
   }
 
@@ -640,6 +809,8 @@ extension CommandToolMetadata on CommandTool {
         return 'ai';
       case CommandTool.vnc:
         return 'vnc';
+      case CommandTool.remote:
+        return 'remote';
     }
   }
 }

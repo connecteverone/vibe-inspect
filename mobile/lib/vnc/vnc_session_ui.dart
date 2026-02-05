@@ -712,6 +712,7 @@ extension _VncSessionUi on _VncSessionScreenState {
         if (isInteractive) {
           _maybeAutoResizeStream();
         }
+        final displaySize = _displaySize();
         final pointerScreen = _pointerToScreen(viewSize);
         final targetScreen =
             _isAutoCalibrating && _calibrationTargets.isNotEmpty
@@ -722,7 +723,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                   )
                 : null;
         final translation = _calculateTranslation(viewSize);
-        final scale = _baseScale(viewSize) * _zoom;
+        final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
         final cursorImage = _cursorImage;
         final cursorSize = _cursorSize;
         final cursorHotspot = _cursorHotspot;
@@ -770,16 +771,16 @@ extension _VncSessionUi on _VncSessionScreenState {
                         )
                         ..scaleByDouble(scale, scale, 1, 1),
                       child: SizedBox(
-                        width: _frameSize.width,
-                        height: _frameSize.height,
-                      child: RawImage(
-                        image: _frameImage,
-                        fit: BoxFit.fill,
-                        filterQuality: filterQuality,
+                        width: displaySize.width,
+                        height: displaySize.height,
+                        child: RawImage(
+                          image: _frameImage,
+                          fit: BoxFit.fill,
+                          filterQuality: filterQuality,
+                        ),
                       ),
                     ),
                   ),
-                ),
                 ),
               if (hasFrame &&
                   _zoom > _roiZoomThreshold &&

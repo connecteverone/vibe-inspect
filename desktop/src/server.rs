@@ -25,6 +25,9 @@ use crate::auth::{
     track_client_connection, validate_auth_token, AuthError,
 };
 use crate::roi::{RoiErrorCode, RoiManager, RoiSessionRequest};
+use crate::remote_engine::{RemoteManager, RemoteStartRequest};
+use crate::remote_engine::service::RemoteSessionService;
+use crate::remote_engine::rustdesk::RustDeskBackend;
 use crate::quic::{start_quic_server, QuicServerConfig, QuicServerHandle};
 
 pub struct LocalServerHandle {
@@ -53,6 +56,7 @@ struct LocalServerState {
     pairing: Arc<Mutex<PairingState>>,
     vnc: Arc<Mutex<VncManager>>,
     roi: Arc<Mutex<RoiManager>>,
+    remote: Arc<RemoteSessionService>,
 }
 
 pub fn start_local_server(
@@ -76,6 +80,11 @@ pub fn start_local_server(
     }
     listener.set_nonblocking(true)?;
     let vnc_manager = Arc::new(Mutex::new(VncManager::new()));
+    let remote_manager = Arc::new(Mutex::new(RemoteManager::new()));
+    if let Ok(mut guard) = remote_manager.lock() {
+        guard.set_backend(Box::new(RustDeskBackend::new()));
+    }
+    let remote_service = Arc::new(RemoteSessionService::new(remote_manager.clone()));
     let roi_port = roi_port_override.unwrap_or_else(|| {
         state
             .lock()
@@ -95,6 +104,7 @@ pub fn start_local_server(
         roi: Some(roi_manager.clone()),
         vnc: Some(vnc_manager.clone()),
         pairing: Some(state.clone()),
+        remote: Some(remote_manager.clone()),
     }) {
         Ok(handle) => handle,
         Err(error) => {
@@ -111,6 +121,7 @@ pub fn start_local_server(
         pairing: state,
         vnc: vnc_manager,
         roi: roi_manager,
+        remote: remote_service,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -187,25 +198,32 @@ async fn handle_command(
     };
 
     if request.command == "identity" {
-        let identity = match state.pairing.lock() {
-            Ok(state) => {
-                let local_urls = current_local_urls(&state);
-                let local_ips = current_local_ips();
-                let wifi_ssid = current_wifi_ssid();
-                let frp_url = state.frp_url();
-                json!({
-                    "type": "identity",
-                    "device_id": state.device_id(),
-                    "host_name": state.host_name(),
-                    "auth_token": state.auth_token(),
-                    "wifi_ssid": wifi_ssid,
-                    "local_ips": local_ips,
-                    "local_urls": local_urls,
-                    "frp_url": frp_url,
-                    "roi_quic_port": state.roi_quic_port(),
-                    "listen_port": state.listen_port(),
-                })
-            }
+                let identity = match state.pairing.lock() {
+                    Ok(pairing_guard) => {
+                        let local_urls = current_local_urls(&pairing_guard);
+                        let local_ips = current_local_ips();
+                        let wifi_ssid = current_wifi_ssid();
+                        let frp_url = pairing_guard.frp_url();
+                        let roi_quic_port = state
+                            .roi
+                            .lock()
+                            .map(|guard| guard.quic_port())
+                            .unwrap_or_else(|poison| poison.into_inner().quic_port());
+                        let remote_caps = state.remote.capabilities();
+                        json!({
+                            "type": "identity",
+                            "device_id": pairing_guard.device_id(),
+                            "host_name": pairing_guard.host_name(),
+                            "auth_token": pairing_guard.auth_token(),
+                            "wifi_ssid": wifi_ssid,
+                            "local_ips": local_ips,
+                            "local_urls": local_urls,
+                            "frp_url": frp_url,
+                            "roi_quic_port": roi_quic_port,
+                            "listen_port": pairing_guard.listen_port(),
+                            "remote_capabilities": remote_caps,
+                        })
+                    }
             Err(_) => json!({
                 "type": "identity",
                 "device_id": "",
@@ -227,7 +245,7 @@ async fn handle_command(
     }
 
     if request.command == "vnc" {
-        let response = handle_vnc_command(&request, &state.vnc, &state.pairing);
+        let response = handle_vnc_command(&request, &state.vnc, &state.pairing, &state.roi);
         return (StatusCode::OK, Json(json!(response)));
     }
 
@@ -236,8 +254,152 @@ async fn handle_command(
         return (StatusCode::OK, Json(json!(response)));
     }
 
+    if request.command == "remote" {
+        let response = handle_remote_command(&request, &state.remote, &state.roi);
+        return (StatusCode::OK, Json(json!(response)));
+    }
+
     let response = crate::command::handle_agent_command(request);
     (StatusCode::OK, Json(json!(response)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct RemoteCommandPayload {
+    action: String,
+    session_id: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    display_index: Option<usize>,
+}
+
+fn handle_remote_command(
+    request: &AgentCommandRequest,
+    manager: &Arc<RemoteSessionService>,
+    roi: &Arc<Mutex<RoiManager>>,
+) -> AgentCommandResponse {
+    let payload: RemoteCommandPayload = match request.payload.clone() {
+        Some(payload) => match serde_json::from_value(payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "invalid_payload".to_string(),
+                        message: format!("Invalid payload for remote command: {error}"),
+                        details: Some(json!({ "command": "remote" })),
+                    }),
+                };
+            }
+        },
+        None => {
+            return AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: "missing_payload".to_string(),
+                    message: "Missing payload for remote command.".to_string(),
+                    details: Some(json!({ "command": "remote" })),
+                }),
+            };
+        }
+    };
+
+    match payload.action.as_str() {
+        "start" => match manager.start(RemoteStartRequest {
+            display_index: payload.display_index,
+            width: payload.width,
+            height: payload.height,
+        }) {
+            Ok(mut info) => {
+                let quic_port = roi
+                    .lock()
+                    .map(|guard| guard.quic_port())
+                    .unwrap_or_else(|poison| poison.into_inner().quic_port());
+                info.quic_port = if quic_port == 0 { None } else { Some(quic_port) };
+                AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Ok,
+                payload: Some(json!({
+                    "type": "remote",
+                    "status": "started",
+                    "session": info,
+                })),
+                error: None,
+            }
+            }
+            Err(error) => AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: "remote_start_failed".to_string(),
+                    message: error,
+                    details: Some(json!({ "command": "remote" })),
+                }),
+            },
+        },
+        "stop" => {
+            let session_id = payload.session_id.unwrap_or_default();
+            match manager.stop(&session_id) {
+                Ok(()) => AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Ok,
+                    payload: Some(json!({
+                        "type": "remote",
+                        "status": "stopped",
+                        "session_id": session_id,
+                    })),
+                    error: None,
+                },
+                Err(error) => AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "remote_stop_failed".to_string(),
+                        message: error,
+                        details: Some(json!({ "command": "remote" })),
+                    }),
+                },
+            }
+        }
+        "status" => match manager.status() {
+            Some(status) => AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Ok,
+                payload: Some(json!({
+                    "type": "remote",
+                    "status": "ok",
+                    "state": status,
+                })),
+                error: None,
+            },
+            None => AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: "remote_not_configured".to_string(),
+                    message: "Remote backend not configured.".to_string(),
+                    details: Some(json!({ "command": "remote" })),
+                }),
+            },
+        },
+        _ => AgentCommandResponse {
+            request_id: request.request_id.clone(),
+            status: AgentCommandStatus::Error,
+            payload: None,
+            error: Some(crate::command::AgentCommandError {
+                code: "unsupported_action".to_string(),
+                message: format!("Unsupported remote action: {}", payload.action),
+                details: Some(json!({ "command": "remote" })),
+            }),
+        },
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +428,7 @@ fn handle_vnc_command(
     request: &AgentCommandRequest,
     manager: &Arc<Mutex<VncManager>>,
     pairing: &Arc<Mutex<PairingState>>,
+    roi: &Arc<Mutex<RoiManager>>,
 ) -> AgentCommandResponse {
     let payload: VncCommandPayload = match request.payload.clone() {
         Some(payload) => match serde_json::from_value(payload) {
@@ -335,11 +498,17 @@ fn handle_vnc_command(
             .clone()
             .unwrap_or_else(|| request.request_id.clone());
         let mut manager = manager.lock().unwrap();
-        let quic_port = pairing
+        let fallback_quic = pairing
             .lock()
-            .ok()
             .map(|guard| guard.roi_quic_port())
-            .unwrap_or(0);
+            .unwrap_or_else(|poison| poison.into_inner().roi_quic_port());
+        let quic_port = {
+            let port = roi
+                .lock()
+                .map(|guard| guard.quic_port())
+                .unwrap_or_else(|poison| poison.into_inner().quic_port());
+            if port == 0 { fallback_quic } else { port }
+        };
         match manager.start_session(
             session_id.clone(),
             payload.width,

@@ -40,4 +40,26 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
   end
+
+  # CocoaPods adds Pods_Runner.framework to Runner's link phase when use_frameworks! is on.
+  # With Flutter's custom CONFIGURATION_BUILD_DIR, that framework ends up outside the search paths.
+  # Remove it so we only link the actual pod frameworks specified by Pods-Runner xcconfigs.
+  # Flutter sets a custom CONFIGURATION_BUILD_DIR. When use_frameworks! is on,
+  # CocoaPods' embed script looks in BUILT_PRODUCTS_DIR, which then points to
+  # Flutter's build dir instead of the Pods build dir. Patch the script to look
+  # in PODS_CONFIGURATION_BUILD_DIR to avoid "source: unbound variable".
+  script_path = installer.sandbox.root + 'Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh'
+  if File.exist?(script_path)
+    script = File.read(script_path)
+    unless script.include?('PODS_CONFIGURATION_BUILD_DIR')
+      insert = <<~'SH'
+        if [ -n "${PODS_CONFIGURATION_BUILD_DIR-}" ]; then
+          BUILT_PRODUCTS_DIR="${PODS_CONFIGURATION_BUILD_DIR}"
+        fi
+
+      SH
+      script.sub!("set -o pipefail\n\n", "set -o pipefail\n\n#{insert}")
+      File.write(script_path, script)
+    end
+  end
 end

@@ -44,6 +44,19 @@ extension _VncSessionRoi on _VncSessionScreenState {
     }
   }
 
+  Size _roiLogicalSize() {
+    final session = _roiSession;
+    if (session == null) {
+      return _frameSize;
+    }
+    final width = session.screenWidth > 0 ? session.screenWidth.toDouble() : _frameSize.width;
+    final height = session.screenHeight > 0 ? session.screenHeight.toDouble() : _frameSize.height;
+    if (width <= 0 || height <= 0) {
+      return _frameSize;
+    }
+    return Size(width, height);
+  }
+
   void _resetCursorState() {
     _cursorImage?.dispose();
     _cursorImage = null;
@@ -130,6 +143,19 @@ extension _VncSessionRoi on _VncSessionScreenState {
         return;
       }
       _roiSession = roiInfo;
+      final logicalWidth =
+          roiInfo.screenWidth > 0 ? roiInfo.screenWidth : roiInfo.framebufferWidth;
+      final logicalHeight =
+          roiInfo.screenHeight > 0 ? roiInfo.screenHeight : roiInfo.framebufferHeight;
+      final logicalSize = Size(
+        logicalWidth.toDouble(),
+        logicalHeight.toDouble(),
+      );
+      _roiRenderer = RoiRenderer(
+        framebufferSize: logicalSize,
+        logicalSize: logicalSize,
+      );
+      _roiRevision += 1;
       await _roiClient.connect(roiInfo);
       _roiSubscription?.cancel();
       _roiSubscription = _roiClient.tiles.listen(_handleRoiTile);
@@ -264,20 +290,36 @@ extension _VncSessionRoi on _VncSessionScreenState {
       }
       viewSize = fallback;
     }
-    final center = _clampedCameraCenter(viewSize);
-    final scale = _baseScale(viewSize) * _zoom;
+    final center = _effectivePointerPosition();
+    final roiLogicalSize = _roiLogicalSize();
+    if (_frameSize.width <= 0 || _frameSize.height <= 0) {
+      return;
+    }
+    final scaleX = roiLogicalSize.width / _frameSize.width;
+    final scaleY = roiLogicalSize.height / _frameSize.height;
+    if (!scaleX.isFinite ||
+        !scaleY.isFinite ||
+        scaleX <= 0 ||
+        scaleY <= 0) {
+      return;
+    }
+    final scale = _baseScale(viewSize, contentSize: _displaySize()) * _zoom;
     if (scale <= 0) {
       return;
     }
-    final viewportWidth = viewSize.width / scale;
-    final viewportHeight = viewSize.height / scale;
+    final centerLogical = Offset(
+      (center.dx * scaleX).clamp(0, roiLogicalSize.width),
+      (center.dy * scaleY).clamp(0, roiLogicalSize.height),
+    );
+    final viewportWidth = (viewSize.width / scale) * scaleX;
+    final viewportHeight = (viewSize.height / scale) * scaleY;
     final prefetchRadius = (viewportWidth < viewportHeight
             ? viewportWidth
             : viewportHeight) *
         0.6;
     unawaited(_roiClient.requestRoi(
-      centerX: center.dx,
-      centerY: center.dy,
+      centerX: centerLogical.dx,
+      centerY: centerLogical.dy,
       zoom: _zoom,
       viewportWidth: viewportWidth,
       viewportHeight: viewportHeight,

@@ -12,6 +12,45 @@ extension _VncSessionInput on _VncSessionScreenState {
     return delta * factor;
   }
 
+  Size _displaySize({double? zoom}) {
+    final effectiveZoom = zoom ?? _zoom;
+    if (_roiSession != null && effectiveZoom > _roiZoomThreshold) {
+      final logical = _roiLogicalSize();
+      if (logical.width > 0 && logical.height > 0) {
+        return logical;
+      }
+    }
+    return _frameSize;
+  }
+
+  Offset _frameToDisplay(Offset framePosition, Size displaySize) {
+    final frameW = _frameSize.width;
+    final frameH = _frameSize.height;
+    if (frameW <= 0 || frameH <= 0) {
+      return framePosition;
+    }
+    final scaleX = displaySize.width / frameW;
+    final scaleY = displaySize.height / frameH;
+    if (!scaleX.isFinite || !scaleY.isFinite) {
+      return framePosition;
+    }
+    return Offset(framePosition.dx * scaleX, framePosition.dy * scaleY);
+  }
+
+  Offset _displayToFrame(Offset displayPosition, Size displaySize) {
+    final frameW = _frameSize.width;
+    final frameH = _frameSize.height;
+    if (frameW <= 0 || frameH <= 0) {
+      return displayPosition;
+    }
+    final scaleX = displaySize.width / frameW;
+    final scaleY = displaySize.height / frameH;
+    if (scaleX == 0 || scaleY == 0) {
+      return displayPosition;
+    }
+    return Offset(displayPosition.dx / scaleX, displayPosition.dy / scaleY);
+  }
+
   void _updateTrackpadSize(Size size, {required String source}) {
     if (size.width <= 0 || size.height <= 0) {
       return;
@@ -163,12 +202,13 @@ extension _VncSessionInput on _VncSessionScreenState {
     return _applyInputCalibration(_pointerPosition);
   }
 
-  double _baseScale(Size viewSize) {
-    if (_frameSize.width == 0 || _frameSize.height == 0) {
+  double _baseScale(Size viewSize, {Size? contentSize}) {
+    final content = contentSize ?? _frameSize;
+    if (content.width == 0 || content.height == 0) {
       return 1;
     }
-    final scaleX = viewSize.width / _frameSize.width;
-    final scaleY = viewSize.height / _frameSize.height;
+    final scaleX = viewSize.width / content.width;
+    final scaleY = viewSize.height / content.height;
     switch (_viewMode) {
       case VncViewMode.fit:
         return scaleX < scaleY ? scaleX : scaleY;
@@ -179,38 +219,44 @@ extension _VncSessionInput on _VncSessionScreenState {
     }
   }
 
-  Offset _clampedCameraCenter(Size viewSize) {
-    if (_frameSize.width == 0 || _frameSize.height == 0) {
-      return _cameraCenter;
+  Offset _clampedCameraCenter(
+    Size viewSize,
+    Size contentSize,
+    Offset cameraCenter,
+  ) {
+    if (contentSize.width == 0 || contentSize.height == 0) {
+      return cameraCenter;
     }
-    final scale = _baseScale(viewSize) * _zoom;
+    final scale = _baseScale(viewSize, contentSize: contentSize) * _zoom;
     if (scale <= 0) {
-      return _cameraCenter;
+      return cameraCenter;
     }
     final visibleWidth = viewSize.width / scale;
     final visibleHeight = viewSize.height / scale;
-    final minX = visibleWidth >= _frameSize.width
-        ? _frameSize.width / 2
+    final minX = visibleWidth >= contentSize.width
+        ? contentSize.width / 2
         : visibleWidth / 2;
-    final maxX = visibleWidth >= _frameSize.width
-        ? _frameSize.width / 2
-        : _frameSize.width - visibleWidth / 2;
-    final minY = visibleHeight >= _frameSize.height
-        ? _frameSize.height / 2
+    final maxX = visibleWidth >= contentSize.width
+        ? contentSize.width / 2
+        : contentSize.width - visibleWidth / 2;
+    final minY = visibleHeight >= contentSize.height
+        ? contentSize.height / 2
         : visibleHeight / 2;
-    final maxY = visibleHeight >= _frameSize.height
-        ? _frameSize.height / 2
-        : _frameSize.height - visibleHeight / 2;
+    final maxY = visibleHeight >= contentSize.height
+        ? contentSize.height / 2
+        : contentSize.height - visibleHeight / 2;
     return Offset(
-      _cameraCenter.dx.clamp(minX, maxX),
-      _cameraCenter.dy.clamp(minY, maxY),
+      cameraCenter.dx.clamp(minX, maxX),
+      cameraCenter.dy.clamp(minY, maxY),
     );
   }
 
   Offset _calculateTranslation(Size viewSize) {
+    final displaySize = _displaySize();
     final center = Offset(viewSize.width / 2, viewSize.height / 2);
-    final scale = _baseScale(viewSize) * _zoom;
-    final camera = _clampedCameraCenter(viewSize);
+    final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
+    final cameraDisplay = _frameToDisplay(_cameraCenter, displaySize);
+    final camera = _clampedCameraCenter(viewSize, displaySize, cameraDisplay);
     var translation = center - camera * scale;
     if (_zoom > 1.01 && _devicePixelRatio > 0) {
       final snappedX = (translation.dx * _devicePixelRatio).round() / _devicePixelRatio;
@@ -221,28 +267,34 @@ extension _VncSessionInput on _VncSessionScreenState {
   }
 
   Offset _pointerToScreen(Size viewSize) {
-    final scale = _baseScale(viewSize) * _zoom;
+    final displaySize = _displaySize();
+    final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
     final translation = _calculateTranslation(viewSize);
-    return translation + _effectivePointerPosition() * scale;
+    final displayPos = _frameToDisplay(_effectivePointerPosition(), displaySize);
+    return translation + displayPos * scale;
   }
 
   Offset _frameToScreen(Offset framePosition, Size viewSize) {
-    final scale = _baseScale(viewSize) * _zoom;
+    final displaySize = _displaySize();
+    final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
     final translation = _calculateTranslation(viewSize);
-    return translation + framePosition * scale;
+    final displayPos = _frameToDisplay(framePosition, displaySize);
+    return translation + displayPos * scale;
   }
 
   Offset _screenToFrame(Offset screenPosition, Size viewSize) {
-    final scale = _baseScale(viewSize) * _zoom;
+    final displaySize = _displaySize();
+    final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
     final translation = _calculateTranslation(viewSize);
     if (scale == 0) {
       return Offset.zero;
     }
     final raw = (screenPosition - translation) / scale;
-    return Offset(
-      raw.dx.clamp(0, _frameSize.width),
-      raw.dy.clamp(0, _frameSize.height),
+    final clamped = Offset(
+      raw.dx.clamp(0, displaySize.width),
+      raw.dy.clamp(0, displaySize.height),
     );
+    return _displayToFrame(clamped, displaySize);
   }
 
   void _sendPointerEvent() {

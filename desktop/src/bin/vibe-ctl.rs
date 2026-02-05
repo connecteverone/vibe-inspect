@@ -14,7 +14,7 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -462,7 +462,7 @@ async fn attach_session(
         })),
     );
     sender
-        .send(TungsteniteMessage::Text(attach_request.to_string()))
+        .send(TungsteniteMessage::Text(attach_request.to_string().into()))
         .await
         .map_err(|error| {
             CliError::new(
@@ -489,10 +489,12 @@ async fn attach_session(
     let mut prefix_deadline: Option<Instant> = None;
 
     loop {
-        let mut sleep = tokio::time::sleep(Duration::from_secs(3600));
-        if let Some(deadline) = prefix_deadline {
-            sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
-        }
+        let sleep = if let Some(deadline) = prefix_deadline {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline))
+        } else {
+            tokio::time::sleep(Duration::from_secs(3600))
+        };
+        tokio::pin!(sleep);
 
         tokio::select! {
             _ = &mut sleep, if prefix_deadline.is_some() => {
@@ -654,7 +656,7 @@ async fn wait_for_attach(
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, attach_id) {
                         return result.map(|_| ());
                     }
@@ -703,7 +705,7 @@ async fn handle_terminald_message(
             }
         }
         Ok(TungsteniteMessage::Binary(bytes)) => {
-            if let Ok(text) = String::from_utf8(bytes) {
+            if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                 if let Some(payload) = extract_terminal_payload_event(&text, session_id) {
                     write_terminal_payload(&payload, stdout)?;
                 } else if let Some(warning) = extract_session_warning(&text, session_id) {
@@ -900,7 +902,7 @@ async fn send_terminald_action(
         payload,
     );
     sender
-        .send(TungsteniteMessage::Text(request.to_string()))
+        .send(TungsteniteMessage::Text(request.to_string().into()))
         .await
         .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
     Ok(())
@@ -954,7 +956,7 @@ async fn terminald_request(
     let request_id = random_request_id();
     let request = build_terminald_request(&request_id, action, session_id, payload);
     socket
-        .send(TungsteniteMessage::Text(request.to_string()))
+        .send(TungsteniteMessage::Text(request.to_string().into()))
         .await
         .map_err(|error| CliError::new("connection_failed", format!("Failed to send request: {error}")))?;
 
@@ -966,7 +968,7 @@ async fn terminald_request(
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, &request_id) {
                         return result;
                     }
@@ -1060,7 +1062,7 @@ async fn connect_and_auth(ws_url: &str, token: &str) -> Result<TerminaldSocket, 
         }
     });
     socket
-        .send(TungsteniteMessage::Text(auth_request.to_string()))
+        .send(TungsteniteMessage::Text(auth_request.to_string().into()))
         .await
         .map_err(|error| {
             CliError::new("connection_failed", format!("Failed to send auth request: {error}"))
@@ -1074,7 +1076,7 @@ async fn connect_and_auth(ws_url: &str, token: &str) -> Result<TerminaldSocket, 
                 }
             }
             Ok(TungsteniteMessage::Binary(bytes)) => {
-                if let Ok(text) = String::from_utf8(bytes) {
+                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     if let Some(result) = parse_terminald_response(&text, &auth_id) {
                         return result.map(|_| socket);
                     }
@@ -1176,8 +1178,8 @@ async fn try_start_terminald() -> Result<(), CliError> {
 fn start_terminald_process() -> Result<(), CliError> {
     let binary = resolve_terminald_binary();
     let mut command = match binary {
-        Some(path) => Command::new(path),
-        None => Command::new("terminald"),
+        Some(path) => ProcessCommand::new(path),
+        None => ProcessCommand::new("terminald"),
     };
     command
         .stdin(Stdio::null())

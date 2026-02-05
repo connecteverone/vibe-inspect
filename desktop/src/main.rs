@@ -5,6 +5,8 @@ mod command;
 mod cursor_macos;
 mod identity;
 mod pairing;
+mod remote_engine;
+mod remote_media;
 mod terminal;
 mod server;
 mod vnc;

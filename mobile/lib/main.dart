@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' hide Size;
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -8,6 +10,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:ffi/ffi.dart';
+import 'package:archive/archive.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile/storage/local_storage.dart';
@@ -15,8 +19,11 @@ import 'package:mobile/roi/roi_client.dart';
 import 'package:mobile/roi/roi_models.dart';
 import 'package:mobile/roi/roi_quic_client.dart';
 import 'package:mobile/roi/roi_renderer.dart';
+import 'package:mobile/remote/media_protocol.dart';
+import 'package:mobile/remote/remote_quic_client.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile/vnc/vnc_quic_transport.dart';
+import 'package:uuid/uuid.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -31,6 +38,7 @@ part 'vnc/vnc_session_ui.dart';
 part 'vnc/vnc_widgets.dart';
 part 'app/agent_models.dart';
 part 'app/api_explorer.dart';
+part 'app/feature_flags.dart';
 part 'app/pairing.dart';
 part 'app/qr_scanner.dart';
 part 'app/agent_workspace.dart';
@@ -39,6 +47,9 @@ part 'app/terminal_workspace.dart';
 part 'app/terminal_workspace_logic.dart';
 part 'app/terminal_workspace_stream.dart';
 part 'app/terminal_session.dart';
+part 'remote/remote_session_screen.dart';
+part 'remote/media_v2_view.dart';
+part 'remote/rustdesk_bridge.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

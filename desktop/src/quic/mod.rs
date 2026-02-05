@@ -7,10 +7,12 @@ use crate::roi::{
     build_tiles, RoiCapturer, RoiFrame, RoiManager, RoiSessionInfo, RoiTile, RoiTileCache,
     RoiViewport,
 };
+use crate::remote_engine::{RemoteManager, RemoteQuicContext};
 use crate::vnc::serve_vnc_quic;
 use bytes::Bytes;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use hbb_common::config::{self, Config};
 use quinn::{Endpoint, ServerConfig};
 use rcgen::generate_simple_self_signed;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -26,8 +28,8 @@ use tokio::io::AsyncWriteExt;
 
 pub mod protocol;
 use protocol::{
-    RoiHello, RoiReady, RoiRequest, VncError, VncHello, VncReady, ROI_CODEC_RAW, ROI_CODEC_ZLIB,
-    ROI_DATAGRAM_HEADER_SIZE, ROI_DATAGRAM_MAGIC,
+    RemoteError, RemoteHello, RemoteReady, RoiHello, RoiReady, RoiRequest, VncError, VncHello,
+    VncReady, ROI_CODEC_RAW, ROI_CODEC_ZLIB, ROI_DATAGRAM_HEADER_SIZE, ROI_DATAGRAM_MAGIC,
 };
 
 #[derive(Clone)]
@@ -36,6 +38,7 @@ pub struct QuicServerConfig {
     pub roi: Option<Arc<Mutex<RoiManager>>>,
     pub vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
     pub pairing: Option<Arc<Mutex<PairingState>>>,
+    pub remote: Option<Arc<Mutex<RemoteManager>>>,
 }
 
 pub struct QuicServerHandle {
@@ -61,7 +64,8 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
     let roi = config.roi;
     let vnc = config.vnc;
     let pairing = config.pairing;
-    if roi.is_none() && vnc.is_none() {
+    let remote = config.remote;
+    if roi.is_none() && vnc.is_none() && remote.is_none() {
         return Ok(QuicServerHandle { port, running });
     }
     let (tx, rx) = mpsc::channel();
@@ -69,6 +73,7 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
     let roi_handle = roi.clone();
     let vnc_handle = vnc.clone();
     let pairing_handle = pairing.clone();
+    let remote_handle = remote.clone();
     thread::spawn(move || {
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(runtime) => runtime,
@@ -105,6 +110,7 @@ pub fn start_quic_server(config: QuicServerConfig) -> Result<QuicServerHandle, s
                         roi_handle,
                         vnc_handle,
                         pairing_handle,
+                        remote_handle,
                         running_handle,
                     )
                     .await;
@@ -130,6 +136,7 @@ async fn run_quic_server(
     roi: Option<Arc<Mutex<RoiManager>>>,
     vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
     pairing: Option<Arc<Mutex<PairingState>>>,
+    remote: Option<Arc<Mutex<RemoteManager>>>,
     running: Arc<AtomicBool>,
 ) {
     while running.load(Ordering::SeqCst) {
@@ -139,11 +146,14 @@ async fn run_quic_server(
         let roi = roi.clone();
         let vnc = vnc.clone();
         let pairing = pairing.clone();
+        let remote = remote.clone();
         tokio::spawn(async move {
             if let Ok(connection) = connecting.await {
-                let remote = connection.remote_address();
-                eprintln!("QUIC accepted: remote={remote}");
-                if let Err(error) = handle_connection(connection, roi, vnc, pairing).await {
+                let remote_addr = connection.remote_address();
+                eprintln!("QUIC accepted: remote={remote_addr}");
+                if let Err(error) =
+                    handle_connection(connection, roi, vnc, pairing, remote).await
+                {
                 eprintln!("QUIC connection error: {error}");
                 }
             }
@@ -156,6 +166,7 @@ async fn handle_connection(
     roi: Option<Arc<Mutex<RoiManager>>>,
     vnc: Option<Arc<Mutex<crate::vnc::VncManager>>>,
     pairing: Option<Arc<Mutex<PairingState>>>,
+    remote: Option<Arc<Mutex<RemoteManager>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut send, mut recv) = connection.accept_bi().await?;
     let hello_value: JsonValue = read_json_message(&mut recv).await?;
@@ -191,6 +202,35 @@ async fn handle_connection(
             return Ok(());
         };
         return handle_vnc_quic_connection(connection, vnc, pairing, hello_value, send, recv).await;
+    }
+    if protocol == "remote" {
+        let Some(remote) = remote else {
+            send_json_message(
+                &mut send,
+                &RemoteError {
+                    status: "error".to_string(),
+                    code: "unsupported".to_string(),
+                    message: "Remote control over QUIC is not enabled.".to_string(),
+                    retry_after: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+        let Some(pairing) = pairing else {
+            send_json_message(
+                &mut send,
+                &RemoteError {
+                    status: "error".to_string(),
+                    code: "state_locked".to_string(),
+                    message: "Pairing state unavailable.".to_string(),
+                    retry_after: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+        return handle_remote_quic_connection(connection, remote, pairing, hello_value, send).await;
     }
     let roi = match roi {
         Some(manager) => manager,
@@ -353,6 +393,78 @@ async fn handle_vnc_quic_connection(
     Ok(())
 }
 
+async fn handle_remote_quic_connection(
+    connection: quinn::Connection,
+    remote: Arc<Mutex<RemoteManager>>,
+    pairing: Arc<Mutex<PairingState>>,
+    hello_value: JsonValue,
+    mut send: quinn::SendStream,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let hello: RemoteHello = serde_json::from_value(hello_value)?;
+    let auth_token = hello.auth_token.clone().unwrap_or_default();
+    let client_id = hello.client_id.clone();
+    let client_name = hello.client_name.clone();
+    if let Err(error) = ensure_auth_not_blocked(&pairing, client_id.as_deref()) {
+        send_remote_error(&mut send, error).await?;
+        return Ok(());
+    }
+    if let Err(error) = validate_auth_token(&pairing, &auth_token, client_id.as_deref()) {
+        send_remote_error(&mut send, error).await?;
+        return Ok(());
+    }
+    if let Err(error) = ensure_client_allowed(&pairing, &client_id) {
+        send_remote_error(&mut send, error).await?;
+        return Ok(());
+    }
+    record_client_activity(&pairing, client_id.clone(), client_name.clone(), None);
+    let _guard = track_client_connection(&pairing, client_id);
+    let session_valid = {
+        let manager = remote.lock().map_err(|_| "remote lock")?;
+        manager.validate_session(&hello.session_id, &hello.token)
+    };
+    if !session_valid {
+        send_json_message(
+            &mut send,
+            &RemoteError {
+                status: "error".to_string(),
+                code: "invalid_session".to_string(),
+                message: "Invalid remote session.".to_string(),
+                retry_after: None,
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    let codec_pref = Config::get_option(config::keys::OPTION_CODEC_PREFERENCE);
+    let codec_pref = codec_pref.trim().to_string();
+    let codec_preference = if codec_pref.is_empty() {
+        None
+    } else {
+        Some(codec_pref)
+    };
+    send_json_message(
+        &mut send,
+        &RemoteReady {
+            status: "ready".to_string(),
+            session_id: hello.session_id.clone(),
+            data_stream: "client_bi".to_string(),
+            codec_preference,
+            hwcodec: Some(cfg!(feature = "rustdesk-hwcodec")),
+            idle_timeout_ms: Some(20_000),
+        },
+    )
+    .await?;
+    let (data_send, data_recv) = connection.accept_bi().await?;
+    let context = RemoteQuicContext {
+        session_id: hello.session_id.clone(),
+        client_id: hello.client_id.clone(),
+        client_name: hello.client_name.clone(),
+    };
+    let mut manager = remote.lock().map_err(|_| "remote lock")?;
+    manager.handle_quic_stream(connection, data_send, data_recv, context, hello.token)?;
+    Ok(())
+}
+
 async fn send_vnc_error(
     send: &mut quinn::SendStream,
     error: AuthError,
@@ -360,6 +472,23 @@ async fn send_vnc_error(
     send_json_message(
         send,
         &VncError {
+            status: "error".to_string(),
+            code: error.code.to_string(),
+            message: error.message,
+            retry_after: error.retry_after,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn send_remote_error(
+    send: &mut quinn::SendStream,
+    error: AuthError,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    send_json_message(
+        send,
+        &RemoteError {
             status: "error".to_string(),
             code: error.code.to_string(),
             message: error.message,

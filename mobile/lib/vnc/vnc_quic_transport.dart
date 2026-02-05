@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_quic/flutter_quic.dart';
 
 import 'package:mobile/vnc_client.dart';
-import 'package:mobile/vnc/vnc_datagram.dart';
 
 class VncQuicTransport implements VncTransport {
   VncQuicTransport({
@@ -29,7 +28,6 @@ class VncQuicTransport implements VncTransport {
 
   final StreamController<Uint8List> _controller =
       StreamController<Uint8List>.broadcast();
-  final VncDatagramAssembler _datagramAssembler = VncDatagramAssembler();
 
   QuicEndpoint? _endpoint;
   QuicConnection? _connection;
@@ -82,7 +80,6 @@ class VncQuicTransport implements VncTransport {
 
     _running = true;
     unawaited(_readStreamLoop());
-    unawaited(_readDatagrams());
   }
 
   @override
@@ -263,30 +260,6 @@ class VncQuicTransport implements VncTransport {
           return;
         }
         _controller.add(data);
-      } catch (_) {
-        await Future.delayed(const Duration(milliseconds: 20));
-      }
-    }
-  }
-
-  Future<void> _readDatagrams() async {
-    while (_running) {
-      final connection = _connection;
-      if (connection == null) {
-        break;
-      }
-      try {
-        final result = await connectionReadDatagram(connection: connection);
-        _connection = result.$1;
-        final data = result.$2;
-        if (data == null || data.isEmpty) {
-          await Future.delayed(const Duration(milliseconds: 4));
-          continue;
-        }
-        final payload = _datagramAssembler.addDatagram(data);
-        if (payload != null && !_controller.isClosed && _running) {
-          _controller.add(payload);
-        }
       } catch (_) {
         await Future.delayed(const Duration(milliseconds: 20));
       }

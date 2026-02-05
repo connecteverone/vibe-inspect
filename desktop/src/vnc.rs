@@ -3,11 +3,10 @@ use enigo::{Enigo, KeyboardControllable, Key, MouseButton, MouseControllable};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use futures_util::{SinkExt, StreamExt};
-use bytes::Bytes;
-use quinn::{Connection, RecvStream, SendStream};
+use quinn::{Connection, RecvStream, SendStream, WriteError};
 use rand::{distributions::Alphanumeric, Rng};
 use rfb_encodings::{PixelFormat, zrle::encode_zrle};
-use scrap::{Capturer, Display};
+use scrap::{Capturer, Display, Frame, TraitCapturer, TraitPixelBuffer};
 use std::collections::HashMap;
 use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,13 +14,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::env;
+use tokio::sync::mpsc::error::TrySendError;
 
 #[cfg(target_os = "macos")]
 use crate::cursor_macos::{capture_cursor, cursor_changed, SystemCursor};
-use crate::quic::protocol::{
-    encode_vnc_datagram_chunks, VNC_CHANNEL_VIDEO_DELTA, VNC_CODEC_RFB,
-    VNC_DATAGRAM_HEADER_SIZE,
-};
+
 
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 const VNC_NAME: &str = "Vibe Inspect Agent";
@@ -49,9 +46,13 @@ const ENCODING_CURSOR: i32 = -239;
 const ENCODING_DATA_SAVER: i32 = -312;
 const ENCODING_HIGH_PERF: i32 = -313;
 const TIGHT_JPEG_MIN_AREA: usize = 20000;
+const QUIC_SEND_CHUNK_BYTES: usize = 64 * 1024;
 
 static CAPTURE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static TIMING_TRACE_INTERVAL_MS: OnceLock<Option<u64>> = OnceLock::new();
 static LAST_CAPTURE_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_QUIC_LOG: AtomicU64 = AtomicU64::new(0);
+static LAST_TIMING_LOG: AtomicU64 = AtomicU64::new(0);
 
 fn capture_debug_enabled() -> bool {
     matches!(
@@ -98,6 +99,57 @@ fn vnc_log(message: &str) {
     }
 }
 
+fn quic_trace_enabled() -> bool {
+    if vnc_debug_enabled() {
+        return true;
+    }
+    matches!(
+        env::var("VNC_QUIC_TRACE")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
+fn quic_log_throttled(message: &str) {
+    if !quic_trace_enabled() {
+        return;
+    }
+    let now = current_millis();
+    let last = LAST_QUIC_LOG.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < 1000 {
+        return;
+    }
+    LAST_QUIC_LOG.store(now, Ordering::Relaxed);
+    eprintln!("{message}");
+}
+
+fn timing_trace_interval_ms() -> Option<u64> {
+    *TIMING_TRACE_INTERVAL_MS.get_or_init(|| {
+        match env::var("VNC_TIMING_TRACE").ok().as_deref() {
+            Some("1") | Some("true") | Some("TRUE") => Some(0),
+            Some("0") | Some("false") | Some("FALSE") => None,
+            Some(value) => value.parse::<u64>().ok(),
+            None => None,
+        }
+    })
+}
+
+fn timing_trace(message: &str) {
+    let Some(interval) = timing_trace_interval_ms() else {
+        return;
+    };
+    if interval > 0 {
+        let now = current_millis();
+        let last = LAST_TIMING_LOG.load(Ordering::Relaxed);
+        if now.saturating_sub(last) < interval {
+            return;
+        }
+        LAST_TIMING_LOG.store(now, Ordering::Relaxed);
+    }
+    eprintln!("{message}");
+}
+
 fn capture_log_throttled(message: &str) {
     if !capture_debug_enabled() {
         return;
@@ -116,6 +168,15 @@ fn current_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_millis() as u64
+}
+
+fn large_update_prefers_raw() -> bool {
+    match env::var("VNC_LARGE_UPDATE_RAW").ok().as_deref() {
+        Some("0") | Some("false") | Some("FALSE") => false,
+        Some("1") | Some("true") | Some("TRUE") => true,
+        None => true,
+        _ => true,
+    }
 }
 
 #[derive(Clone)]
@@ -182,6 +243,79 @@ enum RectUpdate {
 
 type FrameUpdate = Vec<RectUpdate>;
 
+#[derive(Clone, Debug)]
+struct FrameEnvelope {
+    id: u64,
+    queued_at_ms: u64,
+    capture_ms: u64,
+    diff_ms: u64,
+    is_full: bool,
+    is_keepalive: bool,
+    rects: u16,
+    update: FrameUpdate,
+}
+
+fn rect_area(update: &FrameUpdate) -> u64 {
+    let mut area = 0u64;
+    for rect in update {
+        match rect {
+            RectUpdate::Pixels { rect, .. } | RectUpdate::CopyRect { rect, .. } => {
+                area = area.saturating_add(rect.width as u64 * rect.height as u64);
+            }
+            RectUpdate::Cursor(_) => {}
+        }
+    }
+    area
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SendMetrics {
+    calls: u32,
+    wait_ms: u64,
+    min_write: u32,
+    max_write: u32,
+}
+
+async fn write_all_with_metrics(
+    stream: &mut SendStream,
+    data: &[u8],
+) -> Result<SendMetrics, WriteError> {
+    let mut metrics = SendMetrics {
+        calls: 0,
+        wait_ms: 0,
+        min_write: u32::MAX,
+        max_write: 0,
+    };
+    let mut cursor = 0usize;
+    while cursor < data.len() {
+        let end = (cursor + QUIC_SEND_CHUNK_BYTES).min(data.len());
+        let mut chunk = &data[cursor..end];
+        while !chunk.is_empty() {
+            let call_start = Instant::now();
+            let written = stream.write(chunk).await?;
+            let call_ms = call_start.elapsed().as_millis() as u64;
+            metrics.wait_ms = metrics.wait_ms.saturating_add(call_ms);
+            metrics.calls = metrics.calls.saturating_add(1);
+            let written_u32 = written as u32;
+            if written_u32 < metrics.min_write {
+                metrics.min_write = written_u32;
+            }
+            if written_u32 > metrics.max_write {
+                metrics.max_write = written_u32;
+            }
+            if written == 0 {
+                return Err(WriteError::ClosedStream);
+            }
+            cursor = cursor.saturating_add(written);
+            chunk = &chunk[written..];
+        }
+    }
+    if metrics.calls == 0 {
+        metrics.min_write = 0;
+    }
+    Ok(metrics)
+}
+
 enum DiffOutcome {
     None,
     Full,
@@ -210,6 +344,12 @@ struct PixelFormatSpec {
     red_shift: u8,
     green_shift: u8,
     blue_shift: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EncodingState {
+    prefs: EncodingPreferences,
+    pixel_format: PixelFormatSpec,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -427,8 +567,8 @@ pub async fn serve_vnc_socket(
 }
 
 pub async fn serve_vnc_quic(
-    mut send: SendStream,
-    mut recv: RecvStream,
+    send: SendStream,
+    recv: RecvStream,
     connection: Connection,
     manager: Arc<Mutex<VncManager>>,
     session_id: String,
@@ -444,7 +584,7 @@ pub async fn serve_vnc_quic(
         return Err("Invalid VNC session".to_string());
     };
 
-    run_vnc_session_quic(&mut send, &mut recv, &connection, session).await?;
+    run_vnc_session_quic(send, recv, connection, session).await?;
     Ok(())
 }
 
@@ -503,7 +643,7 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
     let running = Arc::new(AtomicBool::new(true));
     let copyrect_supported = Arc::new(AtomicBool::new(false));
     let cursor_supported = Arc::new(AtomicBool::new(false));
-    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(4);
+    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameEnvelope>(4);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
     let last_input_at = Arc::new(AtomicU64::new(current_millis()));
     let data_saver_enabled = Arc::new(AtomicBool::new(false));
@@ -537,16 +677,52 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
 
     loop {
         tokio::select! {
-            Some(update) = frame_rx.recv() => {
+            Some(envelope) = frame_rx.recv() => {
+                let allow_large_raw = !data_saver_enabled.load(Ordering::Relaxed)
+                    && large_update_prefers_raw();
+                let queue_ms = current_millis().saturating_sub(envelope.queued_at_ms);
+                let area = if timing_trace_interval_ms().is_some() {
+                    rect_area(&envelope.update)
+                } else {
+                    0
+                };
+                let encode_start = Instant::now();
                 let message = build_framebuffer_update(
-                    update,
+                    envelope.update,
                     &encoding_prefs,
                     &pixel_format,
                     session.width,
                     session.height,
+                    allow_large_raw,
                 )?;
+                let encode_ms = encode_start.elapsed().as_millis() as u64;
+                let message_len = message.len();
+                let send_start = Instant::now();
                 if sender.send(Message::Binary(message.into())).await.is_err() {
                     break;
+                }
+                let send_ms = send_start.elapsed().as_millis() as u64;
+                if timing_trace_interval_ms().is_some() {
+                    let kind = if envelope.is_keepalive {
+                        "keepalive"
+                    } else if envelope.is_full {
+                        "full"
+                    } else {
+                        "diff"
+                    };
+                    timing_trace(&format!(
+                        "vnc timing ws frame={} kind={} capture_ms={} diff_ms={} queue_ms={} encode_ms={} send_ms={} rects={} area={} bytes={}",
+                        envelope.id,
+                        kind,
+                        envelope.capture_ms,
+                        envelope.diff_ms,
+                        queue_ms,
+                        encode_ms,
+                        send_ms,
+                        envelope.rects,
+                        area,
+                        message_len
+                    ));
                 }
             }
             maybe_message = receiver.next() => {
@@ -625,9 +801,9 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
 }
 
 async fn run_vnc_session_quic(
-    send: &mut SendStream,
-    recv: &mut RecvStream,
-    connection: &Connection,
+    mut send: SendStream,
+    mut recv: RecvStream,
+    connection: Connection,
     session: VncSession,
 ) -> Result<(), String> {
     let mut buffer = Vec::new();
@@ -688,7 +864,7 @@ async fn run_vnc_session_quic(
     let running = Arc::new(AtomicBool::new(true));
     let copyrect_supported = Arc::new(AtomicBool::new(false));
     let cursor_supported = Arc::new(AtomicBool::new(false));
-    let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<FrameUpdate>(4);
+    let (frame_tx, frame_rx) = tokio::sync::mpsc::channel::<FrameEnvelope>(4);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
     let last_input_at = Arc::new(AtomicU64::new(current_millis()));
     let data_saver_enabled = Arc::new(AtomicBool::new(false));
@@ -718,37 +894,134 @@ async fn run_vnc_session_quic(
         cursor_supported: false,
     };
     let mut pixel_format = default_pixel_format_spec();
+    let encoding_state = Arc::new(Mutex::new(EncodingState {
+        prefs: encoding_prefs,
+        pixel_format,
+    }));
     let mut update_request_seen = false;
     let mut read_buf = [0u8; 4096];
-    let max_datagram = connection.max_datagram_size().unwrap_or(1200) as usize;
-    if max_datagram <= VNC_DATAGRAM_HEADER_SIZE {
-        return Err("QUIC datagram size too small for VNC updates.".to_string());
-    }
-    let mut datagram_seq: u32 = 0;
-    let mut datagram_frame_id: u32 = 0;
-
-    loop {
-        tokio::select! {
-            Some(update) = frame_rx.recv() => {
-                let message = build_framebuffer_update(
-                    update,
-                    &encoding_prefs,
-                    &pixel_format,
-                    session.width,
-                    session.height,
-                )?;
-                if let Err(error) = send_vnc_datagrams(
-                    connection,
-                    &message,
-                    &mut datagram_seq,
-                    &mut datagram_frame_id,
-                    max_datagram,
-                )
-                .await {
-                    eprintln!("VNC QUIC datagram send error: {error}");
+    let frame_width = session.width;
+    let frame_height = session.height;
+    let send_state = encoding_state.clone();
+    let send_running = running.clone();
+    let send_connection = connection.clone();
+    let mut send_stream = send;
+    let data_saver_flag = data_saver_enabled.clone();
+    tokio::spawn(async move {
+        let mut frame_rx = frame_rx;
+        while let Some(envelope) = frame_rx.recv().await {
+            let mut envelope = envelope;
+            let mut dropped = 0u32;
+            while let Ok(next) = frame_rx.try_recv() {
+                envelope = next;
+                dropped += 1;
+            }
+            let timing_enabled = timing_trace_interval_ms().is_some();
+            let queue_ms = current_millis().saturating_sub(envelope.queued_at_ms);
+            let (prefs, format) = {
+                let guard = send_state.lock().unwrap();
+                (guard.prefs, guard.pixel_format)
+            };
+            let area = if timing_enabled {
+                rect_area(&envelope.update)
+            } else {
+                0
+            };
+            let encode_start = Instant::now();
+            let allow_large_raw =
+                !data_saver_flag.load(Ordering::Relaxed) && large_update_prefers_raw();
+            let message = match build_framebuffer_update(
+                envelope.update,
+                &prefs,
+                &format,
+                frame_width,
+                frame_height,
+                allow_large_raw,
+            ) {
+                Ok(message) => message,
+                Err(error) => {
+                    eprintln!("VNC QUIC encode error: {error}");
                     break;
                 }
+            };
+            let encode_ms = encode_start.elapsed().as_millis();
+            let message_len = message.len();
+            let send_start = Instant::now();
+            let send_metrics = if timing_enabled {
+                match write_all_with_metrics(&mut send_stream, &message).await {
+                    Ok(metrics) => Some(metrics),
+                    Err(error) => {
+                        eprintln!("VNC QUIC send error: {error}");
+                        break;
+                    }
+                }
+            } else {
+                if let Err(error) = send_stream.write_all(&message).await {
+                    eprintln!("VNC QUIC send error: {error}");
+                    break;
+                }
+                None
+            };
+            let send_ms = send_start.elapsed().as_millis();
+            if timing_enabled {
+                let kind = if envelope.is_keepalive {
+                    "keepalive"
+                } else if envelope.is_full {
+                    "full"
+                } else {
+                    "diff"
+                };
+                timing_trace(&format!(
+                    "vnc timing quic frame={} kind={} capture_ms={} diff_ms={} queue_ms={} encode_ms={} send_ms={} rects={} area={} bytes={} dropped={}",
+                    envelope.id,
+                    kind,
+                    envelope.capture_ms,
+                    envelope.diff_ms,
+                    queue_ms,
+                    encode_ms,
+                    send_ms,
+                    envelope.rects,
+                    area,
+                    message_len,
+                    dropped
+                ));
+                if let Some(metrics) = send_metrics {
+                    timing_trace(&format!(
+                        "vnc timing quic_send frame={} calls={} wait_ms={} min_write={} max_write={}",
+                        envelope.id,
+                        metrics.calls,
+                        metrics.wait_ms,
+                        metrics.min_write,
+                        metrics.max_write
+                    ));
+                }
             }
+            if dropped > 0 {
+                quic_log_throttled(&format!(
+                    "vnc quic send: bytes={} encode_ms={} send_ms={} dropped={}",
+                    message_len,
+                    encode_ms,
+                    send_ms,
+                    dropped
+                ));
+            } else {
+                quic_log_throttled(&format!(
+                    "vnc quic send: bytes={} encode_ms={} send_ms={}",
+                    message_len,
+                    encode_ms,
+                    send_ms
+                ));
+            }
+        }
+        send_running.store(false, Ordering::SeqCst);
+        send_connection.close(0u32.into(), b"vnc_send_closed");
+    });
+
+    loop {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::select! {
             read_result = recv.read(&mut read_buf) => {
                 let read_len = match read_result {
                     Ok(Some(0)) => break,
@@ -801,11 +1074,18 @@ async fn run_vnc_session_quic(
                                 encoding_prefs.cursor_supported,
                                 Ordering::Relaxed,
                             );
+                            if let Ok(mut guard) = encoding_state.lock() {
+                                guard.prefs = encoding_prefs;
+                            }
                         }
                         ClientMessage::SetPixelFormat { format } => {
                             pixel_format = sanitize_pixel_format(format);
                             encoding_prefs =
                                 apply_pixel_format_constraints(encoding_prefs, &pixel_format);
+                            if let Ok(mut guard) = encoding_state.lock() {
+                                guard.pixel_format = pixel_format;
+                                guard.prefs = encoding_prefs;
+                            }
                         }
                         ClientMessage::ClientCutText => {}
                     }
@@ -815,35 +1095,6 @@ async fn run_vnc_session_quic(
     }
 
     running.store(false, Ordering::SeqCst);
-    Ok(())
-}
-
-async fn send_vnc_datagrams(
-    connection: &Connection,
-    payload: &[u8],
-    seq: &mut u32,
-    frame_id: &mut u32,
-    max_datagram: usize,
-) -> Result<(), String> {
-    let current_seq = *seq;
-    let current_frame = *frame_id;
-    *seq = seq.wrapping_add(1);
-    *frame_id = frame_id.wrapping_add(1);
-    let chunks = encode_vnc_datagram_chunks(
-        payload,
-        current_seq,
-        current_frame,
-        VNC_CHANNEL_VIDEO_DELTA,
-        0,
-        VNC_CODEC_RFB,
-        max_datagram,
-    )?;
-    for chunk in chunks {
-        connection
-            .send_datagram_wait(Bytes::from(chunk))
-            .await
-            .map_err(|error| format!("QUIC datagram send failed: {error}"))?;
-    }
     Ok(())
 }
 
@@ -963,89 +1214,94 @@ fn capture_frame(
     capture_width: usize,
     capture_height: usize,
 ) -> Option<Vec<u8>> {
-    match capturer.frame() {
-        Ok(frame) => {
-            if capture_width == 0 || capture_height == 0 {
-                return None;
-            }
-            let mut width = capture_width;
-            let mut height = capture_height;
-            let mut stride = if frame.len() % height == 0 {
-                frame.len() / height
-            } else {
-                0
-            };
-            let expected_min = width.saturating_mul(height).saturating_mul(4);
-            if frame.len() >= expected_min && stride == 0 {
-                // macOS IOSurface alloc size can be page-rounded; allow trailing padding.
-                let extra = frame.len().saturating_sub(expected_min);
-                if extra % height != 0 {
-                    stride = width.saturating_mul(4);
+    match capturer.frame(Duration::from_millis(0)) {
+        Ok(frame) => match frame {
+            Frame::PixelBuffer(pixelbuffer) => {
+                let frame_bytes = pixelbuffer.data();
+                let mut width = pixelbuffer.width();
+                let mut height = pixelbuffer.height();
+                if width == 0 || height == 0 {
+                    width = capture_width;
+                    height = capture_height;
                 }
-            }
-            if frame.len() < expected_min || stride == 0 || stride < width * 4 {
-                if let Some((guess_w, guess_h, guess_stride)) = guess_capture_dimensions(
-                    frame.len(),
-                    session.screen_width as usize,
-                    session.screen_height as usize,
-                ) {
-                    width = guess_w;
-                    height = guess_h;
-                    stride = guess_stride;
-                    if width != capture_width || height != capture_height {
+                if width == 0 || height == 0 {
+                    return None;
+                }
+                let mut stride = pixelbuffer.stride().get(0).copied().unwrap_or(0);
+                if stride == 0 {
+                    stride = if frame_bytes.len() % height == 0 {
+                        frame_bytes.len() / height
+                    } else {
+                        0
+                    };
+                }
+                let expected_min = width.saturating_mul(height).saturating_mul(4);
+                if frame_bytes.len() >= expected_min && stride == 0 {
+                    // macOS IOSurface alloc size can be page-rounded; allow trailing padding.
+                    let extra = frame_bytes.len().saturating_sub(expected_min);
+                    if extra % height != 0 {
+                        stride = width.saturating_mul(4);
+                    }
+                }
+                let frame_len = frame_bytes.len();
+                if frame_len < expected_min || stride == 0 || stride < width * 4 {
+                    if let Some((guess_w, guess_h, guess_stride)) = guess_capture_dimensions(
+                        frame_len,
+                        session.screen_width as usize,
+                        session.screen_height as usize,
+                    ) {
+                        width = guess_w;
+                        height = guess_h;
+                        stride = guess_stride;
+                        if width != capture_width || height != capture_height {
+                            capture_log_throttled(&format!(
+                                "vnc capture adjusted: frame_len={} capture={}x{} guess={}x{} stride={}",
+                                frame_len,
+                                capture_width,
+                                capture_height,
+                                width,
+                                height,
+                                stride
+                            ));
+                        }
+                    } else {
                         capture_log_throttled(&format!(
-                            "vnc capture adjusted: frame_len={} capture={}x{} guess={}x{} stride={}",
-                            frame.len(),
+                            "vnc capture drop: frame_len={} capture={}x{} stride={}",
+                            frame_len,
                             capture_width,
                             capture_height,
-                            width,
-                            height,
                             stride
                         ));
+                        return None;
                     }
-                } else {
+                }
+                let expected_min = width.saturating_mul(height).saturating_mul(4);
+                if frame_len < expected_min || stride < width * 4 {
                     capture_log_throttled(&format!(
-                        "vnc capture drop: frame_len={} capture={}x{} stride={}",
-                        frame.len(),
-                        capture_width,
-                        capture_height,
+                        "vnc capture mismatch: frame_len={} expected>={} width={} height={} stride={}",
+                        frame_len,
+                        expected_min,
+                        width,
+                        height,
                         stride
                     ));
                     return None;
                 }
+                let source = extract_frame(frame_bytes, stride, width, height)?;
+                if session.width as usize == width && session.height as usize == height {
+                    Some(source)
+                } else {
+                    scale_bgra(
+                        &source,
+                        width,
+                        height,
+                        session.width as usize,
+                        session.height as usize,
+                    )
+                }
             }
-            let expected_min = width.saturating_mul(height).saturating_mul(4);
-            if frame.len() < expected_min || stride < width * 4 {
-                capture_log_throttled(&format!(
-                    "vnc capture mismatch: frame_len={} expected>={} width={} height={} stride={}",
-                    frame.len(),
-                    expected_min,
-                    width,
-                    height,
-                    stride
-                ));
-                return None;
-            }
-            let source = extract_frame(
-                &frame,
-                stride,
-                width,
-                height,
-            )?;
-            if session.width as usize == width
-                && session.height as usize == height
-            {
-                Some(source)
-            } else {
-                scale_bgra(
-                    &source,
-                    width,
-                    height,
-                    session.width as usize,
-                    session.height as usize,
-                )
-            }
-        }
+            Frame::Texture(_) => None,
+        },
         Err(error) if error.kind() == ErrorKind::WouldBlock => None,
         Err(_) => None,
     }
@@ -1656,6 +1912,7 @@ fn build_framebuffer_update(
     pixel_format: &PixelFormatSpec,
     frame_width: u32,
     frame_height: u32,
+    allow_large_raw: bool,
 ) -> Result<Vec<u8>, String> {
     let rect_count = updates.len().min(u16::MAX as usize) as u16;
     let mut buffer = Vec::new();
@@ -1684,6 +1941,9 @@ fn build_framebuffer_update(
                 let is_large = frame_area > 0
                     && (rect.width as usize * rect.height as usize) as f32
                         >= (frame_area as f32) * LARGE_UPDATE_THRESHOLD;
+                if is_large && allow_large_raw {
+                    encoding = ENCODING_RAW;
+                }
                 if pixel_format.bits_per_pixel == 16
                     && matches!(encoding, ENCODING_TIGHT | ENCODING_ZRLE)
                 {
@@ -2005,7 +2265,7 @@ fn spawn_capture_thread(
     last_input_at: Arc<AtomicU64>,
     data_saver_enabled: Arc<AtomicBool>,
     high_perf_enabled: Arc<AtomicBool>,
-    sender: tokio::sync::mpsc::Sender<FrameUpdate>,
+    sender: tokio::sync::mpsc::Sender<FrameEnvelope>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         if guard.load(Ordering::SeqCst) != generation {
@@ -2051,7 +2311,7 @@ fn spawn_capture_thread(
             session.screen_width,
             session.screen_height,
         );
-        let mut last_frame: Option<Vec<u8>> = None;
+        let mut last_sent_frame: Option<Vec<u8>> = None;
         #[cfg(target_os = "macos")]
         let mut last_cursor: Option<SystemCursor> = None;
         let mut logged_first_frame = false;
@@ -2065,6 +2325,7 @@ fn spawn_capture_thread(
             .unwrap_or_else(Instant::now);
         let mut last_sent = Instant::now();
         let mut send_backoff = Duration::from_millis(0);
+        let mut frame_id: u64 = 0;
         loop {
             if !running.load(Ordering::SeqCst)
                 || guard.load(Ordering::SeqCst) != generation
@@ -2121,18 +2382,35 @@ fn spawn_capture_thread(
                                 cursor_data.mask.len()
                             ));
                         }
-                        let _ = sender.try_send(vec![RectUpdate::Cursor(cursor_data)]);
+                        frame_id = frame_id.wrapping_add(1);
+                        let envelope = FrameEnvelope {
+                            id: frame_id,
+                            queued_at_ms: current_millis(),
+                            capture_ms: 0,
+                            diff_ms: 0,
+                            is_full: false,
+                            is_keepalive: false,
+                            rects: 1,
+                            update: vec![RectUpdate::Cursor(cursor_data)],
+                        };
+                        match sender.try_send(envelope) {
+                            Ok(_) => {}
+                            Err(TrySendError::Closed(_)) => break,
+                            Err(TrySendError::Full(_)) => {}
+                        }
                         last_cursor = Some(cursor);
                     }
                 }
             }
 
+            let capture_start = Instant::now();
             if let Some(frame) = capture_frame(
                 &mut capturer,
                 &session,
                 capture_width as usize,
                 capture_height as usize,
             ) {
+                let capture_ms = capture_start.elapsed().as_millis() as u64;
                 if !logged_first_frame {
                     logged_first_frame = true;
                     vnc_log(&format!(
@@ -2141,14 +2419,16 @@ fn spawn_capture_thread(
                     ));
                 }
                 last_success = Instant::now();
-                let send_full = force_full.swap(false, Ordering::SeqCst) || last_frame.is_none();
+                let send_full =
+                    force_full.swap(false, Ordering::SeqCst) || last_sent_frame.is_none();
+                let diff_start = Instant::now();
                 let update = if send_full {
                     Some(build_full_update(
                         &frame,
                         session.width as usize,
                         session.height as usize,
                     ))
-                } else if let Some(previous) = last_frame.as_ref() {
+                } else if let Some(previous) = last_sent_frame.as_ref() {
                     build_diff_update(
                         &frame,
                         previous,
@@ -2159,34 +2439,78 @@ fn spawn_capture_thread(
                 } else {
                     None
                 };
-                last_frame = Some(frame);
+                let diff_ms = diff_start.elapsed().as_millis() as u64;
                 if let Some(update) = update {
-                    if sender.try_send(update).is_ok() {
-                        last_sent = Instant::now();
-                        send_backoff = Duration::from_millis(0);
-                    } else if sender.is_closed() {
-                        break;
-                    } else {
-                        send_backoff = if send_backoff == Duration::from_millis(0) {
-                            Duration::from_millis(2)
-                        } else {
-                            (send_backoff + Duration::from_millis(2))
-                                .min(Duration::from_millis(12))
-                        };
+                    frame_id = frame_id.wrapping_add(1);
+                    let rects = update.len().min(u16::MAX as usize) as u16;
+                    let envelope = FrameEnvelope {
+                        id: frame_id,
+                        queued_at_ms: current_millis(),
+                        capture_ms,
+                        diff_ms,
+                        is_full: send_full,
+                        is_keepalive: false,
+                        rects,
+                        update,
+                    };
+                    match sender.try_send(envelope) {
+                        Ok(_) => {
+                            last_sent_frame = Some(frame);
+                            last_sent = Instant::now();
+                            send_backoff = Duration::from_millis(0);
+                        }
+                        Err(TrySendError::Closed(_)) => break,
+                        Err(TrySendError::Full(envelope)) => {
+                            if timing_trace_interval_ms().is_some() {
+                                timing_trace(&format!(
+                                    "vnc timing capture drop frame={} rects={} backoff_ms={}",
+                                    envelope.id,
+                                    envelope.rects,
+                                    send_backoff.as_millis()
+                                ));
+                            }
+                            force_full.store(true, Ordering::SeqCst);
+                            send_backoff = if send_backoff == Duration::from_millis(0) {
+                                Duration::from_millis(2)
+                            } else {
+                                (send_backoff + Duration::from_millis(2))
+                                    .min(Duration::from_millis(12))
+                            };
+                        }
                     }
                 } else if last_sent.elapsed() >= keepalive_interval {
-                    if sender.try_send(Vec::new()).is_ok() {
-                        last_sent = Instant::now();
-                        send_backoff = Duration::from_millis(0);
-                    } else if sender.is_closed() {
-                        break;
-                    } else {
-                        send_backoff = if send_backoff == Duration::from_millis(0) {
-                            Duration::from_millis(2)
-                        } else {
-                            (send_backoff + Duration::from_millis(2))
-                                .min(Duration::from_millis(12))
-                        };
+                    frame_id = frame_id.wrapping_add(1);
+                    let envelope = FrameEnvelope {
+                        id: frame_id,
+                        queued_at_ms: current_millis(),
+                        capture_ms: 0,
+                        diff_ms: 0,
+                        is_full: false,
+                        is_keepalive: true,
+                        rects: 0,
+                        update: Vec::new(),
+                    };
+                    match sender.try_send(envelope) {
+                        Ok(_) => {
+                            last_sent = Instant::now();
+                            send_backoff = Duration::from_millis(0);
+                        }
+                        Err(TrySendError::Closed(_)) => break,
+                        Err(TrySendError::Full(envelope)) => {
+                            if timing_trace_interval_ms().is_some() {
+                                timing_trace(&format!(
+                                    "vnc timing keepalive drop frame={} backoff_ms={}",
+                                    envelope.id,
+                                    send_backoff.as_millis()
+                                ));
+                            }
+                            send_backoff = if send_backoff == Duration::from_millis(0) {
+                                Duration::from_millis(2)
+                            } else {
+                                (send_backoff + Duration::from_millis(2))
+                                    .min(Duration::from_millis(12))
+                            };
+                        }
                     }
                 }
             } else if vnc_debug_enabled() && last_success.elapsed() > Duration::from_secs(5) {

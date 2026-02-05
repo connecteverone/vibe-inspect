@@ -71,18 +71,31 @@ pub fn build_tiles(
         return Vec::new();
     }
     let tile_size = tile_size.max(8) as usize;
-    let scale_x = frame.width as f64 / info.framebuffer_width as f64;
-    let scale_y = frame.height as f64 / info.framebuffer_height as f64;
+    let logical_width = if info.screen_width > 0 {
+        info.screen_width
+    } else {
+        info.framebuffer_width
+    };
+    let logical_height = if info.screen_height > 0 {
+        info.screen_height
+    } else {
+        info.framebuffer_height
+    };
+    if logical_width == 0 || logical_height == 0 {
+        return Vec::new();
+    }
+    let scale_x = frame.width as f64 / logical_width as f64;
+    let scale_y = frame.height as f64 / logical_height as f64;
     let half_w = viewport.viewport_width.max(1.0) / 2.0;
     let half_h = viewport.viewport_height.max(1.0) / 2.0;
     let mut left = viewport.center_x - half_w - viewport.prefetch_radius;
     let mut top = viewport.center_y - half_h - viewport.prefetch_radius;
     let mut right = viewport.center_x + half_w + viewport.prefetch_radius;
     let mut bottom = viewport.center_y + half_h + viewport.prefetch_radius;
-    left = left.clamp(0.0, info.framebuffer_width as f64);
-    top = top.clamp(0.0, info.framebuffer_height as f64);
-    right = right.clamp(0.0, info.framebuffer_width as f64);
-    bottom = bottom.clamp(0.0, info.framebuffer_height as f64);
+    left = left.clamp(0.0, logical_width as f64);
+    top = top.clamp(0.0, logical_height as f64);
+    right = right.clamp(0.0, logical_width as f64);
+    bottom = bottom.clamp(0.0, logical_height as f64);
     if right <= left || bottom <= top {
         return Vec::new();
     }
@@ -115,13 +128,13 @@ pub fn build_tiles(
                 let (logical_left, logical_right) = map_physical_to_logical_bounds(
                     x,
                     x + tile_w,
-                    info.framebuffer_width,
+                    logical_width,
                     frame.width,
                 );
                 let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
                     y,
                     y + tile_h,
-                    info.framebuffer_height,
+                    logical_height,
                     frame.height,
                 );
                 let logical_w = logical_right.saturating_sub(logical_left).max(1);
@@ -164,13 +177,13 @@ pub fn build_tiles(
             let (logical_left, logical_right) = map_physical_to_logical_bounds(
                 x,
                 x + tile_w,
-                info.framebuffer_width,
+                logical_width,
                 frame.width,
             );
             let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
                 y,
                 y + tile_h,
-                info.framebuffer_height,
+                logical_height,
                 frame.height,
             );
             let logical_w = logical_right.saturating_sub(logical_left).max(1);

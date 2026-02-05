@@ -1,6 +1,7 @@
-use scrap::{Capturer, Display};
+use scrap::{Capturer, Display, Frame, TraitCapturer, TraitPixelBuffer};
 use std::io::ErrorKind;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 pub struct RoiFrame {
     pub data: Vec<u8>,
@@ -45,43 +46,57 @@ impl RoiCapturer {
     }
 
     pub fn capture(&mut self) -> Option<RoiFrame> {
-        match self.capturer.frame() {
-            Ok(frame) => {
-                if self.capture_width == 0 || self.capture_height == 0 {
-                    return None;
-                }
-                let mut width = self.capture_width;
-                let mut height = self.capture_height;
-                let mut stride = if frame.len() % height == 0 {
-                    frame.len() / height
-                } else {
-                    0
-                };
-                let expected_min = width.saturating_mul(height).saturating_mul(4);
-                if frame.len() >= expected_min && stride == 0 {
-                    let extra = frame.len().saturating_sub(expected_min);
-                    if extra % height != 0 {
-                        stride = width.saturating_mul(4);
+        match self.capturer.frame(Duration::from_millis(0)) {
+            Ok(frame) => match frame {
+                Frame::PixelBuffer(pixelbuffer) => {
+                    let frame_bytes = pixelbuffer.data();
+                    let mut width = pixelbuffer.width();
+                    let mut height = pixelbuffer.height();
+                    if width == 0 || height == 0 {
+                        width = self.capture_width;
+                        height = self.capture_height;
                     }
-                }
-                if frame.len() < expected_min || stride == 0 || stride < width * 4 {
-                    if let Some((guess_w, guess_h, guess_stride)) =
-                        guess_capture_dimensions(frame.len(), self.fallback_width, self.fallback_height)
-                    {
-                        width = guess_w;
-                        height = guess_h;
-                        stride = guess_stride;
-                    } else {
+                    if width == 0 || height == 0 {
                         return None;
                     }
+                    let mut stride = pixelbuffer.stride().get(0).copied().unwrap_or(0);
+                    if stride == 0 {
+                        stride = if frame_bytes.len() % height == 0 {
+                            frame_bytes.len() / height
+                        } else {
+                            0
+                        };
+                    }
+                    let expected_min = width.saturating_mul(height).saturating_mul(4);
+                    if frame_bytes.len() >= expected_min && stride == 0 {
+                        let extra = frame_bytes.len().saturating_sub(expected_min);
+                        if extra % height != 0 {
+                            stride = width.saturating_mul(4);
+                        }
+                    }
+                    let frame_len = frame_bytes.len();
+                    if frame_len < expected_min || stride == 0 || stride < width * 4 {
+                        if let Some((guess_w, guess_h, guess_stride)) = guess_capture_dimensions(
+                            frame_len,
+                            self.fallback_width,
+                            self.fallback_height,
+                        ) {
+                            width = guess_w;
+                            height = guess_h;
+                            stride = guess_stride;
+                        } else {
+                            return None;
+                        }
+                    }
+                    let expected_min = width.saturating_mul(height).saturating_mul(4);
+                    if frame_len < expected_min || stride < width * 4 {
+                        return None;
+                    }
+                    let data = extract_frame(frame_bytes, stride, width, height)?;
+                    Some(RoiFrame { data, width, height })
                 }
-                let expected_min = width.saturating_mul(height).saturating_mul(4);
-                if frame.len() < expected_min || stride < width * 4 {
-                    return None;
-                }
-                let data = extract_frame(&frame, stride, width, height)?;
-                Some(RoiFrame { data, width, height })
-            }
+                Frame::Texture(_) => None,
+            },
             Err(error) if error.kind() == ErrorKind::WouldBlock => None,
             Err(_) => None,
         }

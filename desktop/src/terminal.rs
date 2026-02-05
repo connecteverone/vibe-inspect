@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -26,6 +26,15 @@ const ENV_TERMINALD_BIN: &str = "VIBE_TERMINALD_BIN";
 const TERMINALD_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const TERMINALD_AUTOSTART_TIMEOUT: Duration = Duration::from_secs(3);
 const TERMINALD_DISCOVERY_POLL: Duration = Duration::from_millis(150);
+const TERMINALD_LIST_LOG_THROTTLE: Duration = Duration::from_secs(60);
+
+struct TerminaldListLogState {
+    last_at: Instant,
+    last_key: String,
+    suppressed: u32,
+}
+
+static TERMINALD_LIST_LOG_STATE: OnceLock<Mutex<TerminaldListLogState>> = OnceLock::new();
 
 type TerminaldSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -44,9 +53,38 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
     match terminal_runtime().block_on(list_terminal_sessions_async()) {
         Ok(sessions) => sessions,
         Err(error) => {
-            eprintln!("terminald list failed: {} ({})", error.message, error.code);
+            log_terminald_list_error(&error);
             Vec::new()
         }
+    }
+}
+
+fn log_terminald_list_error(error: &TerminalError) {
+    let key = format!("{} ({})", error.message, error.code);
+    let now = Instant::now();
+    let state = TERMINALD_LIST_LOG_STATE.get_or_init(|| {
+        Mutex::new(TerminaldListLogState {
+            last_at: now.checked_sub(TERMINALD_LIST_LOG_THROTTLE).unwrap_or(now),
+            last_key: String::new(),
+            suppressed: 0,
+        })
+    });
+    let mut guard = state.lock().unwrap();
+    let should_log = guard.last_key != key || now.duration_since(guard.last_at) >= TERMINALD_LIST_LOG_THROTTLE;
+    if should_log {
+        if guard.suppressed > 0 {
+            eprintln!(
+                "terminald list failed: {} (suppressed {} repeats)",
+                key, guard.suppressed
+            );
+            guard.suppressed = 0;
+        } else {
+            eprintln!("terminald list failed: {}", key);
+        }
+        guard.last_at = now;
+        guard.last_key = key;
+    } else {
+        guard.suppressed = guard.suppressed.saturating_add(1);
     }
 }
 

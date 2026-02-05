@@ -658,9 +658,11 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     final effective = _applyInputCalibration(pointer);
-    final scale = _baseScale(_lastViewSize) * _zoom;
+    final displaySize = _displaySize();
+    final scale = _baseScale(_lastViewSize, contentSize: displaySize) * _zoom;
     final translation = _calculateTranslation(_lastViewSize);
-    final screen = translation + effective * scale;
+    final effectiveDisplay = _frameToDisplay(effective, displaySize);
+    final screen = translation + effectiveDisplay * scale;
     _logCursorDebug('pointer', {
       'source': source,
       'frame': {'x': pointer.dx, 'y': pointer.dy},
@@ -719,36 +721,6 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
 
   double _clampZoom(double value) {
     return value.clamp(_zoomMin, _zoomMax);
-  }
-
-  Uri _buildVncWebsocketUri(VncSessionInfo info) {
-    final baseUri = Uri.parse(widget.agentBaseUrl!);
-    final scheme = baseUri.scheme == 'https' ? 'wss' : 'ws';
-    var basePath = baseUri.path;
-    if (basePath.isNotEmpty && !basePath.endsWith('/')) {
-      basePath = '$basePath/';
-    }
-    final wsPath = info.wsPath.startsWith('/') ? info.wsPath.substring(1) : info.wsPath;
-    final mergedPath = basePath.isEmpty ? '/$wsPath' : '$basePath$wsPath';
-    final queryParameters = Map<String, String>.from(baseUri.queryParameters);
-    queryParameters['token'] = info.token;
-    final authToken = widget.authToken?.trim();
-    if (authToken != null && authToken.isNotEmpty) {
-      queryParameters['auth_token'] = authToken;
-    }
-    final clientId = widget.clientId?.trim();
-    if (clientId != null && clientId.isNotEmpty) {
-      queryParameters['client_id'] = clientId;
-    }
-    final clientName = widget.clientName?.trim();
-    if (clientName != null && clientName.isNotEmpty) {
-      queryParameters['client_name'] = clientName;
-    }
-    return baseUri.replace(
-      scheme: scheme,
-      path: mergedPath,
-      queryParameters: queryParameters,
-    );
   }
 
   Uint8List _acquireFrameDecodeBuffer(int length) {
@@ -811,7 +783,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           _frameImage = image;
           _streamFps = fps;
           _streamLatencyMs = latencyMs;
-          _roiRenderer ??= RoiRenderer(framebufferSize: newSize);
+          _roiRenderer ??= RoiRenderer(
+            framebufferSize: newSize,
+            logicalSize: _roiLogicalSize(),
+          );
           if (sizeChanged) {
             // Scale pointer position proportionally when frame size changes.
             // This ensures the cursor stays at the same relative position.
@@ -830,7 +805,10 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
             }
             _roiImages.clear();
             _roiTileFrameIds.clear();
-            _roiRenderer = RoiRenderer(framebufferSize: newSize);
+            _roiRenderer = RoiRenderer(
+              framebufferSize: newSize,
+              logicalSize: _roiLogicalSize(),
+            );
             _roiRevision += 1;
           }
         });
@@ -983,28 +961,30 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
           },
         }, force: true);
       }
-      final wsUri = _buildVncWebsocketUri(sessionInfo);
       final quicPort = sessionInfo.quicPort ?? 0;
       final baseUrl = widget.agentBaseUrl?.trim() ?? '';
       var quicHost = Uri.tryParse(baseUrl)?.host ?? '';
       if (quicHost.isEmpty && baseUrl.isNotEmpty) {
         quicHost = Uri.parse('http://$baseUrl').host;
       }
-      final preferQuic = !kIsWeb && quicPort > 0 && quicHost.isNotEmpty;
+      if (kIsWeb) {
+        throw Exception('QUIC-only mode is not supported on web.');
+      }
+      if (quicPort <= 0 || quicHost.isEmpty) {
+        throw Exception('QUIC port or host is unavailable.');
+      }
       final authToken = widget.authToken?.trim();
       final clientId = widget.clientId?.trim();
       final clientName = widget.clientName?.trim();
-      VncTransport transport = preferQuic
-          ? VncQuicTransport(
-              host: quicHost,
-              port: quicPort,
-              sessionId: sessionInfo.sessionId,
-              token: sessionInfo.token,
-              authToken: authToken != null && authToken.isNotEmpty ? authToken : null,
-              clientId: clientId != null && clientId.isNotEmpty ? clientId : null,
-              clientName: clientName != null && clientName.isNotEmpty ? clientName : null,
-            )
-          : WebSocketVncTransport(uri: wsUri);
+      VncTransport transport = VncQuicTransport(
+        host: quicHost,
+        port: quicPort,
+        sessionId: sessionInfo.sessionId,
+        token: sessionInfo.token,
+        authToken: authToken != null && authToken.isNotEmpty ? authToken : null,
+        clientId: clientId != null && clientId.isNotEmpty ? clientId : null,
+        clientName: clientName != null && clientName.isNotEmpty ? clientName : null,
+      );
       candidate = VncRfbClient(
         transport: transport,
         onFrame: _handleFrame,
@@ -1020,32 +1000,7 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
         },
         preferredEncodings: _buildEncodingList(),
       );
-      try {
-        await candidate.connect();
-      } catch (error) {
-        if (preferQuic) {
-          candidate.close();
-          transport = WebSocketVncTransport(uri: wsUri);
-          candidate = VncRfbClient(
-            transport: transport,
-            onFrame: _handleFrame,
-            onCursor: _handleCursor,
-            onError: (message) {
-              if (!mounted || _isDisposed) {
-                return;
-              }
-              if (_vncClient != candidate) {
-                return;
-              }
-              unawaited(_setStreamFailure(message));
-            },
-            preferredEncodings: _buildEncodingList(),
-          );
-          await candidate.connect();
-        } else {
-          rethrow;
-        }
-      }
+      await candidate.connect();
       if (!mounted || _isDisposed) {
         return;
       }
@@ -1261,9 +1216,30 @@ class _VncSessionScreenState extends State<VncSessionScreen> {
       return;
     }
     final focus = _effectivePointerPosition();
+    final viewSize = _lastViewSize;
+    final hasView = viewSize.width > 0 && viewSize.height > 0;
+    final anchor = hasView ? _frameToScreen(focus, viewSize) : null;
     setState(() {
       _zoomValue = clamped;
-      _cameraCenter = focus;
+      if (hasView && anchor != null) {
+        final displaySize = _displaySize(zoom: clamped);
+        final scale =
+            _baseScale(viewSize, contentSize: displaySize) * clamped;
+        if (scale > 0) {
+          final center = Offset(viewSize.width / 2, viewSize.height / 2);
+          final focusDisplay = _frameToDisplay(focus, displaySize);
+          final nextCenterDisplay = focusDisplay + (center - anchor) / scale;
+          final nextCenter = _displayToFrame(nextCenterDisplay, displaySize);
+          _cameraCenter = Offset(
+            nextCenter.dx.clamp(0, _frameSize.width),
+            nextCenter.dy.clamp(0, _frameSize.height),
+          );
+        } else {
+          _cameraCenter = focus;
+        }
+      } else {
+        _cameraCenter = focus;
+      }
     });
     _scheduleRoiRequest();
     if (_cursorDebugEnabled) {
