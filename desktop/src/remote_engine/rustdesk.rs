@@ -1,13 +1,13 @@
 use super::{
-    RemoteBackend, RemoteBackendKind, RemoteCapabilities, RemoteQuicContext, RemoteSessionInfo,
-    RemoteStartRequest, RemoteStatus,
+    input_prefs::detect_input_preferences, RemoteBackend, RemoteBackendKind, RemoteCapabilities,
+    RemoteQuicContext, RemoteSessionInfo, RemoteStartRequest, RemoteStatus,
 };
 use hbb_common::config::{self, Config};
 use hbb_common::password_security;
 use hbb_common::tcp::FramedStream;
 use hbb_common::Stream as RustDeskStream;
-use rand::{distributions::Alphanumeric, Rng};
 use librustdesk::{Connection as RustDeskConnection, ServerPtr};
+use rand::{distributions::Alphanumeric, Rng};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -149,6 +149,7 @@ impl RemoteBackend for RustDeskBackend {
         };
         let hwcodec = Some(cfg!(feature = "rustdesk-hwcodec"));
         let capabilities = Some(self.capabilities());
+        let input_preferences = Some(detect_input_preferences());
         if let Some(existing_id) = self.sessions.keys().next().cloned() {
             let mut token = String::new();
             let mut display_index = request.display_index;
@@ -177,7 +178,8 @@ impl RemoteBackend for RustDeskBackend {
                 }
             }
             if self.sessions.len() > 1 {
-                self.sessions.retain(|session_id, _| *session_id == existing_id);
+                self.sessions
+                    .retain(|session_id, _| *session_id == existing_id);
             }
             self.running = true;
             self.last_error = None;
@@ -193,6 +195,7 @@ impl RemoteBackend for RustDeskBackend {
                 codec_preference,
                 hwcodec,
                 capabilities,
+                input_preferences: input_preferences.clone(),
             });
         }
         password_security::update_temporary_password();
@@ -223,6 +226,7 @@ impl RemoteBackend for RustDeskBackend {
             codec_preference,
             hwcodec,
             capabilities,
+            input_preferences,
         })
     }
 
@@ -311,10 +315,9 @@ impl AsyncWrite for QuicBiStream {
     ) -> std::task::Poll<std::io::Result<usize>> {
         match std::pin::Pin::new(&mut self.send).poll_write(cx, data) {
             std::task::Poll::Ready(Ok(size)) => std::task::Poll::Ready(Ok(size)),
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -325,10 +328,9 @@ impl AsyncWrite for QuicBiStream {
     ) -> std::task::Poll<std::io::Result<()>> {
         match std::pin::Pin::new(&mut self.send).poll_flush(cx) {
             std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -339,10 +341,9 @@ impl AsyncWrite for QuicBiStream {
     ) -> std::task::Poll<std::io::Result<()>> {
         match std::pin::Pin::new(&mut self.send).poll_shutdown(cx) {
             std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }

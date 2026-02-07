@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use quinn::{Connection, RecvStream, SendStream};
 
-pub mod rustdesk;
+pub mod input_prefs;
 pub mod media;
+pub mod rustdesk;
 pub mod service;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +21,11 @@ pub struct RemoteCapabilities {
     pub h265: bool,
     pub av1: bool,
     pub zero_copy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteInputPreferences {
+    pub natural_scroll: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +48,7 @@ pub struct RemoteSessionInfo {
     pub codec_preference: Option<String>,
     pub hwcodec: Option<bool>,
     pub capabilities: Option<RemoteCapabilities>,
+    pub input_preferences: Option<RemoteInputPreferences>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

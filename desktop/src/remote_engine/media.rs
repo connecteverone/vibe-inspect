@@ -1,18 +1,21 @@
-use super::{RemoteBackend, RemoteBackendKind, RemoteCapabilities, RemoteQuicContext, RemoteSessionInfo, RemoteStartRequest, RemoteStatus};
+use super::{
+    input_prefs::detect_input_preferences, RemoteBackend, RemoteBackendKind, RemoteCapabilities,
+    RemoteQuicContext, RemoteSessionInfo, RemoteStartRequest, RemoteStatus,
+};
 use crate::remote_media::{protocol, FrameMeta, RoiRect, VideoCodec};
 use crate::roi::RoiCapturer;
+use enigo::{Enigo, MouseButton, MouseControllable};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use enigo::{Enigo, MouseButton, MouseControllable};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone)]
 struct MediaSession {
@@ -96,6 +99,7 @@ impl RemoteBackend for MediaBackend {
             codec_preference: None,
             hwcodec: Some(false),
             capabilities: Some(self.capabilities()),
+            input_preferences: Some(detect_input_preferences()),
         })
     }
 
@@ -162,19 +166,18 @@ impl RemoteBackend for MediaBackend {
         let notify_capture = Arc::clone(&notify_frame);
         let running_capture = Arc::clone(&running);
         std::thread::spawn(move || {
-            let mut capturer = match RoiCapturer::new(display_index, fallback_width, fallback_height) {
-                Ok(c) => c,
-                Err(err) => {
-                    eprintln!("media_v2 capture init failed: {err}");
-                    return;
-                }
-            };
+            let mut capturer =
+                match RoiCapturer::new(display_index, fallback_width, fallback_height) {
+                    Ok(c) => c,
+                    Err(err) => {
+                        eprintln!("media_v2 capture init failed: {err}");
+                        return;
+                    }
+                };
             if media_v2_debug_enabled() {
                 eprintln!(
                     "media_v2 capture ready: display={:?} fallback={}x{}",
-                    display_index,
-                    fallback_width,
-                    fallback_height
+                    display_index, fallback_width, fallback_height
                 );
             }
             let mut seq: u32 = 0;
@@ -198,18 +201,14 @@ impl RemoteBackend for MediaBackend {
                         }
                     }
                     let roi = roi_state.lock().ok().and_then(|guard| *guard);
-                    let (data, width, height, roi_used): (
-                        Vec<u8>,
-                        usize,
-                        usize,
-                        Option<RoiRect>,
-                    ) = if let Some(roi) = roi {
-                        crop_rgba(&frame.data, frame.width, frame.height, roi)
-                            .map(|data| (data, roi.w as usize, roi.h as usize, Some(roi)))
-                            .unwrap_or((frame.data, frame.width, frame.height, None))
-                    } else {
-                        (frame.data, frame.width, frame.height, None)
-                    };
+                    let (data, width, height, roi_used): (Vec<u8>, usize, usize, Option<RoiRect>) =
+                        if let Some(roi) = roi {
+                            crop_rgba(&frame.data, frame.width, frame.height, roi)
+                                .map(|data| (data, roi.w as usize, roi.h as usize, Some(roi)))
+                                .unwrap_or((frame.data, frame.width, frame.height, None))
+                        } else {
+                            (frame.data, frame.width, frame.height, None)
+                        };
                     let meta = FrameMeta {
                         seq,
                         timestamp_ms: now_millis(),

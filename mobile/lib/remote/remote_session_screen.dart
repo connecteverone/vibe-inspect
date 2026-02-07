@@ -10,7 +10,9 @@ const double _rustdeskMouseButtonHeight = 48;
 const double _rustdeskControlGap = 12;
 const double _rustdeskButtonGap = 8;
 const double _rustdeskPortraitControlsHeight =
-    _rustdeskTrackpadHeightPortrait + _rustdeskMouseButtonHeight + _rustdeskButtonGap;
+    _rustdeskTrackpadHeightPortrait +
+    _rustdeskMouseButtonHeight +
+    _rustdeskButtonGap;
 
 class RemoteSessionScreen extends StatefulWidget {
   const RemoteSessionScreen({
@@ -410,6 +412,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   bool _isFullscreen = false;
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
+  bool? _hostNaturalScroll;
 
   @override
   void initState() {
@@ -421,6 +424,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
       clientName: widget.clientName,
     );
     _inputController = RustdeskInputController(bridge: RustdeskBridge.instance);
+    _inputController.setTrackpadScrollBehavior(const TrackpadScrollBehavior());
     _controller.addListener(_handleControllerUpdate);
     _bootstrap();
   }
@@ -431,9 +435,26 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
 
   Future<void> _stopRemote() => _controller.stopRemote();
 
-  Future<void> _connectQuic(RemoteSessionInfo info) => _controller.connectQuic(info);
+  Future<void> _connectQuic(RemoteSessionInfo info) =>
+      _controller.connectQuic(info);
+
+  void _syncTrackpadScrollBehavior() {
+    final hostNaturalScroll =
+        _controller.sessionInfo?.inputPreferences?.naturalScroll;
+    if (_hostNaturalScroll == hostNaturalScroll) {
+      return;
+    }
+    _hostNaturalScroll = hostNaturalScroll;
+    _inputController.setTrackpadScrollBehavior(
+      TrackpadScrollBehavior(
+        mode: TrackpadScrollMode.followHost,
+        hostNaturalScroll: hostNaturalScroll,
+      ),
+    );
+  }
 
   void _handleControllerUpdate() {
+    _syncTrackpadScrollBehavior();
     if (!mounted) return;
     setState(() {});
   }
@@ -593,7 +614,8 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
                         label: const Text('Stop'),
                       ),
                       OutlinedButton.icon(
-                        onPressed: _controller.isQuicConnecting || sessionInfo == null
+                        onPressed:
+                            _controller.isQuicConnecting || sessionInfo == null
                             ? null
                             : () => _connectQuic(sessionInfo),
                         icon: const Icon(Icons.bolt),
@@ -608,9 +630,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
           ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-            sliver: SliverToBoxAdapter(
-              child: _buildRemoteView(sessionInfo),
-            ),
+            sliver: SliverToBoxAdapter(child: _buildRemoteView(sessionInfo)),
           ),
         ],
       ),
@@ -711,7 +731,8 @@ extension on _RemoteSessionScreenState {
                       alignment: Alignment.centerLeft,
                       child: SizedBox(
                         width: _rustdeskZoomBarWidth,
-                        height: _rustdeskTrackpadHeightLandscape +
+                        height:
+                            _rustdeskTrackpadHeightLandscape +
                             _rustdeskMouseButtonHeight +
                             _rustdeskButtonGap,
                         child: RustdeskZoomBar(
@@ -779,7 +800,10 @@ extension on _RemoteSessionScreenState {
     return _buildPortraitSession(sessionInfo, fullscreen: false);
   }
 
-  Widget _buildPortraitSession(RemoteSessionInfo? sessionInfo, {required bool fullscreen}) {
+  Widget _buildPortraitSession(
+    RemoteSessionInfo? sessionInfo, {
+    required bool fullscreen,
+  }) {
     final rustdeskSessionId = _controller.rustdeskSessionId;
     if (rustdeskSessionId == null) {
       return const _InlineStatus(message: 'RustDesk stream not connected.');
@@ -796,10 +820,12 @@ extension on _RemoteSessionScreenState {
         final desiredHeight = maxWidth / aspect;
         final rawMaxHeight = fullscreen
             ? (constraints.maxHeight -
-                _rustdeskPortraitControlsHeight -
-                _rustdeskControlGap)
+                  _rustdeskPortraitControlsHeight -
+                  _rustdeskControlGap)
             : desiredHeight;
-        final maxHeight = fullscreen ? math.max(160.0, rawMaxHeight) : rawMaxHeight;
+        final maxHeight = fullscreen
+            ? math.max(160.0, rawMaxHeight)
+            : rawMaxHeight;
         final remoteHeight = fullscreen
             ? desiredHeight.clamp(160.0, maxHeight).toDouble()
             : desiredHeight;
@@ -830,8 +856,9 @@ extension on _RemoteSessionScreenState {
                       ),
                       const SizedBox(width: 8),
                       RustdeskIconButton(
-                        icon:
-                            fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                        icon: fullscreen
+                            ? Icons.fullscreen_exit
+                            : Icons.fullscreen,
                         onPressed: _toggleFullscreen,
                         glassStyle: fullscreen,
                       ),
@@ -952,8 +979,7 @@ class _RemoteSessionCard extends StatelessWidget {
           _InfoRow(label: 'Backend', value: info.backend),
           if (info.connectUri != null)
             _InfoRow(label: 'Connect URI', value: info.connectUri!),
-          if (info.token != null)
-            _InfoRow(label: 'Token', value: info.token!),
+          if (info.token != null) _InfoRow(label: 'Token', value: info.token!),
           if (info.codecPreference != null)
             _InfoRow(label: 'Codec pref', value: info.codecPreference!),
           if (info.hwcodecEnabled != null)
@@ -963,6 +989,11 @@ class _RemoteSessionCard extends StatelessWidget {
             ),
           if (info.capabilities != null)
             _InfoRow(label: 'Caps', value: info.capabilities!.summary),
+          if (info.inputPreferences?.naturalScroll != null)
+            _InfoRow(
+              label: 'Natural scroll',
+              value: info.inputPreferences!.naturalScroll! ? 'On' : 'Off',
+            ),
         ],
       ),
     );
@@ -1019,10 +1050,7 @@ class _RemoteQuicCard extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _InfoRow(
-                  label: 'Port',
-                  value: port?.toString() ?? '-',
-                ),
+                _InfoRow(label: 'Port', value: port?.toString() ?? '-'),
                 _InfoRow(
                   label: 'Handshake',
                   value: '${handshake!.handshakeMs} ms',

@@ -22,6 +22,7 @@ import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/remote/media_protocol.dart';
 import 'package:mobile/remote/remote_quic_client.dart';
 import 'package:mobile/remote/trackpad_motion_engine.dart';
+import 'package:mobile/remote/trackpad_scroll_behavior.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile/vnc/vnc_quic_transport.dart';
 import 'package:uuid/uuid.dart';
@@ -62,8 +63,9 @@ void main() {
   if (kIsWeb) {
     RendererBinding.instance.ensureSemantics();
   }
-  final storageInitializer =
-      kIsWeb ? const MemoryStorageInitializer() : const LocalStorageInitializer();
+  final storageInitializer = kIsWeb
+      ? const MemoryStorageInitializer()
+      : const LocalStorageInitializer();
   runApp(VibeInspectApp(storageInitializer: storageInitializer));
 }
 
@@ -122,9 +124,7 @@ ThemeData _buildTheme() {
         foregroundColor: onPrimary,
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         textStyle: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -132,9 +132,7 @@ ThemeData _buildTheme() {
         foregroundColor: primary,
         side: const BorderSide(color: Color(0xFFE2E8F0)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -152,9 +150,7 @@ ThemeData _buildTheme() {
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: primary, width: 1.5),
       ),
-      hintStyle: textTheme.bodyMedium?.copyWith(
-        color: const Color(0xFF64748B),
-      ),
+      hintStyle: textTheme.bodyMedium?.copyWith(color: const Color(0xFF64748B)),
     ),
     cardTheme: CardThemeData(
       color: surface,
@@ -269,9 +265,7 @@ class _StorageGateState extends State<StorageGate> {
         }
         final storage = snapshot.data;
         if (storage == null) {
-          return const StorageErrorScreen(
-            error: 'Storage failed to load.',
-          );
+          return const StorageErrorScreen(error: 'Storage failed to load.');
         }
         return PairingScreen(
           storage: storage,
@@ -290,11 +284,7 @@ class StorageLoadingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
 
@@ -322,18 +312,18 @@ class StorageErrorScreen extends StatelessWidget {
             Text(
               'Storage unavailable',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF0F172A),
-                  ),
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF0F172A),
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               'Local history could not be initialized. Restart the app or retry '
               'after checking device storage permissions.',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF475569),
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF475569)),
             ),
             if (error != null) ...[
               const SizedBox(height: 12),
@@ -341,9 +331,9 @@ class StorageErrorScreen extends StatelessWidget {
                 error.toString(),
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF991B1B),
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: const Color(0xFF991B1B),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
             if (onRetry != null) ...[

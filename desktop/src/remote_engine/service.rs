@@ -1,4 +1,6 @@
-use super::{RemoteCapabilities, RemoteManager, RemoteSessionInfo, RemoteStartRequest, RemoteStatus};
+use super::{
+    RemoteCapabilities, RemoteManager, RemoteSessionInfo, RemoteStartRequest, RemoteStatus,
+};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

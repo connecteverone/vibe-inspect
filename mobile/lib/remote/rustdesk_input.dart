@@ -12,9 +12,14 @@ class RustdeskInputController extends ChangeNotifier {
   bool _cursorReady = false;
   bool _leftDown = false;
   bool _rightDown = false;
+  TrackpadScrollBehavior _scrollBehavior = const TrackpadScrollBehavior();
 
   Size get displaySize => _displaySize;
   Offset? get cursor => _cursorReady ? _cursor : null;
+
+  void setTrackpadScrollBehavior(TrackpadScrollBehavior behavior) {
+    _scrollBehavior = behavior;
+  }
 
   void attachSession(String sessionId) {
     _sessionId = sessionId;
@@ -65,10 +70,7 @@ class RustdeskInputController extends ChangeNotifier {
     }
     final x = remote.dx.round();
     final y = remote.dy.round();
-    _bridge.sendMouse(sessionId, {
-      'x': '$x',
-      'y': '$y',
-    });
+    _bridge.sendMouse(sessionId, {'x': '$x', 'y': '$y'});
     _updateCursorTo(remote);
   }
 
@@ -77,14 +79,12 @@ class RustdeskInputController extends ChangeNotifier {
     if (sessionId == null) {
       return;
     }
-    final value = dy.round();
+    final adjustedDy = _scrollBehavior.transformDeltaY(dy);
+    final value = adjustedDy.round();
     if (value == 0) {
       return;
     }
-    _bridge.sendMouse(sessionId, {
-      'type': 'wheel',
-      'y': '$value',
-    });
+    _bridge.sendMouse(sessionId, {'type': 'wheel', 'y': '$value'});
   }
 
   void leftDown() {
@@ -148,10 +148,7 @@ class RustdeskInputController extends ChangeNotifier {
     if (sessionId == null) {
       return;
     }
-    _bridge.sendMouse(sessionId, {
-      'type': type,
-      'buttons': button,
-    });
+    _bridge.sendMouse(sessionId, {'type': type, 'buttons': button});
   }
 
   void _updateCursorBy(Offset delta) {

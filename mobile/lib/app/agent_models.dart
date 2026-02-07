@@ -39,28 +39,32 @@ class VncSessionInfo {
     final sessionId = payload['session_id']?.toString() ?? '';
     final token = payload['token']?.toString() ?? '';
     final wsPath = payload['ws_path']?.toString() ?? '/vnc/$sessionId';
-    final quicPort = int.tryParse(payload['quic_port']?.toString() ?? '') ??
+    final quicPort =
+        int.tryParse(payload['quic_port']?.toString() ?? '') ??
         int.tryParse(payload['quicPort']?.toString() ?? '');
     final width = int.tryParse(payload['width']?.toString() ?? '') ?? 0;
     final height = int.tryParse(payload['height']?.toString() ?? '') ?? 0;
-    final displayIndex =
-        int.tryParse(payload['display_index']?.toString() ?? '');
-    final inputWidth =
-        int.tryParse(payload['input_width']?.toString() ?? '');
-    final inputHeight =
-        int.tryParse(payload['input_height']?.toString() ?? '');
-    final inputOriginX =
-        double.tryParse(payload['input_origin_x']?.toString() ?? '');
-    final inputOriginY =
-        double.tryParse(payload['input_origin_y']?.toString() ?? '');
-    final inputScaleX =
-        double.tryParse(payload['input_scale_x']?.toString() ?? '');
-    final inputScaleY =
-        double.tryParse(payload['input_scale_y']?.toString() ?? '');
-    final screenWidth =
-        int.tryParse(payload['screen_width']?.toString() ?? '');
-    final screenHeight =
-        int.tryParse(payload['screen_height']?.toString() ?? '');
+    final displayIndex = int.tryParse(
+      payload['display_index']?.toString() ?? '',
+    );
+    final inputWidth = int.tryParse(payload['input_width']?.toString() ?? '');
+    final inputHeight = int.tryParse(payload['input_height']?.toString() ?? '');
+    final inputOriginX = double.tryParse(
+      payload['input_origin_x']?.toString() ?? '',
+    );
+    final inputOriginY = double.tryParse(
+      payload['input_origin_y']?.toString() ?? '',
+    );
+    final inputScaleX = double.tryParse(
+      payload['input_scale_x']?.toString() ?? '',
+    );
+    final inputScaleY = double.tryParse(
+      payload['input_scale_y']?.toString() ?? '',
+    );
+    final screenWidth = int.tryParse(payload['screen_width']?.toString() ?? '');
+    final screenHeight = int.tryParse(
+      payload['screen_height']?.toString() ?? '',
+    );
     if (sessionId.isEmpty || token.isEmpty) {
       throw const AgentCommandFailure(
         'VNC session response missing fields.',
@@ -155,7 +159,8 @@ class RemoteTerminalSession {
     final exitCode = int.tryParse(payload['exit_code']?.toString() ?? '');
     final lastOutput = payload['last_output']?.toString();
     final closedReasonRaw = payload['closed_reason']?.toString();
-    final closedReason = closedReasonRaw != null && closedReasonRaw.trim().isNotEmpty
+    final closedReason =
+        closedReasonRaw != null && closedReasonRaw.trim().isNotEmpty
         ? closedReasonRaw.trim()
         : null;
     if (id.isEmpty) {
@@ -165,8 +170,9 @@ class RemoteTerminalSession {
       );
     }
     final rawLabel = payload['label']?.toString() ?? '';
-    final resolvedLabel =
-        rawLabel.trim().isNotEmpty ? rawLabel.trim() : 'Terminal ${_truncate(id, 6)}';
+    final resolvedLabel = rawLabel.trim().isNotEmpty
+        ? rawLabel.trim()
+        : 'Terminal ${_truncate(id, 6)}';
     return RemoteTerminalSession(
       id: id,
       label: resolvedLabel,
@@ -203,12 +209,7 @@ class AgentCommandClient {
   }) async {
     final response = await _sendCommand(
       command: 'api',
-      payload: {
-        'method': method,
-        'url': url,
-        'headers': headers,
-        'body': body,
-      },
+      payload: {'method': method, 'url': url, 'headers': headers, 'body': body},
     );
     final payload = response.payload;
     if (payload == null) {
@@ -240,10 +241,7 @@ class AgentCommandClient {
   }
 
   Future<Map<String, dynamic>> fetchIdentity() async {
-    final response = await _sendCommand(
-      command: 'identity',
-      payload: const {},
-    );
+    final response = await _sendCommand(command: 'identity', payload: const {});
     final payload = response.payload;
     if (payload is! Map<String, dynamic>) {
       throw AgentCommandFailure(
@@ -266,9 +264,9 @@ class AgentCommandClient {
     for (final entry in sessions) {
       if (entry is Map) {
         try {
-          results.add(RemoteTerminalSession.fromPayload(
-            Map<String, dynamic>.from(entry),
-          ));
+          results.add(
+            RemoteTerminalSession.fromPayload(Map<String, dynamic>.from(entry)),
+          );
         } catch (_) {
           // Ignore malformed session entries.
         }
@@ -290,9 +288,7 @@ class AgentCommandClient {
     String? workingDir,
     Map<String, String>? env,
   }) async {
-    final payload = <String, dynamic>{
-      'action': action,
-    };
+    final payload = <String, dynamic>{'action': action};
     if (sessionId != null && sessionId.trim().isNotEmpty) {
       payload['session_id'] = sessionId;
     }
@@ -323,10 +319,7 @@ class AgentCommandClient {
     if (env != null && env.isNotEmpty) {
       payload['env'] = env;
     }
-    final response = await _sendCommand(
-      command: 'terminal',
-      payload: payload,
-    );
+    final response = await _sendCommand(command: 'terminal', payload: payload);
     final responsePayload = response.payload;
     if (responsePayload is! Map<String, dynamic>) {
       throw AgentCommandFailure(
@@ -347,9 +340,7 @@ class AgentCommandClient {
     int? displayIndex,
     int? highPerfIntervalMs,
   }) async {
-    final payload = <String, dynamic>{
-      'action': action,
-    };
+    final payload = <String, dynamic>{'action': action};
     if (sessionId != null && sessionId.trim().isNotEmpty) {
       payload['session_id'] = sessionId;
     }
@@ -365,10 +356,7 @@ class AgentCommandClient {
     if (highPerfIntervalMs != null) {
       payload['high_perf_interval_ms'] = highPerfIntervalMs;
     }
-    final response = await _sendCommand(
-      command: 'vnc',
-      payload: payload,
-    );
+    final response = await _sendCommand(command: 'vnc', payload: payload);
     final payloadData = response.payload;
     if (payloadData == null) {
       throw AgentCommandFailure(
@@ -378,9 +366,7 @@ class AgentCommandClient {
         requestId: response.requestId,
       );
     }
-    return VncSessionInfo.fromPayload(
-      Map<String, dynamic>.from(payloadData),
-    );
+    return VncSessionInfo.fromPayload(Map<String, dynamic>.from(payloadData));
   }
 
   Future<RoiSessionInfo> sendRoiCommand({
@@ -393,9 +379,7 @@ class AgentCommandClient {
     int? screenHeight,
     int? displayIndex,
   }) async {
-    final payload = <String, dynamic>{
-      'action': action,
-    };
+    final payload = <String, dynamic>{'action': action};
     if (sessionId != null && sessionId.trim().isNotEmpty) {
       payload['session_id'] = sessionId;
     }
@@ -417,10 +401,7 @@ class AgentCommandClient {
     if (displayIndex != null) {
       payload['display_index'] = displayIndex;
     }
-    final response = await _sendCommand(
-      command: 'roi',
-      payload: payload,
-    );
+    final response = await _sendCommand(command: 'roi', payload: payload);
     final payloadData = response.payload;
     if (payloadData == null) {
       throw AgentCommandFailure(
@@ -430,17 +411,13 @@ class AgentCommandClient {
         requestId: response.requestId,
       );
     }
-    return RoiSessionInfo.fromPayload(
-      Map<String, dynamic>.from(payloadData),
-    );
+    return RoiSessionInfo.fromPayload(Map<String, dynamic>.from(payloadData));
   }
 
   Future<List<VncDisplayInfo>> fetchVncDisplays() async {
     final response = await _sendCommand(
       command: 'vnc',
-      payload: const {
-        'action': 'displays',
-      },
+      payload: const {'action': 'displays'},
     );
     final payloadData = response.payload;
     if (payloadData == null) {
@@ -451,9 +428,11 @@ class AgentCommandClient {
       return const [];
     }
     return displays
-        .map((item) => VncDisplayInfo.fromPayload(
-              Map<String, dynamic>.from(item as Map),
-            ))
+        .map(
+          (item) => VncDisplayInfo.fromPayload(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
         .toList();
   }
 
@@ -468,9 +447,7 @@ class AgentCommandClient {
       'command': command,
       'payload': payload,
     });
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-    };
+    final headers = <String, String>{'Content-Type': 'application/json'};
     final token = authToken?.trim();
     if (token != null && token.isNotEmpty) {
       headers['x-agent-token'] = token;
@@ -485,11 +462,9 @@ class AgentCommandClient {
     }
     http.Response response;
     try {
-      response = await _client.post(
-        uri,
-        headers: headers,
-        body: requestBody,
-      ).timeout(const Duration(seconds: 6));
+      response = await _client
+          .post(uri, headers: headers, body: requestBody)
+          .timeout(const Duration(seconds: 6));
     } catch (error) {
       throw AgentCommandFailure(
         'Failed to reach desktop agent.',
@@ -505,9 +480,7 @@ class AgentCommandClient {
         code: 'http_error',
         endpoint: uri.toString(),
         requestId: requestId,
-        details: {
-          'status': response.statusCode,
-        },
+        details: {'status': response.statusCode},
       );
     }
     dynamic decoded;
@@ -552,8 +525,9 @@ class AgentCommandClient {
         code: 'invalid_url',
       );
     }
-    final basePath =
-        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
     final commandPath = basePath.isEmpty ? '/command' : '$basePath/command';
     return base.replace(path: commandPath);
   }
@@ -565,9 +539,7 @@ class AgentCommandClient {
     int? height,
     int? displayIndex,
   }) async {
-    final payload = <String, dynamic>{
-      'action': action,
-    };
+    final payload = <String, dynamic>{'action': action};
     if (sessionId != null && sessionId.trim().isNotEmpty) {
       payload['session_id'] = sessionId;
     }
@@ -580,10 +552,7 @@ class AgentCommandClient {
     if (displayIndex != null) {
       payload['display_index'] = displayIndex;
     }
-    final response = await _sendCommand(
-      command: 'remote',
-      payload: payload,
-    );
+    final response = await _sendCommand(command: 'remote', payload: payload);
     final payloadData = response.payload;
     if (payloadData == null) {
       throw AgentCommandFailure(
@@ -612,6 +581,7 @@ class RemoteSessionInfo {
     this.codecPreference,
     this.hwcodecEnabled,
     this.capabilities,
+    this.inputPreferences,
   });
 
   final String sessionId;
@@ -625,6 +595,7 @@ class RemoteSessionInfo {
   final String? codecPreference;
   final bool? hwcodecEnabled;
   final RemoteCodecCapabilities? capabilities;
+  final RemoteInputPreferences? inputPreferences;
 
   factory RemoteSessionInfo.fromPayload(Map<String, dynamic> payload) {
     final sessionPayload = payload['session'] is Map
@@ -646,11 +617,19 @@ class RemoteSessionInfo {
       }
       return null;
     }
+
     RemoteCodecCapabilities? capabilities;
     final capabilitiesPayload = sessionPayload['capabilities'];
     if (capabilitiesPayload is Map) {
       capabilities = RemoteCodecCapabilities.fromPayload(
         Map<String, dynamic>.from(capabilitiesPayload),
+      );
+    }
+    RemoteInputPreferences? inputPreferences;
+    final inputPreferencesPayload = sessionPayload['input_preferences'];
+    if (inputPreferencesPayload is Map) {
+      inputPreferences = RemoteInputPreferences.fromPayload(
+        Map<String, dynamic>.from(inputPreferencesPayload),
       );
     }
     return RemoteSessionInfo(
@@ -673,6 +652,36 @@ class RemoteSessionInfo {
       codecPreference: sessionPayload['codec_preference']?.toString(),
       hwcodecEnabled: parseBool(sessionPayload['hwcodec']),
       capabilities: capabilities,
+      inputPreferences: inputPreferences,
+    );
+  }
+}
+
+class RemoteInputPreferences {
+  const RemoteInputPreferences({this.naturalScroll});
+
+  final bool? naturalScroll;
+
+  factory RemoteInputPreferences.fromPayload(Map<String, dynamic> payload) {
+    bool? parseBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      if (value is String) {
+        final normalized = value.trim().toLowerCase();
+        if (normalized == 'true' || normalized == 'yes' || normalized == 'y') {
+          return true;
+        }
+        if (normalized == 'false' || normalized == 'no' || normalized == 'n') {
+          return false;
+        }
+        final parsed = int.tryParse(normalized);
+        if (parsed != null) return parsed != 0;
+      }
+      return null;
+    }
+
+    return RemoteInputPreferences(
+      naturalScroll: parseBool(payload['natural_scroll']),
     );
   }
 }
@@ -744,9 +753,8 @@ class _AgentCommandResponse {
   factory _AgentCommandResponse.fromJson(Map<String, dynamic> json) {
     return _AgentCommandResponse(
       status: json['status']?.toString() ?? 'error',
-      requestId: json['request_id']?.toString() ??
-          json['requestId']?.toString() ??
-          '',
+      requestId:
+          json['request_id']?.toString() ?? json['requestId']?.toString() ?? '',
       payload: json['payload'] is Map
           ? Map<String, dynamic>.from(json['payload'] as Map)
           : null,
@@ -832,8 +840,9 @@ class CommandIntent {
 }
 
 CommandIntent _buildApiIntent(String command, {String? parseSource}) {
-  final source =
-      parseSource == null || parseSource.trim().isEmpty ? command : parseSource;
+  final source = parseSource == null || parseSource.trim().isEmpty
+      ? command
+      : parseSource;
   final method = _extractHttpMethod(source);
   final url = _extractUrl(_stripLeadingHttpMethod(source)) ?? '/unknown';
   final displayUrl = url.isEmpty ? '/unknown' : url;
@@ -973,6 +982,7 @@ List<String> _parseLocalUrls(dynamic raw) {
         .toList();
     return unique.where((entry) => !_isIgnoredLocalUrl(entry)).toList();
   }
+
   if (raw is List) {
     return normalize(raw.map((entry) => entry.toString()).toList());
   }
@@ -990,7 +1000,10 @@ List<String> _parseLocalIps(dynamic raw) {
     return const [];
   }
   if (raw is List) {
-    return raw.map((entry) => entry.toString().trim()).where((entry) => entry.isNotEmpty).toList();
+    return raw
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList();
   }
   if (raw is String) {
     if (raw.trim().isEmpty) {
@@ -1126,10 +1139,12 @@ class PairingPayload {
       return null;
     }
 
-    final token = data['token']?.toString() ??
+    final token =
+        data['token']?.toString() ??
         data['pairing_token']?.toString() ??
         data['pairingToken']?.toString();
-    final secret = data['secret']?.toString() ??
+    final secret =
+        data['secret']?.toString() ??
         data['pairing_secret']?.toString() ??
         data['pairingSecret']?.toString();
     final expiresValue = data['expires_at'] ?? data['expiresAt'];
@@ -1143,8 +1158,7 @@ class PairingPayload {
         data['host_name']?.toString() ?? data['hostName']?.toString();
     final wifiSsid =
         data['wifi_ssid']?.toString() ?? data['wifiSsid']?.toString();
-    final localIps =
-        _parseLocalIps(data['local_ips'] ?? data['localIps']);
+    final localIps = _parseLocalIps(data['local_ips'] ?? data['localIps']);
     final tunnelUrl =
         data['tunnel_url']?.toString() ?? data['tunnelUrl']?.toString();
     final frpUrl = data['frp_url']?.toString() ?? data['frpUrl']?.toString();
@@ -1256,10 +1270,7 @@ class _ReachabilityResult {
 }
 
 class _AgentRouteResolution {
-  const _AgentRouteResolution({
-    required this.record,
-    this.errorDetail,
-  });
+  const _AgentRouteResolution({required this.record, this.errorDetail});
 
   final ConnectionRecord record;
   final String? errorDetail;
