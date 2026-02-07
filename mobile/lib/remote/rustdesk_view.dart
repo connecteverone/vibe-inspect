@@ -37,6 +37,11 @@ class RustdeskVideoView extends StatefulWidget {
 class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   static const _frameInterval = Duration(milliseconds: 33);
   static const _kickInterval = Duration(seconds: 1);
+  static const _qualityBoostZoomThreshold = 1.2;
+  static const _maxRemoteRequestScale = 2.5;
+  static const _qualityUpdateInterval = Duration(milliseconds: 350);
+  static const _sizeRequestMinInterval = Duration(milliseconds: 120);
+  static const _sizeRequestRefreshInterval = Duration(seconds: 2);
 
   Timer? _timer;
   ui.Image? _image;
@@ -54,6 +59,10 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   Listenable? _cursorListenable;
   Offset? _remoteCursor;
   String? _remoteCursorSession;
+  bool? _activeI444;
+  Size _lastRequestedRemoteSize = Size.zero;
+  DateTime _lastQualityAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastSizeRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -76,6 +85,9 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       _translation = Offset.zero;
       _remoteCursor = null;
       _remoteCursorSession = null;
+      _activeI444 = null;
+      _lastRequestedRemoteSize = Size.zero;
+      _lastSizeRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
     }
     if (oldWidget.input != widget.input) {
       _attachCursorListener(widget.input);
@@ -86,6 +98,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     }
     if (oldWidget.zoom != widget.zoom) {
       _applyZoom(widget.zoom, anchor: _zoomAnchor);
+      _syncZoomQualityPreference();
+      _syncRemoteRequestSize();
     }
   }
 
@@ -106,10 +120,12 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     _decoding = true;
     try {
       _ensureRemoteCursorOption();
+      _syncZoomQualityPreference();
       final bridge = RustdeskBridge.instance;
       final displaySize = bridge.getDisplaySize(widget.sessionId, 0);
-      final nextRemoteCursor =
-          widget.showRemoteCursor ? bridge.getCursorPosition(widget.sessionId) : null;
+      final nextRemoteCursor = widget.showRemoteCursor
+          ? bridge.getCursorPosition(widget.sessionId)
+          : null;
       if (displaySize == null ||
           displaySize.width <= 0 ||
           displaySize.height <= 0) {
@@ -135,7 +151,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
         }
         return;
       }
-      final expected = displaySize.width.toInt() * displaySize.height.toInt() * 4;
+      final expected =
+          displaySize.width.toInt() * displaySize.height.toInt() * 4;
       if (bytes.length < expected) {
         _kickstartSession();
         if (_remoteCursor != nextRemoteCursor && mounted) {
@@ -159,6 +176,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
           _translation = _clampTranslation(_translation, _appliedZoom);
         }
         _remoteCursor = nextRemoteCursor;
+        _followCursorInZoom(nextRemoteCursor);
       });
       if (!_notifiedFirstFrame) {
         _notifiedFirstFrame = true;
@@ -263,6 +281,87 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     }
   }
 
+  void _syncZoomQualityPreference() {
+    final sessionId = widget.sessionId;
+    if (sessionId.isEmpty) {
+      return;
+    }
+    final targetI444 = _appliedZoom >= _qualityBoostZoomThreshold;
+    if (_activeI444 == targetI444) {
+      return;
+    }
+    final now = DateTime.now();
+    if (now.difference(_lastQualityAttempt) < _qualityUpdateInterval) {
+      return;
+    }
+    _lastQualityAttempt = now;
+    if (RustdeskBridge.instance.setToggleOption(
+      sessionId,
+      'i444',
+      targetI444,
+    )) {
+      _activeI444 = targetI444;
+    }
+  }
+
+  Size _targetRemoteRequestSize() {
+    if (_viewportSize.width <= 0 || _viewportSize.height <= 0) {
+      return Size.zero;
+    }
+    final scale = _appliedZoom <= 1
+        ? 1.0
+        : _appliedZoom.clamp(1.0, _maxRemoteRequestScale).toDouble();
+    return Size(
+      (_viewportSize.width * scale).roundToDouble(),
+      (_viewportSize.height * scale).roundToDouble(),
+    );
+  }
+
+  void _syncRemoteRequestSize({bool force = false}) {
+    final sessionId = widget.sessionId;
+    if (sessionId.isEmpty) {
+      return;
+    }
+    final target = _targetRemoteRequestSize();
+    if (target.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final sizeChanged = target != _lastRequestedRemoteSize;
+    final dueForRefresh =
+        now.difference(_lastSizeRequestAt) >= _sizeRequestRefreshInterval;
+    if (!force && !sizeChanged && !dueForRefresh) {
+      return;
+    }
+    if (!force &&
+        now.difference(_lastSizeRequestAt) < _sizeRequestMinInterval) {
+      return;
+    }
+    RustdeskBridge.instance.setDisplaySize(sessionId, 0, target);
+    _lastRequestedRemoteSize = target;
+    _lastSizeRequestAt = now;
+  }
+
+  void _followCursorInZoom(Offset? remoteCursor) {
+    if (remoteCursor == null ||
+        _appliedZoom <= 1 ||
+        _viewportSize.isEmpty ||
+        _baseSize.isEmpty) {
+      return;
+    }
+    final cursorBase = _remoteToBase(remoteCursor);
+    final centered = Offset(
+      (_viewportSize.width * 0.5) - cursorBase.dx * _appliedZoom,
+      (_viewportSize.height * 0.5) - cursorBase.dy * _appliedZoom,
+    );
+    final clamped = _clampTranslation(centered, _appliedZoom);
+    if ((clamped.dx - _translation.dx).abs() < 0.5 &&
+        (clamped.dy - _translation.dy).abs() < 0.5) {
+      return;
+    }
+    _translation = clamped;
+  }
+
   void _recomputeBaseSize() {
     final imageSize = _imageSize;
     if (imageSize == null || _viewportSize.isEmpty) {
@@ -292,22 +391,15 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     if (_baseSize.isEmpty || _viewportSize.isEmpty) {
       return translation;
     }
-    final displaySize = Size(
-      _baseSize.width * zoom,
-      _baseSize.height * zoom,
-    );
+    final displaySize = Size(_baseSize.width * zoom, _baseSize.height * zoom);
     final minX = displaySize.width <= _viewportSize.width
         ? (_viewportSize.width - displaySize.width) / 2
         : _viewportSize.width - displaySize.width;
-    final maxX = displaySize.width <= _viewportSize.width
-        ? minX
-        : 0.0;
+    final maxX = displaySize.width <= _viewportSize.width ? minX : 0.0;
     final minY = displaySize.height <= _viewportSize.height
         ? (_viewportSize.height - displaySize.height) / 2
         : _viewportSize.height - displaySize.height;
-    final maxY = displaySize.height <= _viewportSize.height
-        ? minY
-        : 0.0;
+    final maxY = displaySize.height <= _viewportSize.height ? minY : 0.0;
     return Offset(
       translation.dx.clamp(minX, maxX),
       translation.dy.clamp(minY, maxY),
@@ -393,10 +485,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   void _sendMove(Offset remote) {
     final x = remote.dx.round();
     final y = remote.dy.round();
-    RustdeskBridge.instance.sendMouse(widget.sessionId, {
-      'x': '$x',
-      'y': '$y',
-    });
+    RustdeskBridge.instance.sendMouse(widget.sessionId, {'x': '$x', 'y': '$y'});
   }
 
   void _sendClick(String type, {required String button}) {
@@ -418,21 +507,23 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
           _viewportSize = nextViewport;
           _recomputeBaseSize();
           _translation = _clampTranslation(_translation, _appliedZoom);
-          if (_viewportSize.width > 0 && _viewportSize.height > 0) {
-            RustdeskBridge.instance.setDisplaySize(widget.sessionId, 0, _viewportSize);
-          }
+          _syncRemoteRequestSize(force: true);
         }
+        _syncRemoteRequestSize();
         final displaySize = Size(
           _baseSize.width * _appliedZoom,
           _baseSize.height * _appliedZoom,
         );
-        final cursorOffset = (cursor == null || _imageSize == null || _baseSize.isEmpty)
+        final cursorOffset =
+            (cursor == null || _imageSize == null || _baseSize.isEmpty)
             ? null
             : _remoteToScreen(cursor, _appliedZoom, _translation);
         return GestureDetector(
           onTapDown: allowInput ? _handleTapDown : null,
           onTapUp: allowInput ? _handleTapUp : null,
-          onTapCancel: allowInput ? () => _sendClick('up', button: 'left') : null,
+          onTapCancel: allowInput
+              ? () => _sendClick('up', button: 'left')
+              : null,
           onLongPressStart: allowInput ? _handleLongPressStart : null,
           onLongPressEnd: allowInput ? _handleLongPressEnd : null,
           onScaleUpdate: allowInput ? _handleScaleUpdate : null,
