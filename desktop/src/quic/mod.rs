@@ -148,13 +148,18 @@ async fn run_quic_server(
         let pairing = pairing.clone();
         let remote = remote.clone();
         tokio::spawn(async move {
-            if let Ok(connection) = connecting.await {
-                let remote_addr = connection.remote_address();
-                eprintln!("QUIC accepted: remote={remote_addr}");
-                if let Err(error) =
-                    handle_connection(connection, roi, vnc, pairing, remote).await
-                {
-                eprintln!("QUIC connection error: {error}");
+            match connecting.await {
+                Ok(connection) => {
+                    let remote_addr = connection.remote_address();
+                    eprintln!("QUIC accepted: remote={remote_addr}");
+                    if let Err(error) =
+                        handle_connection(connection, roi, vnc, pairing, remote).await
+                    {
+                        eprintln!("QUIC connection error: {error}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("QUIC handshake failed: {error}");
                 }
             }
         });
@@ -174,6 +179,8 @@ async fn handle_connection(
         .get("type")
         .and_then(|value| value.as_str())
         .unwrap_or("roi");
+    let remote_addr = connection.remote_address();
+    eprintln!("QUIC protocol: {protocol} remote={remote_addr}");
     if protocol == "vnc" {
         let Some(vnc) = vnc else {
             send_json_message(
@@ -401,18 +408,28 @@ async fn handle_remote_quic_connection(
     mut send: quinn::SendStream,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let hello: RemoteHello = serde_json::from_value(hello_value)?;
+    eprintln!(
+        "REMOTE QUIC hello: session_id={} token_len={} client_id={} client_name={}",
+        hello.session_id,
+        hello.token.len(),
+        hello.client_id.clone().unwrap_or_else(|| "-".to_string()),
+        hello.client_name.clone().unwrap_or_else(|| "-".to_string()),
+    );
     let auth_token = hello.auth_token.clone().unwrap_or_default();
     let client_id = hello.client_id.clone();
     let client_name = hello.client_name.clone();
     if let Err(error) = ensure_auth_not_blocked(&pairing, client_id.as_deref()) {
+        eprintln!("REMOTE QUIC auth blocked: {}", error.code);
         send_remote_error(&mut send, error).await?;
         return Ok(());
     }
     if let Err(error) = validate_auth_token(&pairing, &auth_token, client_id.as_deref()) {
+        eprintln!("REMOTE QUIC auth failed: {}", error.code);
         send_remote_error(&mut send, error).await?;
         return Ok(());
     }
     if let Err(error) = ensure_client_allowed(&pairing, &client_id) {
+        eprintln!("REMOTE QUIC client not allowed: {}", error.code);
         send_remote_error(&mut send, error).await?;
         return Ok(());
     }
@@ -423,6 +440,7 @@ async fn handle_remote_quic_connection(
         manager.validate_session(&hello.session_id, &hello.token)
     };
     if !session_valid {
+        eprintln!("REMOTE QUIC invalid session: {}", hello.session_id);
         send_json_message(
             &mut send,
             &RemoteError {
@@ -442,6 +460,7 @@ async fn handle_remote_quic_connection(
     } else {
         Some(codec_pref)
     };
+    let codec_preference_log = codec_preference.clone();
     send_json_message(
         &mut send,
         &RemoteReady {
@@ -454,6 +473,10 @@ async fn handle_remote_quic_connection(
         },
     )
     .await?;
+    eprintln!(
+        "REMOTE QUIC ready: session_id={} codec_pref={:?}",
+        hello.session_id, codec_preference_log
+    );
     let (data_send, data_recv) = connection.accept_bi().await?;
     let context = RemoteQuicContext {
         session_id: hello.session_id.clone(),

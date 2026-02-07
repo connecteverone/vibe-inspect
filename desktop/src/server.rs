@@ -114,6 +114,7 @@ pub fn start_local_server(
             ));
         }
     };
+    eprintln!("QUIC server listening on UDP {}", quic_handle.port);
     if let Ok(mut guard) = roi_manager.lock() {
         guard.set_quic_port(quic_handle.port);
     }

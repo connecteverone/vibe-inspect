@@ -21,6 +21,7 @@ import 'package:mobile/roi/roi_quic_client.dart';
 import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/remote/media_protocol.dart';
 import 'package:mobile/remote/remote_quic_client.dart';
+import 'package:mobile/remote/trackpad_motion_engine.dart';
 import 'package:mobile/vnc_client.dart';
 import 'package:mobile/vnc/vnc_quic_transport.dart';
 import 'package:uuid/uuid.dart';
@@ -50,6 +51,10 @@ part 'app/terminal_session.dart';
 part 'remote/remote_session_screen.dart';
 part 'remote/media_v2_view.dart';
 part 'remote/rustdesk_bridge.dart';
+part 'remote/rustdesk_controls.dart';
+part 'remote/rustdesk_input.dart';
+part 'remote/rustdesk_keyboard.dart';
+part 'remote/rustdesk_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

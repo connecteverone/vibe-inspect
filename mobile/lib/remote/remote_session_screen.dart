@@ -3,6 +3,14 @@ part of '../main.dart';
 const double _rustdeskZoomMin = 0.7;
 const double _rustdeskZoomMax = 3.0;
 const double _rustdeskZoomDefault = 1.0;
+const double _rustdeskZoomBarWidth = 48;
+const double _rustdeskTrackpadHeightPortrait = 180;
+const double _rustdeskTrackpadHeightLandscape = 160;
+const double _rustdeskMouseButtonHeight = 48;
+const double _rustdeskControlGap = 12;
+const double _rustdeskButtonGap = 8;
+const double _rustdeskPortraitControlsHeight =
+    _rustdeskTrackpadHeightPortrait + _rustdeskMouseButtonHeight + _rustdeskButtonGap;
 
 class RemoteSessionScreen extends StatefulWidget {
   const RemoteSessionScreen({
@@ -202,6 +210,7 @@ class RemoteSessionController extends ChangeNotifier {
     String? rustdeskSessionId;
     try {
       var port = info.quicPort;
+      final portFromSession = port != null && port > 0;
       if (port == null || port <= 0) {
         final identity = await client.fetchIdentity();
         port = _parsePort(identity['roi_quic_port']);
@@ -210,6 +219,13 @@ class RemoteSessionController extends ChangeNotifier {
         throw StateError('ROI QUIC port missing from identity response.');
       }
       final host = _extractHost(agentBaseUrl ?? '');
+      if (kDebugMode) {
+        debugPrint(
+          '[remote] QUIC connect: host=$host port=$port source=${portFromSession ? 'session' : 'identity'} '
+          'session=${info.sessionId} backend=${info.backend} display=${info.displayIndex ?? 0} '
+          'tokenLen=${token.length} authToken=${authToken != null}',
+        );
+      }
       final startedAt = DateTime.now();
       final backend = info.backend.toLowerCase();
       if (backend != 'rustdesk') {
@@ -242,6 +258,7 @@ class RemoteSessionController extends ChangeNotifier {
       if (!added) {
         throw StateError('RustDesk session add failed.');
       }
+      rustdesk.setToggleOption(rustdeskSessionId, 'show-remote-cursor', true);
       final started = rustdesk.sessionStart(rustdeskSessionId);
       if (!started) {
         rustdesk.sessionClose(rustdeskSessionId);
@@ -271,6 +288,9 @@ class RemoteSessionController extends ChangeNotifier {
       RustdeskBridge.instance.disconnectQuic();
       if (_disposed) {
         return;
+      }
+      if (kDebugMode) {
+        debugPrint('[remote] QUIC connect failed: $error');
       }
       _update(() {
         _quicError = error.toString();
@@ -386,21 +406,10 @@ class RemoteSessionController extends ChangeNotifier {
 
 class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   late final RemoteSessionController _controller;
+  late final RustdeskInputController _inputController;
   bool _isFullscreen = false;
-  bool _trackpadEnabled = false;
   double _zoomValue = _rustdeskZoomDefault;
-
-  final Map<int, Offset> _trackpadPointers = <int, Offset>{};
-  Offset? _trackpadPrimaryDownPosition;
-  Offset? _trackpadLastPrimaryPosition;
-  Offset? _trackpadLastMultiFingerPosition;
-  DateTime? _trackpadPrimaryDownTime;
-  double _trackpadScrollAccumulator = 0;
-
-  static const Duration _trackpadTapTimeout = Duration(milliseconds: 220);
-  static const double _trackpadTapSlop = 10;
-  static const double _trackpadScrollStep = 12;
-  static const double _trackpadMoveScale = 1.3;
+  Size _displaySize = Size.zero;
 
   @override
   void initState() {
@@ -411,6 +420,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
       clientId: widget.clientId,
       clientName: widget.clientName,
     );
+    _inputController = RustdeskInputController(bridge: RustdeskBridge.instance);
     _controller.addListener(_handleControllerUpdate);
     _bootstrap();
   }
@@ -426,6 +436,18 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   void _handleControllerUpdate() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  void _handleDisplaySize(Size size) {
+    _inputController.updateDisplaySize(size);
+    if (!mounted) {
+      return;
+    }
+    if (size != _displaySize) {
+      setState(() {
+        _displaySize = size;
+      });
+    }
   }
 
   String _formatBytes(int bytes) {
@@ -472,13 +494,6 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     _setFullscreen(!_isFullscreen);
   }
 
-  void _toggleTrackpad() {
-    setState(() {
-      _trackpadEnabled = !_trackpadEnabled;
-      _resetTrackpadState();
-    });
-  }
-
   void _updateZoomValue(double value) {
     final clamped = value.clamp(_rustdeskZoomMin, _rustdeskZoomMax);
     if (clamped == _zoomValue) {
@@ -497,171 +512,13 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     _updateZoomValue(_rustdeskZoomDefault);
   }
 
-  void _resetTrackpadState() {
-    _trackpadPointers.clear();
-    _trackpadPrimaryDownPosition = null;
-    _trackpadLastPrimaryPosition = null;
-    _trackpadLastMultiFingerPosition = null;
-    _trackpadPrimaryDownTime = null;
-    _trackpadScrollAccumulator = 0;
-  }
-
-  Offset _trackpadAveragePointerPosition() {
-    if (_trackpadPointers.isEmpty) {
-      return Offset.zero;
-    }
-    var sum = Offset.zero;
-    for (final position in _trackpadPointers.values) {
-      sum += position;
-    }
-    return sum / _trackpadPointers.length.toDouble();
-  }
-
-  bool _isTrackpadTapCandidate(DateTime now) {
-    if (_trackpadPrimaryDownTime == null || _trackpadPrimaryDownPosition == null) {
-      return false;
-    }
-    if (now.difference(_trackpadPrimaryDownTime!) > _trackpadTapTimeout) {
-      return false;
-    }
-    final last = _trackpadLastPrimaryPosition ?? _trackpadPrimaryDownPosition!;
-    return (last - _trackpadPrimaryDownPosition!).distance <= _trackpadTapSlop;
-  }
-
-  void _sendTrackpadMove(Offset delta) {
-    final sessionId = _controller.rustdeskSessionId;
-    if (sessionId == null) {
-      return;
-    }
-    final scaled = delta * _trackpadMoveScale;
-    final dx = scaled.dx.round();
-    final dy = scaled.dy.round();
-    if (dx == 0 && dy == 0) {
-      return;
-    }
-    RustdeskBridge.instance.sendMouse(sessionId, {
-      'type': 'move_relative',
-      'x': '$dx',
-      'y': '$dy',
-    });
-  }
-
-  void _sendTrackpadScroll(Offset delta) {
-    final sessionId = _controller.rustdeskSessionId;
-    if (sessionId == null) {
-      return;
-    }
-    if (delta.dy != 0) {
-      _trackpadScrollAccumulator += -delta.dy;
-      while (_trackpadScrollAccumulator.abs() >= _trackpadScrollStep) {
-        final direction = _trackpadScrollAccumulator.isNegative ? -1 : 1;
-        RustdeskBridge.instance.sendMouse(sessionId, {
-          'type': 'wheel',
-          'y': '${direction * _trackpadScrollStep}',
-        });
-        _trackpadScrollAccumulator -= direction * _trackpadScrollStep;
-      }
-    }
-  }
-
-  void _sendTrackpadClick({int count = 1}) {
-    final sessionId = _controller.rustdeskSessionId;
-    if (sessionId == null) {
-      return;
-    }
-    for (var i = 0; i < count; i += 1) {
-      RustdeskBridge.instance.sendMouse(sessionId, {
-        'type': 'down',
-        'buttons': 'left',
-      });
-      RustdeskBridge.instance.sendMouse(sessionId, {
-        'type': 'up',
-        'buttons': 'left',
-      });
-    }
-  }
-
-  void _handleTrackpadPointerDown(PointerDownEvent event) {
-    if (!_trackpadEnabled) {
-      return;
-    }
-    _trackpadPointers[event.pointer] = event.position;
-    if (_trackpadPointers.length == 1) {
-      _trackpadPrimaryDownPosition = event.position;
-      _trackpadPrimaryDownTime = DateTime.now();
-      _trackpadLastPrimaryPosition = event.position;
-      _trackpadLastMultiFingerPosition = null;
-    } else if (_trackpadPointers.length >= 2) {
-      _trackpadLastMultiFingerPosition = _trackpadAveragePointerPosition();
-    }
-  }
-
-  void _handleTrackpadPointerMove(PointerMoveEvent event) {
-    if (!_trackpadPointers.containsKey(event.pointer)) {
-      return;
-    }
-    _trackpadPointers[event.pointer] = event.position;
-    if (_trackpadPointers.length >= 2) {
-      final average = _trackpadAveragePointerPosition();
-      final last = _trackpadLastMultiFingerPosition;
-      if (last != null) {
-        final delta = average - last;
-        if (delta.distance != 0) {
-          _sendTrackpadScroll(delta);
-        }
-      }
-      _trackpadLastMultiFingerPosition = average;
-      return;
-    }
-    if (_trackpadPointers.length == 1) {
-      final last = _trackpadLastPrimaryPosition ?? event.position;
-      final delta = event.position - last;
-      if (delta.distance != 0) {
-        _sendTrackpadMove(delta);
-      }
-      _trackpadLastPrimaryPosition = event.position;
-    }
-  }
-
-  void _handleTrackpadPointerUp(PointerUpEvent event) {
-    if (!_trackpadPointers.containsKey(event.pointer)) {
-      return;
-    }
-    final wasMultiFinger = _trackpadPointers.length >= 2;
-    _trackpadPointers.remove(event.pointer);
-    if (_trackpadPointers.isEmpty) {
-      final now = DateTime.now();
-      if (!wasMultiFinger && _isTrackpadTapCandidate(now)) {
-        _sendTrackpadClick();
-      }
-      _trackpadPrimaryDownPosition = null;
-      _trackpadPrimaryDownTime = null;
-      _trackpadLastPrimaryPosition = null;
-      _trackpadLastMultiFingerPosition = null;
-    } else if (_trackpadPointers.length == 1) {
-      final remaining = _trackpadPointers.values.first;
-      _trackpadPrimaryDownPosition = remaining;
-      _trackpadPrimaryDownTime = DateTime.now();
-      _trackpadLastPrimaryPosition = remaining;
-      _trackpadLastMultiFingerPosition = null;
-    } else {
-      _trackpadLastMultiFingerPosition = _trackpadAveragePointerPosition();
-    }
-  }
-
-  void _handleTrackpadPointerCancel(PointerCancelEvent event) {
-    _trackpadPointers.remove(event.pointer);
-    _trackpadPrimaryDownPosition = null;
-    _trackpadPrimaryDownTime = null;
-    _trackpadLastPrimaryPosition = null;
-    _trackpadLastMultiFingerPosition = null;
-  }
-
   @override
   void dispose() {
     if (_isFullscreen) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
+    _inputController.leftUp();
+    _inputController.rightUp();
     _controller.removeListener(_handleControllerUpdate);
     _controller.dispose();
     super.dispose();
@@ -693,7 +550,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'QUIC-only RustDesk stream. Use touch to move and tap to click once frames arrive.',
+                    'QUIC-only RustDesk stream. Use the trackpad below to move, double-tap to click.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: const Color(0xFF64748B),
                     ),
@@ -751,8 +608,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
           ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-            sliver: SliverFillRemaining(
-              hasScrollBody: true,
+            sliver: SliverToBoxAdapter(
               child: _buildRemoteView(sessionInfo),
             ),
           ),
@@ -764,69 +620,155 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
 
 extension on _RemoteSessionScreenState {
   Widget _buildFullscreenView(RemoteSessionInfo? sessionInfo) {
-    final rustdeskSessionId = _controller.rustdeskSessionId;
-    final token = sessionInfo?.token ?? '';
-    return WillPopScope(
-      onWillPop: () async {
-        if (_isFullscreen) {
-          await _setFullscreen(false);
-          return false;
+    final orientation = MediaQuery.of(context).orientation;
+    if (orientation == Orientation.landscape) {
+      return _buildFullscreenLandscape(sessionInfo);
+    }
+    return _buildFullscreenPortrait(sessionInfo);
+  }
+
+  Widget _buildFullscreenPortrait(RemoteSessionInfo? sessionInfo) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          return;
         }
-        return true;
+        if (_isFullscreen) {
+          unawaited(_setFullscreen(false));
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: _buildPortraitSession(sessionInfo, fullscreen: true),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFullscreenLandscape(RemoteSessionInfo? sessionInfo) {
+    final rustdeskSessionId = _controller.rustdeskSessionId;
+    if (rustdeskSessionId == null) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) {
+            return;
+          }
+          if (_isFullscreen) {
+            unawaited(_setFullscreen(false));
+          }
+        },
+        child: const Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: _InlineStatus(message: 'RustDesk stream not connected.'),
+          ),
+        ),
+      );
+    }
+    _inputController.attachSession(rustdeskSessionId);
+    final token = sessionInfo?.token ?? '';
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          return;
+        }
+        if (_isFullscreen) {
+          unawaited(_setFullscreen(false));
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            if (rustdeskSessionId == null)
-              const Center(
-                child: _InlineStatus(message: 'RustDesk stream not connected.'),
-              )
-            else
-              Positioned.fill(
-                child: _buildRustdeskCanvas(
-                  sessionId: rustdeskSessionId,
-                  token: token,
-                  glassStyle: true,
-                  cornerRadius: 0,
-                ),
+            Positioned.fill(
+              child: _buildRustdeskView(
+                sessionId: rustdeskSessionId,
+                token: token,
+                backgroundColor: Colors.black,
+                cornerRadius: 0,
               ),
+            ),
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: _RustdeskControlBar(
-                    isFullscreen: _isFullscreen,
-                    trackpadEnabled: _trackpadEnabled,
-                    onToggleFullscreen: _toggleFullscreen,
-                    onToggleTrackpad: _toggleTrackpad,
-                    onResetZoom: _resetZoom,
-                    glassStyle: true,
-                  ),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Stack(
+                  children: [
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: RustdeskMoreMenuButton(
+                        onKeyboard: _showKeyboardPanel,
+                        onExitFullscreen: _toggleFullscreen,
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: _rustdeskZoomBarWidth,
+                        height: _rustdeskTrackpadHeightLandscape +
+                            _rustdeskMouseButtonHeight +
+                            _rustdeskButtonGap,
+                        child: RustdeskZoomBar(
+                          value: _zoomValue,
+                          min: _rustdeskZoomMin,
+                          max: _rustdeskZoomMax,
+                          enabled: true,
+                          glassStyle: true,
+                          onValueChanged: _updateZoomValue,
+                          onValueCommitted: _commitZoomValue,
+                          onReset: _resetZoom,
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: SizedBox(
+                        width: 260,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            RustdeskTrackpadSurface(
+                              input: _inputController,
+                              height: _rustdeskTrackpadHeightLandscape,
+                              glassStyle: true,
+                              showLabel: false,
+                            ),
+                            const SizedBox(height: _rustdeskButtonGap),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: RustdeskMouseButton(
+                                    label: 'Left',
+                                    onDown: _inputController.leftDown,
+                                    onUp: _inputController.leftUp,
+                                    glassStyle: true,
+                                  ),
+                                ),
+                                const SizedBox(width: _rustdeskButtonGap),
+                                Expanded(
+                                  child: RustdeskMouseButton(
+                                    label: 'Right',
+                                    onDown: _inputController.rightDown,
+                                    onUp: _inputController.rightUp,
+                                    glassStyle: true,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            if (_trackpadEnabled && rustdeskSessionId != null)
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: _RustdeskTrackpadSurface(
-                      enabled: true,
-                      glassStyle: true,
-                      height: 140,
-                      showLabel: false,
-                      onPointerDown: _handleTrackpadPointerDown,
-                      onPointerMove: _handleTrackpadPointerMove,
-                      onPointerUp: _handleTrackpadPointerUp,
-                      onPointerCancel: _handleTrackpadPointerCancel,
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -834,68 +776,86 @@ extension on _RemoteSessionScreenState {
   }
 
   Widget _buildRemoteView(RemoteSessionInfo? sessionInfo) {
+    return _buildPortraitSession(sessionInfo, fullscreen: false);
+  }
+
+  Widget _buildPortraitSession(RemoteSessionInfo? sessionInfo, {required bool fullscreen}) {
     final rustdeskSessionId = _controller.rustdeskSessionId;
     if (rustdeskSessionId == null) {
       return const _InlineStatus(message: 'RustDesk stream not connected.');
     }
+    _inputController.attachSession(rustdeskSessionId);
     final token = sessionInfo?.token ?? '';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _RustdeskControlBar(
-          isFullscreen: _isFullscreen,
-          trackpadEnabled: _trackpadEnabled,
-          onToggleFullscreen: _toggleFullscreen,
-          onToggleTrackpad: _toggleTrackpad,
-          onResetZoom: _resetZoom,
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: _buildRustdeskCanvas(
-            sessionId: rustdeskSessionId,
-            token: token,
-            glassStyle: false,
-            cornerRadius: 16,
-          ),
-        ),
-        if (_trackpadEnabled) ...[
-          const SizedBox(height: 12),
-          _RustdeskTrackpadSurface(
-            enabled: true,
-            height: 140,
-            onPointerDown: _handleTrackpadPointerDown,
-            onPointerMove: _handleTrackpadPointerMove,
-            onPointerUp: _handleTrackpadPointerUp,
-            onPointerCancel: _handleTrackpadPointerCancel,
-          ),
-        ],
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final display = _displaySize;
+        final aspect = display.width > 0 && display.height > 0
+            ? display.width / display.height
+            : (16 / 9);
+        final desiredHeight = maxWidth / aspect;
+        final rawMaxHeight = fullscreen
+            ? (constraints.maxHeight -
+                _rustdeskPortraitControlsHeight -
+                _rustdeskControlGap)
+            : desiredHeight;
+        final maxHeight = fullscreen ? math.max(160.0, rawMaxHeight) : rawMaxHeight;
+        final remoteHeight = fullscreen
+            ? desiredHeight.clamp(160.0, maxHeight).toDouble()
+            : desiredHeight;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Stack(
+              children: [
+                SizedBox(
+                  height: remoteHeight,
+                  child: _buildRustdeskView(
+                    sessionId: rustdeskSessionId,
+                    token: token,
+                    backgroundColor: Colors.transparent,
+                    cornerRadius: fullscreen ? 0 : 16,
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RustdeskIconButton(
+                        icon: Icons.keyboard,
+                        onPressed: _showKeyboardPanel,
+                        glassStyle: fullscreen,
+                      ),
+                      const SizedBox(width: 8),
+                      RustdeskIconButton(
+                        icon:
+                            fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                        onPressed: _toggleFullscreen,
+                        glassStyle: fullscreen,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: _rustdeskControlGap),
+            _buildPortraitControls(glassStyle: false),
+          ],
+        );
+      },
     );
   }
 
-  Widget _buildRustdeskCanvas({
-    required String sessionId,
-    required String token,
-    required bool glassStyle,
-    required double cornerRadius,
-  }) {
-    return Stack(
+  Widget _buildPortraitControls({required bool glassStyle}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Positioned.fill(
-          child: RustdeskVideoView(
-            sessionId: sessionId,
-            token: token,
-            onFirstFrame: _controller.markFrameReceived,
-            zoom: _zoomValue,
-            directInput: !_trackpadEnabled,
-            cornerRadius: cornerRadius,
-          ),
-        ),
-        Positioned(
-          right: glassStyle ? 12 : 8,
-          top: 12,
-          bottom: 12,
-          child: _RustdeskZoomBar(
+        SizedBox(
+          width: _rustdeskZoomBarWidth,
+          height: _rustdeskPortraitControlsHeight,
+          child: RustdeskZoomBar(
             value: _zoomValue,
             min: _rustdeskZoomMin,
             max: _rustdeskZoomMax,
@@ -906,8 +866,68 @@ extension on _RemoteSessionScreenState {
             onReset: _resetZoom,
           ),
         ),
+        const SizedBox(width: _rustdeskControlGap),
+        Expanded(
+          child: Column(
+            children: [
+              RustdeskTrackpadSurface(
+                input: _inputController,
+                height: _rustdeskTrackpadHeightPortrait,
+                glassStyle: glassStyle,
+                showLabel: false,
+              ),
+              const SizedBox(height: _rustdeskButtonGap),
+              Row(
+                children: [
+                  Expanded(
+                    child: RustdeskMouseButton(
+                      label: 'Left',
+                      onDown: _inputController.leftDown,
+                      onUp: _inputController.leftUp,
+                      glassStyle: glassStyle,
+                    ),
+                  ),
+                  const SizedBox(width: _rustdeskButtonGap),
+                  Expanded(
+                    child: RustdeskMouseButton(
+                      label: 'Right',
+                      onDown: _inputController.rightDown,
+                      onUp: _inputController.rightUp,
+                      glassStyle: glassStyle,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
+  }
+
+  Widget _buildRustdeskView({
+    required String sessionId,
+    required String token,
+    required Color backgroundColor,
+    required double cornerRadius,
+  }) {
+    return RustdeskVideoView(
+      sessionId: sessionId,
+      token: token,
+      onFirstFrame: _controller.markFrameReceived,
+      zoom: _zoomValue,
+      input: _inputController,
+      showRemoteCursor: true,
+      showLocalCursor: false,
+      allowInput: false,
+      cornerRadius: cornerRadius,
+      backgroundColor: backgroundColor,
+      onDisplaySize: _handleDisplaySize,
+    );
+  }
+
+  void _showKeyboardPanel() {
+    showRustdeskKeyboardSheet(context, _inputController);
   }
 }
 
@@ -1060,654 +1080,6 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class RustdeskVideoView extends StatefulWidget {
-  const RustdeskVideoView({
-    super.key,
-    required this.sessionId,
-    required this.token,
-    this.onFirstFrame,
-    this.zoom = _rustdeskZoomDefault,
-    this.directInput = true,
-    this.cornerRadius = 16,
-  });
-
-  final String sessionId;
-  final String token;
-  final VoidCallback? onFirstFrame;
-  final double zoom;
-  final bool directInput;
-  final double cornerRadius;
-
-  @override
-  State<RustdeskVideoView> createState() => _RustdeskVideoViewState();
-}
-
-class _RustdeskVideoViewState extends State<RustdeskVideoView> {
-  static const _frameInterval = Duration(milliseconds: 33);
-  static const _kickInterval = Duration(seconds: 1);
-
-  Timer? _timer;
-  ui.Image? _image;
-  Size? _imageSize;
-  Size _viewportSize = Size.zero;
-  bool _decoding = false;
-  bool _rightDown = false;
-  DateTime _lastKick = DateTime.fromMillisecondsSinceEpoch(0);
-  bool _notifiedFirstFrame = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(_frameInterval, (_) => _tick());
-  }
-
-  @override
-  void didUpdateWidget(covariant RustdeskVideoView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionId != widget.sessionId) {
-      _notifiedFirstFrame = false;
-      _image?.dispose();
-      _image = null;
-      _imageSize = null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _timer = null;
-    _image?.dispose();
-    _image = null;
-    super.dispose();
-  }
-
-  Future<void> _tick() async {
-    if (_decoding) {
-      return;
-    }
-    _decoding = true;
-    try {
-      final bridge = RustdeskBridge.instance;
-      final displaySize = bridge.getDisplaySize(widget.sessionId, 0);
-      if (displaySize == null ||
-          displaySize.width <= 0 ||
-          displaySize.height <= 0) {
-        _kickstartSession();
-        return;
-      }
-      final bytes = bridge.copyRgba(widget.sessionId, 0);
-      if (bytes == null || bytes.isEmpty) {
-        _kickstartSession();
-        return;
-      }
-      final expected = displaySize.width.toInt() * displaySize.height.toInt() * 4;
-      if (bytes.length < expected) {
-        _kickstartSession();
-        return;
-      }
-      final image = await _decode(bytes, displaySize);
-      if (!mounted) {
-        image.dispose();
-        return;
-      }
-      setState(() {
-        _image?.dispose();
-        _image = image;
-        _imageSize = displaySize;
-      });
-      if (!_notifiedFirstFrame) {
-        _notifiedFirstFrame = true;
-        widget.onFirstFrame?.call();
-      }
-    } finally {
-      _decoding = false;
-    }
-  }
-
-  void _kickstartSession() {
-    final now = DateTime.now();
-    if (now.difference(_lastKick) < _kickInterval) {
-      return;
-    }
-    _lastKick = now;
-    if (widget.token.isNotEmpty) {
-      RustdeskBridge.instance.sessionLogin(widget.sessionId, widget.token);
-    }
-    RustdeskBridge.instance.sessionSwitchDisplay(widget.sessionId, 0);
-  }
-
-  Future<ui.Image> _decode(Uint8List bytes, Size size) {
-    final completer = Completer<ui.Image>();
-    // RustDesk sends ARGB on iOS; in little-endian that maps to BGRA bytes.
-    ui.decodeImageFromPixels(
-      bytes,
-      size.width.toInt(),
-      size.height.toInt(),
-      ui.PixelFormat.bgra8888,
-      completer.complete,
-    );
-    return completer.future;
-  }
-
-  void _handleTapDown(TapDownDetails details) {
-    final remote = _mapToRemote(details.localPosition);
-    if (remote == null) {
-      return;
-    }
-    _sendMove(remote);
-    _sendClick('down', button: 'left');
-  }
-
-  void _handleTapUp(TapUpDetails details) {
-    _sendClick('up', button: 'left');
-  }
-
-  void _handleLongPressStart(LongPressStartDetails details) {
-    _rightDown = true;
-    _sendClick('down', button: 'right');
-  }
-
-  void _handleLongPressEnd(LongPressEndDetails details) {
-    if (_rightDown) {
-      _sendClick('up', button: 'right');
-      _rightDown = false;
-    }
-  }
-
-  void _handleScaleUpdate(ScaleUpdateDetails details) {
-    if (details.pointerCount == 1) {
-      final remote = _mapToRemote(details.localFocalPoint);
-      if (remote == null) {
-        return;
-      }
-      _sendMove(remote);
-      return;
-    }
-    if (details.pointerCount >= 2) {
-      final dy = details.focalPointDelta.dy;
-      if (dy.abs() < 0.5) {
-        return;
-      }
-      final value = dy.round();
-      RustdeskBridge.instance.sendMouse(widget.sessionId, {
-        'type': 'wheel',
-        'y': '$value',
-      });
-    }
-  }
-
-  Offset? _mapToRemote(Offset local) {
-    final imageSize = _imageSize;
-    if (imageSize == null ||
-        imageSize.width <= 0 ||
-        imageSize.height <= 0 ||
-        _viewportSize.isEmpty) {
-      return null;
-    }
-    final fitted = applyBoxFit(BoxFit.contain, imageSize, _viewportSize);
-    final baseDest = fitted.destination;
-    final zoom = widget.zoom.clamp(_rustdeskZoomMin, _rustdeskZoomMax);
-    final dest = Size(baseDest.width * zoom, baseDest.height * zoom);
-    final dx = (_viewportSize.width - dest.width) / 2;
-    final dy = (_viewportSize.height - dest.height) / 2;
-    if (local.dx < dx ||
-        local.dx > dx + dest.width ||
-        local.dy < dy ||
-        local.dy > dy + dest.height) {
-      return null;
-    }
-    final nx = (local.dx - dx) / dest.width;
-    final ny = (local.dy - dy) / dest.height;
-    final x = (nx * imageSize.width).clamp(0, imageSize.width - 1).toDouble();
-    final y = (ny * imageSize.height).clamp(0, imageSize.height - 1).toDouble();
-    return Offset(x, y);
-  }
-
-  void _sendMove(Offset remote) {
-    final x = remote.dx.round();
-    final y = remote.dy.round();
-    RustdeskBridge.instance.sendMouse(widget.sessionId, {
-      'x': '$x',
-      'y': '$y',
-    });
-  }
-
-  void _sendClick(String type, {required String button}) {
-    RustdeskBridge.instance.sendMouse(widget.sessionId, {
-      'type': type,
-      'buttons': button,
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final image = _image;
-    final allowInput = widget.directInput;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final nextViewport = Size(constraints.maxWidth, constraints.maxHeight);
-        if (nextViewport != _viewportSize) {
-          _viewportSize = nextViewport;
-          if (_viewportSize.width > 0 && _viewportSize.height > 0) {
-            RustdeskBridge.instance.setDisplaySize(widget.sessionId, 0, _viewportSize);
-          }
-        }
-        return GestureDetector(
-          onTapDown: allowInput ? _handleTapDown : null,
-          onTapUp: allowInput ? _handleTapUp : null,
-          onTapCancel: allowInput ? () => _sendClick('up', button: 'left') : null,
-          onLongPressStart: allowInput ? _handleLongPressStart : null,
-          onLongPressEnd: allowInput ? _handleLongPressEnd : null,
-          onScaleUpdate: allowInput ? _handleScaleUpdate : null,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F172A),
-              borderRadius: BorderRadius.circular(widget.cornerRadius),
-            ),
-            clipBehavior: Clip.antiAlias,
-            alignment: Alignment.center,
-            child: image == null
-                ? const _InlineStatus(
-                    message: 'Waiting for RustDesk frames...',
-                  )
-                : Transform.scale(
-                    scale: widget.zoom.clamp(_rustdeskZoomMin, _rustdeskZoomMax),
-                    child: FittedBox(
-                      fit: BoxFit.contain,
-                      child: SizedBox(
-                        width: image.width.toDouble(),
-                        height: image.height.toDouble(),
-                        child: RawImage(
-                          image: image,
-                          fit: BoxFit.contain,
-                          filterQuality:
-                              widget.zoom > 1.05 ? FilterQuality.none : FilterQuality.low,
-                        ),
-                      ),
-                    ),
-                  ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RustdeskControlBar extends StatelessWidget {
-  const _RustdeskControlBar({
-    required this.isFullscreen,
-    required this.trackpadEnabled,
-    required this.onToggleFullscreen,
-    required this.onToggleTrackpad,
-    required this.onResetZoom,
-    this.glassStyle = false,
-  });
-
-  final bool isFullscreen;
-  final bool trackpadEnabled;
-  final VoidCallback onToggleFullscreen;
-  final VoidCallback onToggleTrackpad;
-  final VoidCallback onResetZoom;
-  final bool glassStyle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 10,
-      runSpacing: 8,
-      children: [
-        _RustdeskControlAction(
-          icon: trackpadEnabled ? Icons.touch_app : Icons.touch_app_outlined,
-          label: trackpadEnabled ? 'Trackpad on' : 'Trackpad',
-          onPressed: onToggleTrackpad,
-          glassStyle: glassStyle,
-        ),
-        _RustdeskControlAction(
-          icon: isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-          label: isFullscreen ? 'Exit full' : 'Fullscreen',
-          onPressed: onToggleFullscreen,
-          glassStyle: glassStyle,
-        ),
-        _RustdeskControlAction(
-          icon: Icons.zoom_out_map,
-          label: 'Reset zoom',
-          onPressed: onResetZoom,
-          glassStyle: glassStyle,
-        ),
-      ],
-    );
-  }
-}
-
-class _RustdeskControlAction extends StatelessWidget {
-  const _RustdeskControlAction({
-    required this.icon,
-    required this.label,
-    this.onPressed,
-    this.glassStyle = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-  final bool glassStyle;
-
-  @override
-  Widget build(BuildContext context) {
-    final isEnabled = onPressed != null;
-    final foreground = glassStyle
-        ? (isEnabled ? Colors.white : Colors.white54)
-        : (isEnabled ? const Color(0xFF0F172A) : const Color(0xFF94A3B8));
-    final background = glassStyle
-        ? Colors.white.withAlpha(isEnabled ? 30 : 12)
-        : (isEnabled ? const Color(0xFFE0F2FE) : const Color(0xFFF1F5F9));
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: foreground),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RustdeskZoomBar extends StatefulWidget {
-  const _RustdeskZoomBar({
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.enabled,
-    this.glassStyle = false,
-    required this.onValueChanged,
-    required this.onValueCommitted,
-    required this.onReset,
-  });
-
-  final double value;
-  final double min;
-  final double max;
-  final bool enabled;
-  final bool glassStyle;
-  final ValueChanged<double> onValueChanged;
-  final ValueChanged<double> onValueCommitted;
-  final VoidCallback onReset;
-
-  @override
-  State<_RustdeskZoomBar> createState() => _RustdeskZoomBarState();
-}
-
-class _RustdeskZoomBarState extends State<_RustdeskZoomBar> {
-  late double _lastValue;
-
-  @override
-  void initState() {
-    super.initState();
-    _lastValue = widget.value;
-  }
-
-  @override
-  void didUpdateWidget(covariant _RustdeskZoomBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _lastValue = widget.value;
-  }
-
-  double _valueForPosition(double localY, double height) {
-    if (height <= 0) {
-      return widget.value;
-    }
-    final trackTop = 20.0;
-    final trackBottom = height - 20.0;
-    final clamped = localY.clamp(trackTop, trackBottom);
-    final t = 1 - ((clamped - trackTop) / (trackBottom - trackTop));
-    final next = widget.min + (widget.max - widget.min) * t;
-    return next.clamp(widget.min, widget.max);
-  }
-
-  void _setValue(double value) {
-    _lastValue = value;
-    widget.onValueChanged(value);
-  }
-
-  void _commitValue([double? value]) {
-    widget.onValueCommitted(value ?? _lastValue);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final height = constraints.maxHeight;
-        final trackTop = 20.0;
-        final trackBottom = height - 20.0;
-        final clamped = widget.value.clamp(widget.min, widget.max);
-        final range = (widget.max - widget.min).abs();
-        final t = range <= 0
-            ? 0.5
-            : ((clamped - widget.min) / range).clamp(0.0, 1.0);
-        final knobY = trackBottom - (trackBottom - trackTop) * t;
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onDoubleTap: widget.enabled ? widget.onReset : null,
-          onTapDown: widget.enabled
-              ? (details) {
-                  final nextValue =
-                      _valueForPosition(details.localPosition.dy, height);
-                  _setValue(nextValue);
-                  _commitValue(nextValue);
-                }
-              : null,
-          onVerticalDragUpdate: widget.enabled
-              ? (details) =>
-                  _setValue(_valueForPosition(details.localPosition.dy, height))
-              : null,
-          onVerticalDragEnd: widget.enabled ? (_) => _commitValue() : null,
-          child: Container(
-            width: 44,
-            decoration: BoxDecoration(
-              color: widget.glassStyle
-                  ? Colors.white.withAlpha(40)
-                  : Colors.black.withAlpha(120),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: widget.glassStyle
-                    ? Colors.white.withAlpha(80)
-                    : Colors.white.withAlpha(40),
-              ),
-            ),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 6,
-                  child: Text(
-                    '${widget.max.toStringAsFixed(1)}x',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 6,
-                  child: Text(
-                    '${widget.min.toStringAsFixed(1)}x',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: trackTop,
-                  bottom: trackTop,
-                  child: Center(
-                    child: Container(
-                      width: 2,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withAlpha(
-                          widget.glassStyle ? 160 : 90,
-                        ),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 4,
-                  right: 4,
-                  top: knobY - 16,
-                  child: Container(
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: widget.enabled
-                          ? (widget.glassStyle
-                              ? Colors.white.withAlpha(160)
-                              : const Color(0xFF38BDF8))
-                          : Colors.white24,
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withAlpha(80),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${(clamped * 100).round()}%',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: widget.glassStyle
-                                  ? const Color(0xFF0F172A)
-                                  : Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RustdeskTrackpadSurface extends StatelessWidget {
-  const _RustdeskTrackpadSurface({
-    required this.enabled,
-    this.glassStyle = false,
-    this.height,
-    this.showLabel = true,
-    this.disabledMessage,
-    required this.onPointerDown,
-    required this.onPointerMove,
-    required this.onPointerUp,
-    required this.onPointerCancel,
-  });
-
-  final bool enabled;
-  final bool glassStyle;
-  final double? height;
-  final bool showLabel;
-  final String? disabledMessage;
-  final ValueChanged<PointerDownEvent> onPointerDown;
-  final ValueChanged<PointerMoveEvent> onPointerMove;
-  final ValueChanged<PointerUpEvent> onPointerUp;
-  final ValueChanged<PointerCancelEvent> onPointerCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final background = glassStyle
-        ? Colors.white.withAlpha(enabled ? 30 : 12)
-        : (enabled ? const Color(0xFFF1F5F9) : const Color(0xFFE2E8F0));
-    final borderColor = glassStyle
-        ? Colors.white.withAlpha(enabled ? 120 : 60)
-        : (enabled ? const Color(0xFFCBD5F5) : const Color(0xFFE2E8F0));
-    final iconColor = glassStyle
-        ? (enabled ? Colors.white : Colors.white54)
-        : (enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8));
-    final textColor = glassStyle
-        ? (enabled ? Colors.white : Colors.white54)
-        : (enabled ? const Color(0xFF475569) : const Color(0xFF94A3B8));
-    return GestureDetector(
-      onPanStart: enabled ? (_) {} : null,
-      onPanUpdate: enabled ? (_) {} : null,
-      behavior: HitTestBehavior.opaque,
-      child: Listener(
-        onPointerDown: enabled ? onPointerDown : null,
-        onPointerMove: enabled ? onPointerMove : null,
-        onPointerUp: enabled ? onPointerUp : null,
-        onPointerCancel: enabled ? onPointerCancel : null,
-        child: Container(
-          height: height ?? 120,
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: borderColor),
-          ),
-          child: Center(
-            child: showLabel
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.touch_app,
-                        color: iconColor,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        enabled
-                            ? 'Trackpad ready'
-                            : (disabledMessage ?? 'Connect to enable input'),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                              color: textColor,
-                              fontWeight: FontWeight.w600,
-                            ),
-                      ),
-                    ],
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ),
       ),
     );
   }

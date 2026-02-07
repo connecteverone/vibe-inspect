@@ -34,9 +34,26 @@ class RustdeskBridge {
   late final Pointer<Uint8> Function(Pointer<Utf8>, int) _sessionGetRgba;
   late final void Function(Pointer<Utf8>, int) _sessionNextRgba;
   late final int Function(Pointer<Utf8>, Pointer<Utf8>) _sessionSendMouse;
+  late final int Function(
+    Pointer<Utf8>,
+    Pointer<Utf8>,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+  ) _sessionInputKey;
+  late final int Function(Pointer<Utf8>, Pointer<Utf8>) _sessionInputString;
   late final int Function(Pointer<Utf8>, int) _sessionSwitchDisplay;
   late final int Function(Pointer<Utf8>, Pointer<Utf8>) _sessionLogin;
   late final int Function(Pointer<Utf8>, Pointer<Utf8>, int) _sessionBootstrap;
+  late final int Function(Pointer<Utf8>, Pointer<Utf8>, int)
+      _sessionSetToggleOption;
+  late final int Function(Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>)
+      _sessionGetCursorPosition;
+  late final Pointer<Int32> _cursorXPtr;
+  late final Pointer<Int32> _cursorYPtr;
 
   void ensureLoaded() {
     if (_loaded || kIsWeb) {
@@ -102,6 +119,30 @@ class RustdeskBridge {
     _sessionSendMouse = _lib.lookupFunction<
         Int32 Function(Pointer<Utf8>, Pointer<Utf8>),
         int Function(Pointer<Utf8>, Pointer<Utf8>)>('rustdesk_session_send_mouse');
+    _sessionInputKey = _lib.lookupFunction<
+        Int32 Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          Int32,
+          Int32,
+          Int32,
+          Int32,
+          Int32,
+          Int32,
+        ),
+        int Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          int,
+          int,
+          int,
+          int,
+          int,
+          int,
+        )>('rustdesk_session_input_key');
+    _sessionInputString = _lib.lookupFunction<
+        Int32 Function(Pointer<Utf8>, Pointer<Utf8>),
+        int Function(Pointer<Utf8>, Pointer<Utf8>)>('rustdesk_session_input_string');
     _sessionSwitchDisplay = _lib.lookupFunction<
         Int32 Function(Pointer<Utf8>, Int32),
         int Function(Pointer<Utf8>, int)>('rustdesk_session_switch_display');
@@ -113,6 +154,18 @@ class RustdeskBridge {
         int Function(Pointer<Utf8>, Pointer<Utf8>, int)>(
       'rustdesk_session_bootstrap',
     );
+    _sessionSetToggleOption = _lib.lookupFunction<
+        Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Int32),
+        int Function(Pointer<Utf8>, Pointer<Utf8>, int)>(
+      'rustdesk_session_set_toggle_option',
+    );
+    _sessionGetCursorPosition = _lib.lookupFunction<
+        Int32 Function(Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>),
+        int Function(Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>)>(
+      'rustdesk_session_get_cursor_position',
+    );
+    _cursorXPtr = malloc.allocate<Int32>(sizeOf<Int32>());
+    _cursorYPtr = malloc.allocate<Int32>(sizeOf<Int32>());
     _loaded = true;
   }
 
@@ -203,6 +256,87 @@ class RustdeskBridge {
       return;
     }
     _quicDisconnect();
+  }
+
+  bool setToggleOption(String sessionId, String name, bool enabled) {
+    ensureLoaded();
+    if (!_loaded || kIsWeb) {
+      return false;
+    }
+    final sessionPtr = sessionId.toNativeUtf8();
+    final namePtr = name.toNativeUtf8();
+    try {
+      final result = _sessionSetToggleOption(sessionPtr, namePtr, enabled ? 1 : 0);
+      return result == 0;
+    } finally {
+      malloc.free(sessionPtr);
+      malloc.free(namePtr);
+    }
+  }
+
+  Offset? getCursorPosition(String sessionId) {
+    ensureLoaded();
+    if (!_loaded || kIsWeb) {
+      return null;
+    }
+    final sessionPtr = sessionId.toNativeUtf8();
+    try {
+      final result = _sessionGetCursorPosition(sessionPtr, _cursorXPtr, _cursorYPtr);
+      if (result != 1) {
+        return null;
+      }
+      return Offset(_cursorXPtr.value.toDouble(), _cursorYPtr.value.toDouble());
+    } finally {
+      malloc.free(sessionPtr);
+    }
+  }
+
+  void sessionInputKey(
+    String sessionId, {
+    required String name,
+    bool down = false,
+    bool press = true,
+    bool alt = false,
+    bool ctrl = false,
+    bool shift = false,
+    bool command = false,
+  }) {
+    ensureLoaded();
+    if (!_loaded || kIsWeb) {
+      return;
+    }
+    final sessionPtr = sessionId.toNativeUtf8();
+    final namePtr = name.toNativeUtf8();
+    try {
+      _sessionInputKey(
+        sessionPtr,
+        namePtr,
+        down ? 1 : 0,
+        press ? 1 : 0,
+        alt ? 1 : 0,
+        ctrl ? 1 : 0,
+        shift ? 1 : 0,
+        command ? 1 : 0,
+      );
+    } finally {
+      malloc.free(sessionPtr);
+      malloc.free(namePtr);
+    }
+  }
+
+  void sessionInputString(String sessionId, String value) {
+    ensureLoaded();
+    if (!_loaded || kIsWeb) {
+      return;
+    }
+    final sessionPtr = sessionId.toNativeUtf8();
+    final valuePtr = value.toNativeUtf8();
+    try {
+      _sessionInputString(sessionPtr, valuePtr);
+    } finally {
+      malloc.free(sessionPtr);
+      malloc.free(valuePtr);
+    }
   }
 
   bool sessionAdd({
