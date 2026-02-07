@@ -20,6 +20,7 @@ import 'package:mobile/roi/roi_models.dart';
 import 'package:mobile/roi/roi_quic_client.dart';
 import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/remote/media_protocol.dart';
+import 'package:mobile/remote/cursor_motion_filter.dart';
 import 'package:mobile/remote/remote_quic_client.dart';
 import 'package:mobile/remote/trackpad_motion_engine.dart';
 import 'package:mobile/remote/trackpad_scroll_behavior.dart';

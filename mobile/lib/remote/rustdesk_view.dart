@@ -60,6 +60,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   bool _notifiedFirstFrame = false;
   Size? _lastDisplaySize;
   Listenable? _cursorListenable;
+  final CursorMotionFilter _cursorFilter = CursorMotionFilter();
   Offset? _remoteCursor;
   String? _remoteCursorSession;
   bool? _activeI444;
@@ -88,7 +89,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       _imageSize = null;
       _lastDisplaySize = null;
       _translation = Offset.zero;
-      _remoteCursor = null;
+      _clearRemoteCursorState();
       _remoteCursorSession = null;
       _activeI444 = null;
       _lastRequestedRemoteSize = Size.zero;
@@ -102,6 +103,9 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     if (oldWidget.showRemoteCursor != widget.showRemoteCursor ||
         oldWidget.sessionId != widget.sessionId) {
       _ensureRemoteCursorOption();
+      if (!widget.showRemoteCursor) {
+        _clearRemoteCursorState();
+      }
     }
     if (oldWidget.zoom != widget.zoom) {
       _applyZoom(widget.zoom, anchor: _zoomAnchor);
@@ -122,6 +126,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
 
   Future<void> _tick() async {
     if (_decoding) {
+      _tickCursorOnly();
       return;
     }
     _decoding = true;
@@ -130,17 +135,15 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       _syncZoomQualityPreference();
       final bridge = RustdeskBridge.instance;
       final displaySize = bridge.getDisplaySize(widget.sessionId, 0);
-      final nextRemoteCursor = widget.showRemoteCursor
+      final nextRemoteCursorRaw = widget.showRemoteCursor
           ? bridge.getCursorPosition(widget.sessionId)
           : null;
       if (displaySize == null ||
           displaySize.width <= 0 ||
           displaySize.height <= 0) {
         _kickstartSession();
-        if (_remoteCursor != nextRemoteCursor && mounted) {
-          setState(() {
-            _remoteCursor = nextRemoteCursor;
-          });
+        if (mounted && _updateRemoteCursorAndFollow(nextRemoteCursorRaw)) {
+          setState(() {});
         }
         return;
       }
@@ -151,10 +154,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       final bytes = bridge.copyRgba(widget.sessionId, 0);
       if (bytes == null || bytes.isEmpty) {
         _kickstartSession();
-        if (_remoteCursor != nextRemoteCursor && mounted) {
-          setState(() {
-            _remoteCursor = nextRemoteCursor;
-          });
+        if (mounted && _updateRemoteCursorAndFollow(nextRemoteCursorRaw)) {
+          setState(() {});
         }
         return;
       }
@@ -162,10 +163,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
           displaySize.width.toInt() * displaySize.height.toInt() * 4;
       if (bytes.length < expected) {
         _kickstartSession();
-        if (_remoteCursor != nextRemoteCursor && mounted) {
-          setState(() {
-            _remoteCursor = nextRemoteCursor;
-          });
+        if (mounted && _updateRemoteCursorAndFollow(nextRemoteCursorRaw)) {
+          setState(() {});
         }
         return;
       }
@@ -183,8 +182,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
           _recomputeBaseSize();
           _translation = _clampTranslation(_translation, _appliedZoom);
         }
-        _remoteCursor = nextRemoteCursor;
-        _followCursorInZoom(nextRemoteCursor);
+        _updateRemoteCursorAndFollow(nextRemoteCursorRaw);
       });
       if (!_notifiedFirstFrame) {
         _notifiedFirstFrame = true;
@@ -193,6 +191,40 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
     } finally {
       _decoding = false;
     }
+  }
+
+  void _tickCursorOnly() {
+    if (!widget.showRemoteCursor || !mounted) {
+      return;
+    }
+    final nextRaw = RustdeskBridge.instance.getCursorPosition(widget.sessionId);
+    if (_updateRemoteCursorAndFollow(nextRaw)) {
+      setState(() {});
+    }
+  }
+
+  void _clearRemoteCursorState() {
+    _cursorFilter.clear();
+    _remoteCursor = null;
+  }
+
+  bool _updateRemoteCursor(Offset? nextRaw) {
+    final changed = _cursorFilter.update(nextRaw, bounds: _imageSize);
+    final nextVisual = _cursorFilter.visual;
+    if (_remoteCursor != nextVisual) {
+      _remoteCursor = nextVisual;
+      return true;
+    }
+    return changed;
+  }
+
+  bool _updateRemoteCursorAndFollow(Offset? nextRaw) {
+    final changed = _updateRemoteCursor(nextRaw);
+    if (!changed) {
+      return false;
+    }
+    _followCursorInZoom(_remoteCursor);
+    return true;
   }
 
   void _kickstartSession() {
