@@ -7,6 +7,7 @@ class RustdeskVideoView extends StatefulWidget {
     required this.token,
     this.onFirstFrame,
     this.onDisplaySize,
+    this.onFrameLuma,
     this.zoom = _rustdeskZoomDefault,
     this.cursor,
     this.input,
@@ -21,6 +22,7 @@ class RustdeskVideoView extends StatefulWidget {
   final String token;
   final VoidCallback? onFirstFrame;
   final ValueChanged<Size>? onDisplaySize;
+  final ValueChanged<double>? onFrameLuma;
   final double zoom;
   final Offset? cursor;
   final RustdeskInputController? input;
@@ -42,6 +44,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   static const _qualityUpdateInterval = Duration(milliseconds: 350);
   static const _sizeRequestMinInterval = Duration(milliseconds: 120);
   static const _sizeRequestRefreshInterval = Duration(seconds: 2);
+  static const _lumaReportInterval = Duration(milliseconds: 400);
 
   Timer? _timer;
   ui.Image? _image;
@@ -63,6 +66,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
   Size _lastRequestedRemoteSize = Size.zero;
   DateTime _lastQualityAttempt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastSizeRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastLumaReportAt = DateTime.fromMillisecondsSinceEpoch(0);
+  double? _lastReportedLuma;
 
   @override
   void initState() {
@@ -88,6 +93,8 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       _activeI444 = null;
       _lastRequestedRemoteSize = Size.zero;
       _lastSizeRequestAt = DateTime.fromMillisecondsSinceEpoch(0);
+      _lastLumaReportAt = DateTime.fromMillisecondsSinceEpoch(0);
+      _lastReportedLuma = null;
     }
     if (oldWidget.input != widget.input) {
       _attachCursorListener(widget.input);
@@ -162,6 +169,7 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
         }
         return;
       }
+      _reportFrameLuma(bytes, displaySize);
       final image = await _decode(bytes, displaySize);
       if (!mounted) {
         image.dispose();
@@ -209,6 +217,51 @@ class _RustdeskVideoViewState extends State<RustdeskVideoView> {
       completer.complete,
     );
     return completer.future;
+  }
+
+  void _reportFrameLuma(Uint8List bytes, Size size) {
+    final onFrameLuma = widget.onFrameLuma;
+    if (onFrameLuma == null) {
+      return;
+    }
+    final width = size.width.toInt();
+    final height = size.height.toInt();
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    final now = DateTime.now();
+    if (now.difference(_lastLumaReportAt) < _lumaReportInterval) {
+      return;
+    }
+    final stepX = math.max(1, width ~/ 48);
+    final stepY = math.max(1, height ~/ 30);
+    double sum = 0;
+    int samples = 0;
+    for (int y = 0; y < height; y += stepY) {
+      final rowOffset = y * width * 4;
+      for (int x = 0; x < width; x += stepX) {
+        final index = rowOffset + x * 4;
+        if (index + 2 >= bytes.length) {
+          break;
+        }
+        final b = bytes[index];
+        final g = bytes[index + 1];
+        final r = bytes[index + 2];
+        sum += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+        samples += 1;
+      }
+    }
+    if (samples == 0) {
+      return;
+    }
+    final luma = (sum / samples).clamp(0.0, 1.0).toDouble();
+    _lastLumaReportAt = now;
+    final last = _lastReportedLuma;
+    if (last != null && (luma - last).abs() < 0.04) {
+      return;
+    }
+    _lastReportedLuma = luma;
+    onFrameLuma(luma);
   }
 
   void _applyZoom(double zoom, {Offset? anchor}) {

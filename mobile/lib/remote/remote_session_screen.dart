@@ -412,6 +412,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   late final RustdeskInputController _inputController;
   bool _isFullscreen = false;
   bool _trackpadInteracting = false;
+  bool _overlayOnDarkBackground = true;
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
   bool? _hostNaturalScroll;
@@ -471,6 +472,18 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
         _displaySize = size;
       });
     }
+  }
+
+  void _handleFrameLuma(double luma) {
+    final next = luma < 0.57
+        ? true
+        : (luma > 0.63 ? false : _overlayOnDarkBackground);
+    if (next == _overlayOnDarkBackground || !mounted) {
+      return;
+    }
+    setState(() {
+      _overlayOnDarkBackground = next;
+    });
   }
 
   String _formatBytes(int bytes) {
@@ -735,6 +748,7 @@ extension on _RemoteSessionScreenState {
                 token: token,
                 backgroundColor: Colors.black,
                 cornerRadius: 0,
+                monitorLuma: true,
               ),
             ),
             SafeArea(
@@ -765,6 +779,8 @@ extension on _RemoteSessionScreenState {
                                         max: _rustdeskZoomMax,
                                         enabled: true,
                                         glassStyle: true,
+                                        darkBackground:
+                                            _overlayOnDarkBackground,
                                         onValueChanged: _updateZoomValue,
                                         onValueCommitted: _commitZoomValue,
                                         onReset: _resetZoom,
@@ -783,6 +799,8 @@ extension on _RemoteSessionScreenState {
                                             onDown: _inputController.leftDown,
                                             onUp: _inputController.leftUp,
                                             glassStyle: true,
+                                            darkBackground:
+                                                _overlayOnDarkBackground,
                                           ),
                                         ),
                                         const SizedBox(
@@ -794,6 +812,8 @@ extension on _RemoteSessionScreenState {
                                             onDown: _inputController.rightDown,
                                             onUp: _inputController.rightUp,
                                             glassStyle: true,
+                                            darkBackground:
+                                                _overlayOnDarkBackground,
                                           ),
                                         ),
                                       ],
@@ -808,6 +828,7 @@ extension on _RemoteSessionScreenState {
                                 input: _inputController,
                                 height: constraints.maxHeight,
                                 glassStyle: true,
+                                darkBackground: _overlayOnDarkBackground,
                                 showLabel: false,
                                 onInteractionChanged:
                                     _handleTrackpadInteractionChanged,
@@ -820,6 +841,7 @@ extension on _RemoteSessionScreenState {
                           child: RustdeskMoreMenuButton(
                             onKeyboard: _showKeyboardPanel,
                             onExitFullscreen: _toggleFullscreen,
+                            darkBackground: _overlayOnDarkBackground,
                           ),
                         ),
                       ],
@@ -887,6 +909,7 @@ extension on _RemoteSessionScreenState {
                     token: token,
                     backgroundColor: Colors.transparent,
                     cornerRadius: fullscreen ? 0 : 16,
+                    monitorLuma: fullscreen,
                   ),
                 ),
                 Positioned(
@@ -899,6 +922,7 @@ extension on _RemoteSessionScreenState {
                         icon: Icons.keyboard,
                         onPressed: _showKeyboardPanel,
                         glassStyle: fullscreen,
+                        darkBackground: _overlayOnDarkBackground,
                       ),
                       const SizedBox(width: 8),
                       RustdeskIconButton(
@@ -907,6 +931,7 @@ extension on _RemoteSessionScreenState {
                             : Icons.fullscreen,
                         onPressed: _toggleFullscreen,
                         glassStyle: fullscreen,
+                        darkBackground: _overlayOnDarkBackground,
                       ),
                     ],
                   ),
@@ -916,6 +941,7 @@ extension on _RemoteSessionScreenState {
             const SizedBox(height: _rustdeskControlGap),
             _buildPortraitControls(
               glassStyle: false,
+              darkBackground: _overlayOnDarkBackground,
               controlsHeight: controlsHeight,
             ),
           ],
@@ -926,6 +952,7 @@ extension on _RemoteSessionScreenState {
 
   Widget _buildPortraitControls({
     required bool glassStyle,
+    required bool darkBackground,
     required double controlsHeight,
   }) {
     final trackpadHeight = math.max(
@@ -944,6 +971,7 @@ extension on _RemoteSessionScreenState {
             max: _rustdeskZoomMax,
             enabled: true,
             glassStyle: glassStyle,
+            darkBackground: darkBackground,
             onValueChanged: _updateZoomValue,
             onValueCommitted: _commitZoomValue,
             onReset: _resetZoom,
@@ -957,6 +985,7 @@ extension on _RemoteSessionScreenState {
                 input: _inputController,
                 height: trackpadHeight,
                 glassStyle: glassStyle,
+                darkBackground: darkBackground,
                 showLabel: false,
                 onInteractionChanged: _handleTrackpadInteractionChanged,
               ),
@@ -969,6 +998,7 @@ extension on _RemoteSessionScreenState {
                       onDown: _inputController.leftDown,
                       onUp: _inputController.leftUp,
                       glassStyle: glassStyle,
+                      darkBackground: darkBackground,
                     ),
                   ),
                   const SizedBox(width: _rustdeskButtonGap),
@@ -978,6 +1008,7 @@ extension on _RemoteSessionScreenState {
                       onDown: _inputController.rightDown,
                       onUp: _inputController.rightUp,
                       glassStyle: glassStyle,
+                      darkBackground: darkBackground,
                     ),
                   ),
                 ],
@@ -994,11 +1025,13 @@ extension on _RemoteSessionScreenState {
     required String token,
     required Color backgroundColor,
     required double cornerRadius,
+    bool monitorLuma = false,
   }) {
     return RustdeskVideoView(
       sessionId: sessionId,
       token: token,
       onFirstFrame: _controller.markFrameReceived,
+      onFrameLuma: monitorLuma ? _handleFrameLuma : null,
       zoom: _zoomValue,
       input: _inputController,
       showRemoteCursor: true,
