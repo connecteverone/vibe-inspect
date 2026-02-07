@@ -5,7 +5,7 @@ const double _rustdeskZoomMax = 3.0;
 const double _rustdeskZoomDefault = 1.0;
 const double _rustdeskZoomBarWidth = 48;
 const double _rustdeskTrackpadHeightPortrait = 180;
-const double _rustdeskTrackpadHeightLandscape = 160;
+const double _rustdeskTrackpadMinHeight = 120;
 const double _rustdeskMouseButtonHeight = 48;
 const double _rustdeskControlGap = 12;
 const double _rustdeskButtonGap = 8;
@@ -13,6 +13,7 @@ const double _rustdeskPortraitControlsHeight =
     _rustdeskTrackpadHeightPortrait +
     _rustdeskMouseButtonHeight +
     _rustdeskButtonGap;
+const double _rustdeskZoomSnapRange = 0.05;
 
 class RemoteSessionScreen extends StatefulWidget {
   const RemoteSessionScreen({
@@ -410,6 +411,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   late final RemoteSessionController _controller;
   late final RustdeskInputController _inputController;
   bool _isFullscreen = false;
+  bool _trackpadInteracting = false;
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
   bool? _hostNaturalScroll;
@@ -515,8 +517,25 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     _setFullscreen(!_isFullscreen);
   }
 
+  double _normalizeZoomValue(double value) {
+    final clamped = value.clamp(_rustdeskZoomMin, _rustdeskZoomMax).toDouble();
+    if ((clamped - _rustdeskZoomDefault).abs() <= _rustdeskZoomSnapRange) {
+      return _rustdeskZoomDefault;
+    }
+    return clamped;
+  }
+
+  void _handleTrackpadInteractionChanged(bool active) {
+    if (_trackpadInteracting == active || !mounted) {
+      return;
+    }
+    setState(() {
+      _trackpadInteracting = active;
+    });
+  }
+
   void _updateZoomValue(double value) {
-    final clamped = value.clamp(_rustdeskZoomMin, _rustdeskZoomMax);
+    final clamped = _normalizeZoomValue(value);
     if (clamped == _zoomValue) {
       return;
     }
@@ -555,6 +574,9 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     return _TimelineDetailScaffold(
       title: 'Remote Control',
       body: CustomScrollView(
+        physics: _trackpadInteracting
+            ? const NeverScrollableScrollPhysics()
+            : null,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -718,75 +740,91 @@ extension on _RemoteSessionScreenState {
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                child: Stack(
-                  children: [
-                    Align(
-                      alignment: Alignment.topRight,
-                      child: RustdeskMoreMenuButton(
-                        onKeyboard: _showKeyboardPanel,
-                        onExitFullscreen: _toggleFullscreen,
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: SizedBox(
-                        width: _rustdeskZoomBarWidth,
-                        height:
-                            _rustdeskTrackpadHeightLandscape +
-                            _rustdeskMouseButtonHeight +
-                            _rustdeskButtonGap,
-                        child: RustdeskZoomBar(
-                          value: _zoomValue,
-                          min: _rustdeskZoomMin,
-                          max: _rustdeskZoomMax,
-                          enabled: true,
-                          glassStyle: true,
-                          onValueChanged: _updateZoomValue,
-                          onValueCommitted: _commitZoomValue,
-                          onReset: _resetZoom,
-                        ),
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.bottomRight,
-                      child: SizedBox(
-                        width: 260,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final leftPaneWidth = constraints.maxWidth * 0.5;
+                    final rightPaneWidth = constraints.maxWidth - leftPaneWidth;
+                    final buttonLeftInset =
+                        _rustdeskZoomBarWidth + _rustdeskControlGap;
+                    return Stack(
+                      children: [
+                        Row(
                           children: [
-                            RustdeskTrackpadSurface(
-                              input: _inputController,
-                              height: _rustdeskTrackpadHeightLandscape,
-                              glassStyle: true,
-                              showLabel: false,
+                            SizedBox(
+                              width: leftPaneWidth,
+                              child: Stack(
+                                children: [
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: SizedBox(
+                                      width: _rustdeskZoomBarWidth,
+                                      height: constraints.maxHeight,
+                                      child: RustdeskZoomBar(
+                                        value: _zoomValue,
+                                        min: _rustdeskZoomMin,
+                                        max: _rustdeskZoomMax,
+                                        enabled: true,
+                                        glassStyle: true,
+                                        onValueChanged: _updateZoomValue,
+                                        onValueCommitted: _commitZoomValue,
+                                        onReset: _resetZoom,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: buttonLeftInset,
+                                    right: _rustdeskControlGap,
+                                    bottom: 0,
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: RustdeskMouseButton(
+                                            label: 'Left',
+                                            onDown: _inputController.leftDown,
+                                            onUp: _inputController.leftUp,
+                                            glassStyle: true,
+                                          ),
+                                        ),
+                                        const SizedBox(
+                                          width: _rustdeskButtonGap,
+                                        ),
+                                        Expanded(
+                                          child: RustdeskMouseButton(
+                                            label: 'Right',
+                                            onDown: _inputController.rightDown,
+                                            onUp: _inputController.rightUp,
+                                            glassStyle: true,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(height: _rustdeskButtonGap),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: RustdeskMouseButton(
-                                    label: 'Left',
-                                    onDown: _inputController.leftDown,
-                                    onUp: _inputController.leftUp,
-                                    glassStyle: true,
-                                  ),
-                                ),
-                                const SizedBox(width: _rustdeskButtonGap),
-                                Expanded(
-                                  child: RustdeskMouseButton(
-                                    label: 'Right',
-                                    onDown: _inputController.rightDown,
-                                    onUp: _inputController.rightUp,
-                                    glassStyle: true,
-                                  ),
-                                ),
-                              ],
+                            SizedBox(
+                              width: rightPaneWidth,
+                              child: RustdeskTrackpadSurface(
+                                input: _inputController,
+                                height: constraints.maxHeight,
+                                glassStyle: true,
+                                showLabel: false,
+                                onInteractionChanged:
+                                    _handleTrackpadInteractionChanged,
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ),
-                  ],
+                        Align(
+                          alignment: Alignment.topRight,
+                          child: RustdeskMoreMenuButton(
+                            onKeyboard: _showKeyboardPanel,
+                            onExitFullscreen: _toggleFullscreen,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -818,10 +856,12 @@ extension on _RemoteSessionScreenState {
             ? display.width / display.height
             : (16 / 9);
         final desiredHeight = maxWidth / aspect;
+        final controlsMinHeight =
+            _rustdeskTrackpadMinHeight +
+            _rustdeskMouseButtonHeight +
+            _rustdeskButtonGap;
         final rawMaxHeight = fullscreen
-            ? (constraints.maxHeight -
-                  _rustdeskPortraitControlsHeight -
-                  _rustdeskControlGap)
+            ? (constraints.maxHeight - controlsMinHeight - _rustdeskControlGap)
             : desiredHeight;
         final maxHeight = fullscreen
             ? math.max(160.0, rawMaxHeight)
@@ -829,6 +869,12 @@ extension on _RemoteSessionScreenState {
         final remoteHeight = fullscreen
             ? desiredHeight.clamp(160.0, maxHeight).toDouble()
             : desiredHeight;
+        final controlsHeight = fullscreen
+            ? math.max(
+                controlsMinHeight,
+                constraints.maxHeight - remoteHeight - _rustdeskControlGap,
+              )
+            : _rustdeskPortraitControlsHeight;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -868,20 +914,30 @@ extension on _RemoteSessionScreenState {
               ],
             ),
             const SizedBox(height: _rustdeskControlGap),
-            _buildPortraitControls(glassStyle: false),
+            _buildPortraitControls(
+              glassStyle: false,
+              controlsHeight: controlsHeight,
+            ),
           ],
         );
       },
     );
   }
 
-  Widget _buildPortraitControls({required bool glassStyle}) {
+  Widget _buildPortraitControls({
+    required bool glassStyle,
+    required double controlsHeight,
+  }) {
+    final trackpadHeight = math.max(
+      _rustdeskTrackpadMinHeight,
+      controlsHeight - _rustdeskMouseButtonHeight - _rustdeskButtonGap,
+    );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: _rustdeskZoomBarWidth,
-          height: _rustdeskPortraitControlsHeight,
+          height: controlsHeight,
           child: RustdeskZoomBar(
             value: _zoomValue,
             min: _rustdeskZoomMin,
@@ -899,9 +955,10 @@ extension on _RemoteSessionScreenState {
             children: [
               RustdeskTrackpadSurface(
                 input: _inputController,
-                height: _rustdeskTrackpadHeightPortrait,
+                height: trackpadHeight,
                 glassStyle: glassStyle,
                 showLabel: false,
+                onInteractionChanged: _handleTrackpadInteractionChanged,
               ),
               const SizedBox(height: _rustdeskButtonGap),
               Row(

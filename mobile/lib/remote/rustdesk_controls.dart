@@ -52,10 +52,7 @@ class RustdeskMoreMenuButton extends StatelessWidget {
       itemBuilder: (context) => const [
         PopupMenuItem(
           value: _RustdeskMoreAction.keyboard,
-          child: _RustdeskMoreMenuItem(
-            icon: Icons.keyboard,
-            label: 'Keyboard',
-          ),
+          child: _RustdeskMoreMenuItem(icon: Icons.keyboard, label: 'Keyboard'),
         ),
         PopupMenuItem(
           value: _RustdeskMoreAction.exitFullscreen,
@@ -82,10 +79,7 @@ class RustdeskMoreMenuButton extends StatelessWidget {
 enum _RustdeskMoreAction { keyboard, exitFullscreen }
 
 class _RustdeskMoreMenuItem extends StatelessWidget {
-  const _RustdeskMoreMenuItem({
-    required this.icon,
-    required this.label,
-  });
+  const _RustdeskMoreMenuItem({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -99,9 +93,9 @@ class _RustdeskMoreMenuItem extends StatelessWidget {
         Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
     );
@@ -188,15 +182,18 @@ class _RustdeskZoomBarState extends State<RustdeskZoomBar> {
           onDoubleTap: widget.enabled ? widget.onReset : null,
           onTapDown: widget.enabled
               ? (details) {
-                  final nextValue =
-                      _valueForPosition(details.localPosition.dy, height);
+                  final nextValue = _valueForPosition(
+                    details.localPosition.dy,
+                    height,
+                  );
                   _setValue(nextValue);
                   _commitValue(nextValue);
                 }
               : null,
           onVerticalDragUpdate: widget.enabled
-              ? (details) =>
-                  _setValue(_valueForPosition(details.localPosition.dy, height))
+              ? (details) => _setValue(
+                  _valueForPosition(details.localPosition.dy, height),
+                )
               : null,
           onVerticalDragEnd: widget.enabled ? (_) => _commitValue() : null,
           child: Container(
@@ -222,11 +219,9 @@ class _RustdeskZoomBarState extends State<RustdeskZoomBar> {
                     '${widget.max.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      color: widget.glassStyle ? Colors.white : Colors.white70,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -237,11 +232,9 @@ class _RustdeskZoomBarState extends State<RustdeskZoomBar> {
                     '${widget.min.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      color: widget.glassStyle ? Colors.white : Colors.white70,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -270,8 +263,8 @@ class _RustdeskZoomBarState extends State<RustdeskZoomBar> {
                     decoration: BoxDecoration(
                       color: widget.enabled
                           ? (widget.glassStyle
-                              ? Colors.white.withAlpha(160)
-                              : const Color(0xFF38BDF8))
+                                ? Colors.white.withAlpha(160)
+                                : const Color(0xFF38BDF8))
                           : Colors.white24,
                       borderRadius: BorderRadius.circular(999),
                       boxShadow: [
@@ -286,11 +279,11 @@ class _RustdeskZoomBarState extends State<RustdeskZoomBar> {
                       child: Text(
                         '${(clamped * 100).round()}%',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: widget.glassStyle
-                                  ? const Color(0xFF0F172A)
-                                  : Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          color: widget.glassStyle
+                              ? const Color(0xFF0F172A)
+                              : Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -311,19 +304,32 @@ class RustdeskTrackpadSurface extends StatefulWidget {
     this.glassStyle = false,
     this.height,
     this.showLabel = true,
+    this.onInteractionChanged,
   });
 
   final RustdeskInputController input;
   final bool glassStyle;
   final double? height;
   final bool showLabel;
+  final ValueChanged<bool>? onInteractionChanged;
 
   @override
-  State<RustdeskTrackpadSurface> createState() => _RustdeskTrackpadSurfaceState();
+  State<RustdeskTrackpadSurface> createState() =>
+      _RustdeskTrackpadSurfaceState();
 }
 
 class _RustdeskTrackpadSurfaceState extends State<RustdeskTrackpadSurface> {
   final TrackpadMotionEngine _motionEngine = TrackpadMotionEngine();
+  final Set<int> _activePointers = <int>{};
+  bool _isInteracting = false;
+
+  void _setInteracting(bool value) {
+    if (_isInteracting == value) {
+      return;
+    }
+    _isInteracting = value;
+    widget.onInteractionChanged?.call(value);
+  }
 
   void _dispatchActions(List<TrackpadAction> actions) {
     for (final action in actions) {
@@ -336,6 +342,8 @@ class _RustdeskTrackpadSurfaceState extends State<RustdeskTrackpadSurface> {
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    _activePointers.add(event.pointer);
+    _setInteracting(true);
     _motionEngine.onPointerDown(event.pointer, event.localPosition);
   }
 
@@ -351,15 +359,25 @@ class _RustdeskTrackpadSurfaceState extends State<RustdeskTrackpadSurface> {
   }
 
   void _handlePointerUp(PointerUpEvent event) {
+    _activePointers.remove(event.pointer);
     _motionEngine.onPointerUp(event.pointer);
+    if (_activePointers.isEmpty) {
+      _setInteracting(false);
+    }
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
+    _activePointers.remove(event.pointer);
     _motionEngine.onPointerCancel(event.pointer);
+    if (_activePointers.isEmpty) {
+      _setInteracting(false);
+    }
   }
 
   @override
   void dispose() {
+    _activePointers.clear();
+    _setInteracting(false);
     _motionEngine.reset();
     super.dispose();
   }
@@ -373,12 +391,18 @@ class _RustdeskTrackpadSurfaceState extends State<RustdeskTrackpadSurface> {
     final borderColor = widget.glassStyle
         ? Colors.white.withAlpha(120)
         : const Color(0xFFCBD5F5);
-    final iconColor =
-        widget.glassStyle ? Colors.white : const Color(0xFF475569);
-    final textColor =
-        widget.glassStyle ? Colors.white70 : const Color(0xFF475569);
+    final iconColor = widget.glassStyle
+        ? Colors.white
+        : const Color(0xFF475569);
+    final textColor = widget.glassStyle
+        ? Colors.white70
+        : const Color(0xFF475569);
     return GestureDetector(
       onDoubleTap: widget.input.clickLeft,
+      onPanStart: (_) {},
+      onPanUpdate: (_) {},
+      onPanEnd: (_) {},
+      onPanCancel: () {},
       behavior: HitTestBehavior.opaque,
       child: Listener(
         onPointerDown: _handlePointerDown,
@@ -402,9 +426,9 @@ class _RustdeskTrackpadSurfaceState extends State<RustdeskTrackpadSurface> {
                       Text(
                         'Trackpad',
                         style: theme.textTheme.bodySmall?.copyWith(
-                              color: textColor,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          color: textColor,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   )
@@ -435,10 +459,10 @@ class RustdeskMouseButton extends StatelessWidget {
     final background = glassStyle
         ? Colors.white.withAlpha(30)
         : const Color(0xFFE2E8F0);
-    final borderColor =
-        glassStyle ? Colors.white.withAlpha(120) : const Color(0xFFCBD5F5);
-    final textColor =
-        glassStyle ? Colors.white : const Color(0xFF0F172A);
+    final borderColor = glassStyle
+        ? Colors.white.withAlpha(120)
+        : const Color(0xFFCBD5F5);
+    final textColor = glassStyle ? Colors.white : const Color(0xFF0F172A);
     return GestureDetector(
       onTapDown: (_) => onDown(),
       onTapUp: (_) => onUp(),
@@ -455,9 +479,9 @@ class RustdeskMouseButton extends StatelessWidget {
         child: Text(
           label,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: textColor,
-                fontWeight: FontWeight.w700,
-              ),
+            color: textColor,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
