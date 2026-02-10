@@ -641,12 +641,12 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
                             ? null
                             : _startRemote,
                         icon: const Icon(Icons.play_arrow),
-                        label: const Text('Start'),
+                        label: const Text('Start session'),
                       ),
                       OutlinedButton.icon(
                         onPressed: _controller.isStopping ? null : _stopRemote,
                         icon: const Icon(Icons.stop),
-                        label: const Text('Stop'),
+                        label: const Text('Stop session'),
                       ),
                       OutlinedButton.icon(
                         onPressed:
@@ -654,7 +654,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
                             ? null
                             : () => _connectQuic(sessionInfo),
                         icon: const Icon(Icons.bolt),
-                        label: const Text('Reconnect QUIC'),
+                        label: const Text('Reconnect stream'),
                       ),
                     ],
                   ),
@@ -795,7 +795,7 @@ extension on _RemoteSessionScreenState {
                                       children: [
                                         Expanded(
                                           child: RustdeskMouseButton(
-                                            label: 'Left',
+                                            label: 'Left click',
                                             onDown: _inputController.leftDown,
                                             onUp: _inputController.leftUp,
                                             glassStyle: true,
@@ -808,7 +808,7 @@ extension on _RemoteSessionScreenState {
                                         ),
                                         Expanded(
                                           child: RustdeskMouseButton(
-                                            label: 'Right',
+                                            label: 'Right click',
                                             onDown: _inputController.rightDown,
                                             onUp: _inputController.rightUp,
                                             glassStyle: true,
@@ -921,6 +921,7 @@ extension on _RemoteSessionScreenState {
                       RustdeskIconButton(
                         icon: Icons.keyboard,
                         onPressed: _showKeyboardPanel,
+                        tooltip: 'Keyboard input',
                         glassStyle: fullscreen,
                         darkBackground: _overlayOnDarkBackground,
                       ),
@@ -930,6 +931,9 @@ extension on _RemoteSessionScreenState {
                             ? Icons.fullscreen_exit
                             : Icons.fullscreen,
                         onPressed: _toggleFullscreen,
+                        tooltip: fullscreen
+                            ? 'Leave fullscreen'
+                            : 'Enter fullscreen',
                         glassStyle: fullscreen,
                         darkBackground: _overlayOnDarkBackground,
                       ),
@@ -994,7 +998,7 @@ extension on _RemoteSessionScreenState {
                 children: [
                   Expanded(
                     child: RustdeskMouseButton(
-                      label: 'Left',
+                      label: 'Left click',
                       onDown: _inputController.leftDown,
                       onUp: _inputController.leftUp,
                       glassStyle: glassStyle,
@@ -1004,7 +1008,7 @@ extension on _RemoteSessionScreenState {
                   const SizedBox(width: _rustdeskButtonGap),
                   Expanded(
                     child: RustdeskMouseButton(
-                      label: 'Right',
+                      label: 'Right click',
                       onDown: _inputController.rightDown,
                       onUp: _inputController.rightUp,
                       glassStyle: glassStyle,

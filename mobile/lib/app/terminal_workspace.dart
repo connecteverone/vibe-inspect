@@ -10,6 +10,19 @@ const Duration _terminalPersistInterval = Duration(milliseconds: 900);
 const String _missingRemoteSessionReason =
     'Session closed because the desktop agent restarted.';
 
+const List<String> _terminalFontFallback = <String>[
+  'SF Pro Text',
+  'PingFang SC',
+  'Hiragino Sans GB',
+  'Microsoft YaHei',
+  'Noto Sans CJK SC',
+  'Source Han Sans SC',
+  'WenQuanYi Micro Hei',
+  'Noto Color Emoji',
+  'Apple Color Emoji',
+  'Segoe UI Emoji',
+];
+
 class TerminalWorkspaceScreen extends StatefulWidget {
   const TerminalWorkspaceScreen({
     super.key,
@@ -128,20 +141,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     if (_isLoading) {
       return const _TimelineDetailScaffold(
         title: 'Terminal',
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
     if (_loadError != null) {
       return _TimelineDetailScaffold(
         title: 'Terminal',
-        body: Center(
-          child: _InlineStatus(
-            message: _loadError!,
-            isError: true,
-          ),
-        ),
+        body: Center(child: _InlineStatus(message: _loadError!, isError: true)),
       );
     }
 
@@ -160,31 +166,36 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final terminalForeground = terminalTheme.foreground;
     final isLightTerminal =
         ThemeData.estimateBrightnessForColor(terminalBackground) ==
-            Brightness.light;
-    final terminalBorderColor =
-        isLightTerminal ? const Color(0xFFE2E8F0) : const Color(0xFF1E293B);
-    final terminalOverlayBackground =
-        isLightTerminal ? const Color(0xFFE2E8F0) : const Color(0xFF0F172A);
-    final terminalOverlayForeground =
-        isLightTerminal ? const Color(0xFF0F172A) : const Color(0xFFE2E8F0);
+        Brightness.light;
+    final terminalBorderColor = isLightTerminal
+        ? const Color(0xFFE2E8F0)
+        : const Color(0xFF1E293B);
+    final terminalOverlayBackground = isLightTerminal
+        ? const Color(0xFFE2E8F0)
+        : const Color(0xFF0F172A);
+    final terminalOverlayForeground = isLightTerminal
+        ? const Color(0xFF0F172A)
+        : const Color(0xFFE2E8F0);
     final terminalStyle = TerminalStyle.fromTextStyle(
       GoogleFonts.jetBrainsMono(
         fontSize: _terminalFontSize,
         height: 1.4,
-      ),
+      ).copyWith(fontFamilyFallback: _terminalFontFallback),
     );
     final sessionLabel = active?.session.label ?? 'No session selected';
-    final sessionStatus =
-        active == null ? 'IDLE' : active.session.status.toUpperCase();
+    final sessionStatus = active == null
+        ? 'IDLE'
+        : active.session.status.toUpperCase();
     final connectionLabel = active == null
         ? 'Create a session to start.'
         : _terminalChannelReady
-            ? 'Live stream'
-            : 'Polling updates';
+        ? 'Live stream'
+        : 'Polling updates';
     final resolvedStatusMessage =
         _statusMessage ?? _sessionStatusReason(active);
-    final resolvedStatusIsError =
-        _statusMessage != null ? _statusIsError : resolvedStatusMessage != null;
+    final resolvedStatusIsError = _statusMessage != null
+        ? _statusIsError
+        : resolvedStatusMessage != null;
     final showEmptyHint = _sessions.isEmpty && _remoteFetchError == null;
     final headerStyle = theme.textTheme.bodyMedium?.copyWith(
       fontWeight: FontWeight.w700,
@@ -289,38 +300,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         label: 'Ins',
         onTap: () => _sendTerminalKey(TerminalKey.insert),
       ),
-      _TerminalKeySpec(
-        label: '/',
-        onTap: () => _sendTerminalChar('/'),
-      ),
-      _TerminalKeySpec(
-        label: ':',
-        onTap: () => _sendTerminalChar(':'),
-      ),
-      _TerminalKeySpec(
-        label: '-',
-        onTap: () => _sendTerminalChar('-'),
-      ),
-      _TerminalKeySpec(
-        label: '|',
-        onTap: () => _sendTerminalChar('|'),
-      ),
-      _TerminalKeySpec(
-        label: '~',
-        onTap: () => _sendTerminalChar('~'),
-      ),
-      _TerminalKeySpec(
-        label: '_',
-        onTap: () => _sendTerminalChar('_'),
-      ),
-      _TerminalKeySpec(
-        label: '=',
-        onTap: () => _sendTerminalChar('='),
-      ),
-      _TerminalKeySpec(
-        label: '.',
-        onTap: () => _sendTerminalChar('.'),
-      ),
+      _TerminalKeySpec(label: '/', onTap: () => _sendTerminalChar('/')),
+      _TerminalKeySpec(label: ':', onTap: () => _sendTerminalChar(':')),
+      _TerminalKeySpec(label: '-', onTap: () => _sendTerminalChar('-')),
+      _TerminalKeySpec(label: '|', onTap: () => _sendTerminalChar('|')),
+      _TerminalKeySpec(label: '~', onTap: () => _sendTerminalChar('~')),
+      _TerminalKeySpec(label: '_', onTap: () => _sendTerminalChar('_')),
+      _TerminalKeySpec(label: '=', onTap: () => _sendTerminalChar('=')),
+      _TerminalKeySpec(label: '.', onTap: () => _sendTerminalChar('.')),
       _TerminalKeySpec(
         label: 'Space',
         onTap: () => _sendTerminalChar(' '),
@@ -359,131 +346,50 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         onTap: () => _sendPairedChars('<', '>'),
         onLongPress: () => _sendTerminalChar('<'),
       ),
-      _TerminalKeySpec(
-        label: '`',
-        onTap: () => _sendTerminalChar('`'),
-      ),
-      _TerminalKeySpec(
-        label: '?',
-        onTap: () => _sendTerminalChar('?'),
-      ),
-      _TerminalKeySpec(
-        label: '!',
-        onTap: () => _sendTerminalChar('!'),
-      ),
-      _TerminalKeySpec(
-        label: '&',
-        onTap: () => _sendTerminalChar('&'),
-      ),
-      _TerminalKeySpec(
-        label: '#',
-        onTap: () => _sendTerminalChar('#'),
-      ),
-      _TerminalKeySpec(
-        label: '@',
-        onTap: () => _sendTerminalChar('@'),
-      ),
-      _TerminalKeySpec(
-        label: r'$',
-        onTap: () => _sendTerminalChar(r'$'),
-      ),
-      _TerminalKeySpec(
-        label: '%',
-        onTap: () => _sendTerminalChar('%'),
-      ),
-      _TerminalKeySpec(
-        label: '^',
-        onTap: () => _sendTerminalChar('^'),
-      ),
+      _TerminalKeySpec(label: '`', onTap: () => _sendTerminalChar('`')),
+      _TerminalKeySpec(label: '?', onTap: () => _sendTerminalChar('?')),
+      _TerminalKeySpec(label: '!', onTap: () => _sendTerminalChar('!')),
+      _TerminalKeySpec(label: '&', onTap: () => _sendTerminalChar('&')),
+      _TerminalKeySpec(label: '#', onTap: () => _sendTerminalChar('#')),
+      _TerminalKeySpec(label: '@', onTap: () => _sendTerminalChar('@')),
+      _TerminalKeySpec(label: r'$', onTap: () => _sendTerminalChar(r'$')),
+      _TerminalKeySpec(label: '%', onTap: () => _sendTerminalChar('%')),
+      _TerminalKeySpec(label: '^', onTap: () => _sendTerminalChar('^')),
     ];
 
     final keyRowSecondaryAdvanced = [
-      _TerminalKeySpec(
-        label: 'Ctrl+A',
-        onTap: () => _sendCtrlCombo('a'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+C',
-        onTap: () => _sendCtrlCombo('c'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+R',
-        onTap: () => _sendCtrlCombo('r'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+L',
-        onTap: () => _sendCtrlCombo('l'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+D',
-        onTap: () => _sendCtrlCombo('d'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+Z',
-        onTap: () => _sendCtrlCombo('z'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+K',
-        onTap: () => _sendCtrlCombo('k'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+U',
-        onTap: () => _sendCtrlCombo('u'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+W',
-        onTap: () => _sendCtrlCombo('w'),
-      ),
-      _TerminalKeySpec(
-        label: 'Ctrl+Space',
-        onTap: _sendCtrlNull,
-      ),
+      _TerminalKeySpec(label: 'Ctrl+A', onTap: () => _sendCtrlCombo('a')),
+      _TerminalKeySpec(label: 'Ctrl+C', onTap: () => _sendCtrlCombo('c')),
+      _TerminalKeySpec(label: 'Ctrl+R', onTap: () => _sendCtrlCombo('r')),
+      _TerminalKeySpec(label: 'Ctrl+L', onTap: () => _sendCtrlCombo('l')),
+      _TerminalKeySpec(label: 'Ctrl+D', onTap: () => _sendCtrlCombo('d')),
+      _TerminalKeySpec(label: 'Ctrl+Z', onTap: () => _sendCtrlCombo('z')),
+      _TerminalKeySpec(label: 'Ctrl+K', onTap: () => _sendCtrlCombo('k')),
+      _TerminalKeySpec(label: 'Ctrl+U', onTap: () => _sendCtrlCombo('u')),
+      _TerminalKeySpec(label: 'Ctrl+W', onTap: () => _sendCtrlCombo('w')),
+      _TerminalKeySpec(label: 'Ctrl+Space', onTap: _sendCtrlNull),
       _TerminalKeySpec(
         label: 'Ctrl+Bksp',
-        onTap: () => _sendTerminalKeyCombo(
-          TerminalKey.backspace,
-          ctrl: true,
-        ),
+        onTap: () => _sendTerminalKeyCombo(TerminalKey.backspace, ctrl: true),
       ),
-      _TerminalKeySpec(
-        label: 'Alt+B',
-        onTap: () => _sendAltCombo('b'),
-      ),
-      _TerminalKeySpec(
-        label: 'Alt+F',
-        onTap: () => _sendAltCombo('f'),
-      ),
-      _TerminalKeySpec(
-        label: 'Alt+Bksp',
-        onTap: _sendAltBackspace,
-      ),
+      _TerminalKeySpec(label: 'Alt+B', onTap: () => _sendAltCombo('b')),
+      _TerminalKeySpec(label: 'Alt+F', onTap: () => _sendAltCombo('f')),
+      _TerminalKeySpec(label: 'Alt+Bksp', onTap: _sendAltBackspace),
       _TerminalKeySpec(
         label: 'Ctrl+←',
-        onTap: () => _sendTerminalKeyCombo(
-          TerminalKey.arrowLeft,
-          ctrl: true,
-        ),
+        onTap: () => _sendTerminalKeyCombo(TerminalKey.arrowLeft, ctrl: true),
       ),
       _TerminalKeySpec(
         label: 'Ctrl+→',
-        onTap: () => _sendTerminalKeyCombo(
-          TerminalKey.arrowRight,
-          ctrl: true,
-        ),
+        onTap: () => _sendTerminalKeyCombo(TerminalKey.arrowRight, ctrl: true),
       ),
       _TerminalKeySpec(
         label: 'Alt+←',
-        onTap: () => _sendTerminalKeyCombo(
-          TerminalKey.arrowLeft,
-          alt: true,
-        ),
+        onTap: () => _sendTerminalKeyCombo(TerminalKey.arrowLeft, alt: true),
       ),
       _TerminalKeySpec(
         label: 'Alt+→',
-        onTap: () => _sendTerminalKeyCombo(
-          TerminalKey.arrowRight,
-          alt: true,
-        ),
+        onTap: () => _sendTerminalKeyCombo(TerminalKey.arrowRight, alt: true),
       ),
     ];
 
@@ -562,11 +468,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
       advancedKeys.insert(
         0,
-        _TerminalKeySpec(
-          label: 'Back',
-          onTap: _showBaseKeys,
-          isEmphasis: true,
-        ),
+        _TerminalKeySpec(label: 'Back', onTap: _showBaseKeys, isEmphasis: true),
       );
       advancedKeys.insert(
         1,
@@ -578,11 +480,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
       symbolKeys.insert(
         0,
-        _TerminalKeySpec(
-          label: 'Back',
-          onTap: _showBaseKeys,
-          isEmphasis: true,
-        ),
+        _TerminalKeySpec(label: 'Back', onTap: _showBaseKeys, isEmphasis: true),
       );
       symbolKeys.insert(
         1,
@@ -603,22 +501,18 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       );
       symbolKeys.insert(
         0,
-        _TerminalKeySpec(
-          label: 'Back',
-          onTap: _showBaseKeys,
-          isEmphasis: true,
-        ),
+        _TerminalKeySpec(label: 'Back', onTap: _showBaseKeys, isEmphasis: true),
       );
     }
     final keyRowSecondary = _showFnRow
         ? keyRowFn
         : (isWideLayout
-            ? baseKeys
-            : (_secondaryKeyPage == 2
-                ? symbolKeys
-                : (_secondaryKeyPage == 1 && allowPaging
-                    ? advancedKeys
-                    : baseKeys)));
+              ? baseKeys
+              : (_secondaryKeyPage == 2
+                    ? symbolKeys
+                    : (_secondaryKeyPage == 1 && allowPaging
+                          ? advancedKeys
+                          : baseKeys)));
     final toolActions = [
       _TerminalToolAction(
         label: 'Paste',
@@ -688,8 +582,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
       ),
       _TerminalToolAction(
         label: _hardwareKeyboardOnly ? 'HW KB' : 'Soft KB',
-        icon:
-            _hardwareKeyboardOnly ? Icons.keyboard_alt_outlined : Icons.keyboard,
+        icon: _hardwareKeyboardOnly
+            ? Icons.keyboard_alt_outlined
+            : Icons.keyboard,
         onTap: _toggleHardwareKeyboardOnly,
         isActive: _hardwareKeyboardOnly,
       ),
@@ -784,7 +679,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
-                            'Search: "${_terminalSearchQuery}"',
+                            'Search: "$_terminalSearchQuery"',
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: const Color(0xFF334155),
                               fontWeight: FontWeight.w600,
@@ -797,20 +692,15 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                 ),
                 if (_remoteFetchError != null) ...[
                   const SizedBox(height: 8),
-                  _InlineStatus(
-                    message: _remoteFetchError!,
-                    isError: true,
-                  ),
+                  _InlineStatus(message: _remoteFetchError!, isError: true),
                 ] else if (showEmptyHint) ...[
                   const SizedBox(height: 8),
-                  const _InlineStatus(
-                    message: 'No terminal sessions yet.',
-                  ),
+                  const _InlineStatus(message: 'No terminal sessions yet.'),
                 ],
-                if (resolvedStatusMessage != null) ...[
+                if (resolvedStatusMessage case final statusMessage?) ...[
                   const SizedBox(height: 4),
                   Text(
-                    resolvedStatusMessage!,
+                    statusMessage,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: resolvedStatusIsError
                           ? const Color(0xFFB91C1C)
@@ -856,8 +746,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                               autofocus: true,
                               theme: terminalTheme,
                               textStyle: terminalStyle,
-                              padding:
-                                  const EdgeInsets.fromLTRB(10, 8, 10, 12),
+                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
                               backgroundOpacity: 0,
                               cursorType: TerminalCursorType.block,
                               keyboardType: TextInputType.text,
@@ -865,6 +754,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                                   ? Brightness.light
                                   : Brightness.dark,
                               deleteDetection: true,
+                              onKeyEvent: _handleTerminalViewKeyEvent,
                               hardwareKeyboardOnly: _hardwareKeyboardOnly,
                               readOnly:
                                   active == null || isEnded || isDisconnected,
@@ -886,8 +776,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                               color: terminalOverlayBackground,
                               borderRadius: BorderRadius.circular(999),
                               border: Border.all(
-                                color: terminalOverlayForeground
-                                    .withAlpha(isLightTerminal ? 40 : 70),
+                                color: terminalOverlayForeground.withAlpha(
+                                  isLightTerminal ? 40 : 70,
+                                ),
                               ),
                             ),
                             child: Row(
@@ -916,17 +807,10 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
             ),
           ),
           Container(
-            padding: EdgeInsets.fromLTRB(
-              10,
-              6,
-              10,
-              _showKeyBar ? 10 : 6,
-            ),
+            padding: EdgeInsets.fromLTRB(10, 6, 10, _showKeyBar ? 10 : 6),
             decoration: const BoxDecoration(
               color: dockBackground,
-              border: Border(
-                top: BorderSide(color: Color(0xFF1E293B)),
-              ),
+              border: Border(top: BorderSide(color: Color(0xFF1E293B))),
             ),
             child: Column(
               children: [

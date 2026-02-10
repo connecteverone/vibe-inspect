@@ -76,6 +76,37 @@ scaffolding added to the codebase to support a RustDesk-backed remote engine.
   - `AVFrame::key_frame` removed; use `AV_FRAME_FLAG_KEY` instead.
 - To proceed, patch the `hwcodec` crate or pin ffmpeg to a compatible version.
 
+## iOS FFI symbol retention guardrail
+
+### Why this matters
+- Dart uses `DynamicLibrary.process().lookup(...)` to bind RustDesk C ABI symbols.
+- iOS release linking may dead-strip symbols that are not directly referenced by ObjC/Swift.
+- Typical runtime symptom: `Failed to lookup symbol` (for example `rustdesk_set_direct_only`).
+
+### Mandatory rules
+1) Keep all RustDesk C ABI entrypoints in `Runner` `OTHER_LDFLAGS[sdk=iphoneos*]` with `-Wl,-u,_<symbol>`.
+2) Update **Debug / Release / Profile** together; do not only change one build config.
+3) When adding a new C ABI function used by Dart FFI, update two places in the same change:
+   - iOS linker keep-list (`project.pbxproj`)
+   - Dart lookup initialization (`mobile/lib/remote/rustdesk_bridge_native.dart`)
+4) For non-critical / compatibility symbols, Dart must use guarded lookup (optional bind + fallback), not hard fail.
+
+### Build-time verification (required)
+```bash
+cd mobile
+flutter build ios --release --no-codesign
+nm -gU build/ios/iphoneos/Runner.app/Runner | rg "rustdesk_main_init|rustdesk_set_direct_only|rustdesk_session_add"
+```
+
+Pass criteria:
+- `nm` output contains all required FFI symbols.
+- Missing any required symbol is a release blocker.
+
+### Regression checklist (PR review)
+- [ ] `project.pbxproj` keep-list contains newly added FFI symbols.
+- [ ] Dart bridge initializes new symbols (or guarded optional lookup if intended).
+- [ ] iOS release build + `nm` symbol check recorded in PR notes.
+
 ## Next steps (immediate)
 1) Add rustdesk dependency (path) + feature gate in desktop.
 2) Wire host session start to `rustdesk::server::Connection::start`.

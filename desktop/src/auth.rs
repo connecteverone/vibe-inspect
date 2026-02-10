@@ -96,6 +96,38 @@ pub fn validate_auth_token(
     Ok(())
 }
 
+pub fn validate_ws_ticket(
+    state: &Arc<Mutex<PairingState>>,
+    ticket: &str,
+    client_id: Option<&str>,
+    scope: &str,
+    session_id: Option<&str>,
+) -> Result<(), AuthError> {
+    if ticket.trim().is_empty() {
+        return Err(AuthError::new(
+            "unauthorized",
+            "Missing or invalid websocket ticket.",
+        ));
+    }
+
+    let now = unix_now();
+    let mut guard = state
+        .lock()
+        .map_err(|_| AuthError::new("state_locked", "Pairing state unavailable."))?;
+    if !guard.consume_ws_ticket(ticket, scope, session_id, client_id) {
+        let retry_after = guard.record_auth_failure(client_id, now);
+        if retry_after.is_some() {
+            return Err(AuthError::rate_limited(retry_after));
+        }
+        return Err(AuthError::new(
+            "unauthorized",
+            "Missing or invalid websocket ticket.",
+        ));
+    }
+    guard.record_auth_success(client_id);
+    Ok(())
+}
+
 pub fn ensure_client_allowed(
     state: &Arc<Mutex<PairingState>>,
     client_id: &Option<String>,
@@ -109,7 +141,10 @@ pub fn ensure_client_allowed(
         .lock()
         .map_err(|_| AuthError::new("state_locked", "Pairing state unavailable."))?;
     if state.is_client_blocked(client_id, now) {
-        return Err(AuthError::new("client_blocked", "Client has been disabled."));
+        return Err(AuthError::new(
+            "client_blocked",
+            "Client has been disabled.",
+        ));
     }
     Ok(())
 }

@@ -21,9 +21,7 @@ pub fn encode_header(
     if roi.is_some() {
         flags |= FLAG_HAS_ROI;
     }
-    let (rx, ry, rw, rh) = roi
-        .map(|r| (r.x, r.y, r.w, r.h))
-        .unwrap_or((0, 0, 0, 0));
+    let (rx, ry, rw, rh) = roi.map(|r| (r.x, r.y, r.w, r.h)).unwrap_or((0, 0, 0, 0));
     let mut buf = Vec::with_capacity(33);
     buf.extend_from_slice(&MAGIC);
     buf.push(VERSION);

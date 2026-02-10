@@ -46,7 +46,7 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     }
   }
 
-  Uri? _terminalWsUri(String baseUrl, String sessionId) {
+  Uri? _terminalWsUri(String baseUrl, String sessionId, {String? wsTicket}) {
     Uri base;
     try {
       base = Uri.parse(baseUrl);
@@ -66,12 +66,19 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     final basePath = base.path.endsWith('/')
         ? base.path.substring(0, base.path.length - 1)
         : base.path;
-    final path =
-        basePath.isEmpty ? '/terminal/$sessionId' : '$basePath/terminal/$sessionId';
+    final path = basePath.isEmpty
+        ? '/terminal/$sessionId'
+        : '$basePath/terminal/$sessionId';
     final queryParameters = Map<String, String>.from(base.queryParameters);
-    final token = widget.authToken?.trim();
-    if (token != null && token.isNotEmpty) {
-      queryParameters['auth_token'] = token;
+    final ticket = wsTicket?.trim();
+    if (ticket != null && ticket.isNotEmpty) {
+      queryParameters['ws_ticket'] = ticket;
+      queryParameters.remove('auth_token');
+    } else {
+      final token = widget.authToken?.trim();
+      if (token != null && token.isNotEmpty) {
+        queryParameters['auth_token'] = token;
+      }
     }
     final clientId = widget.clientId?.trim();
     if (clientId != null && clientId.isNotEmpty) {
@@ -119,6 +126,19 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
       unawaited(_sendTerminalResize(sessionId, cols, rows));
     };
     return terminal;
+  }
+
+  KeyEventResult _handleTerminalViewKeyEvent(FocusNode _, KeyEvent event) {
+    final deferToTextInput = shouldDeferTerminalHardwareKeyToTextInput(
+      event,
+      ctrlPressed: HardwareKeyboard.instance.isControlPressed || _ctrlModifier,
+      altPressed: HardwareKeyboard.instance.isAltPressed || _altModifier,
+      metaPressed: HardwareKeyboard.instance.isMetaPressed,
+    );
+    if (deferToTextInput) {
+      return KeyEventResult.skipRemainingHandlers;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _hydrateTerminal(
@@ -441,12 +461,7 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     if (terminal == null) {
       return;
     }
-    terminal.keyInput(
-      key,
-      ctrl: ctrl,
-      alt: alt,
-      shift: shift,
-    );
+    terminal.keyInput(key, ctrl: ctrl, alt: alt, shift: shift);
     _consumeOneShotModifiers();
     _focusTerminal();
   }
@@ -597,9 +612,9 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No selection to copy.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No selection to copy.')));
       return;
     }
     final text = terminal.buffer.getText(selection);
@@ -607,9 +622,9 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard.')));
   }
 
   Future<void> _pasteClipboard() async {
@@ -761,8 +776,10 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
       if (matches.isEmpty) {
         _terminalSearchIndex = -1;
       } else if (preserveSelection && _terminalSearchIndex >= 0) {
-        _terminalSearchIndex =
-            _terminalSearchIndex.clamp(0, matches.length - 1);
+        _terminalSearchIndex = _terminalSearchIndex.clamp(
+          0,
+          matches.length - 1,
+        );
       } else {
         _terminalSearchIndex = 0;
       }
@@ -778,8 +795,7 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
       return;
     }
     _terminalSearchRefreshTimer?.cancel();
-    _terminalSearchRefreshTimer =
-        Timer(const Duration(milliseconds: 260), () {
+    _terminalSearchRefreshTimer = Timer(const Duration(milliseconds: 260), () {
       if (!mounted) {
         return;
       }
@@ -799,11 +815,11 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
       _selectTerminalSearchMatch(0);
       return;
     }
-    final nextIndex = (_terminalSearchIndex + delta) %
-        _terminalSearchMatches.length;
-    _selectTerminalSearchMatch(nextIndex < 0
-        ? _terminalSearchMatches.length - 1
-        : nextIndex);
+    final nextIndex =
+        (_terminalSearchIndex + delta) % _terminalSearchMatches.length;
+    _selectTerminalSearchMatch(
+      nextIndex < 0 ? _terminalSearchMatches.length - 1 : nextIndex,
+    );
   }
 
   void _selectTerminalSearchMatch(int index) {
@@ -952,8 +968,9 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final matches = _terminalSearchMatches.length;
-            final index =
-                _terminalSearchIndex >= 0 ? _terminalSearchIndex + 1 : 0;
+            final index = _terminalSearchIndex >= 0
+                ? _terminalSearchIndex + 1
+                : 0;
             return Padding(
               padding: EdgeInsets.only(
                 left: 20,
@@ -968,8 +985,8 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                   Text(
                     'Search in terminal',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -980,10 +997,7 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                       prefixIcon: Icon(Icons.search),
                     ),
                     onChanged: (value) {
-                      _runTerminalSearch(
-                        value,
-                        caseSensitive: caseSensitive,
-                      );
+                      _runTerminalSearch(value, caseSensitive: caseSensitive);
                       setSheetState(() {});
                     },
                   ),
@@ -1020,25 +1034,25 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                   Row(
                     children: [
                       Text(
-                        matches == 0
-                            ? 'No matches'
-                            : '$index / $matches',
+                        matches == 0 ? 'No matches' : '$index / $matches',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: const Color(0xFF475569),
-                              fontWeight: FontWeight.w600,
-                            ),
+                          color: const Color(0xFF475569),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const Spacer(),
                       IconButton(
                         tooltip: 'Previous match',
-                        onPressed:
-                            matches == 0 ? null : () => _navigateTerminalSearch(-1),
+                        onPressed: matches == 0
+                            ? null
+                            : () => _navigateTerminalSearch(-1),
                         icon: const Icon(Icons.keyboard_arrow_up),
                       ),
                       IconButton(
                         tooltip: 'Next match',
-                        onPressed:
-                            matches == 0 ? null : () => _navigateTerminalSearch(1),
+                        onPressed: matches == 0
+                            ? null
+                            : () => _navigateTerminalSearch(1),
                         icon: const Icon(Icons.keyboard_arrow_down),
                       ),
                     ],
@@ -1074,8 +1088,8 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                   Text(
                     'Font size',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Slider(
@@ -1095,8 +1109,8 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                   Text(
                     'Tap outside to close.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF64748B),
-                        ),
+                      color: const Color(0xFF64748B),
+                    ),
                   ),
                 ],
               ),
@@ -1126,9 +1140,9 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
             children: [
               Text(
                 'Terminal theme',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               ...List.generate(options.length, (index) {
@@ -1145,30 +1159,28 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
                       width: index == _terminalThemeIndex ? 2 : 1,
                     ),
                   ),
-                  child: RadioListTile<int>(
-                    value: index,
-                    groupValue: _terminalThemeIndex,
-                    activeColor: theme.theme.foreground,
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      _setTerminalTheme(value);
-                    },
+                  child: ListTile(
+                    onTap: () => _setTerminalTheme(index),
+                    leading: Icon(
+                      index == _terminalThemeIndex
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color: theme.theme.foreground,
+                    ),
                     title: Text(
                       theme.label,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: theme.theme.foreground,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: theme.theme.foreground,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     subtitle: Text(
                       theme.theme.background == const Color(0xFFF8FAFC)
                           ? 'Light surface'
                           : 'Dark surface',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: theme.theme.foreground.withAlpha(180),
-                          ),
+                        color: theme.theme.foreground.withAlpha(180),
+                      ),
                     ),
                   ),
                 );

@@ -5,7 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
-#[command(name = "vnc-headless", about = "Start the local VNC/ROI server without Tauri UI")]
+#[command(
+    name = "vnc-headless",
+    about = "Start the local VNC/ROI server without Tauri UI"
+)]
 struct Args {
     /// HTTP command server port.
     #[arg(long)]
@@ -30,8 +33,8 @@ fn main() {
             guard.auth_token().to_string(),
         )
     };
-    let _server = start_local_server(state, port, Some(quic_port))
-        .expect("failed to start local server");
+    let _server =
+        start_local_server(state, port, Some(quic_port)).expect("failed to start local server");
     println!("VNC headless server started.");
     println!("HTTP_PORT={port}");
     println!("QUIC_PORT={quic_port}");

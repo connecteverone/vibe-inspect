@@ -27,6 +27,7 @@ class _PairingScreenState extends State<PairingScreen> {
   bool _pairingStatusIsError = false;
   String? _pairingDetailStatus;
   bool _pairingDetailStatusIsError = false;
+  String? _pairingErrorCode;
   String? _manualAgentUrl;
   String? _clientId;
   bool _isPairing = false;
@@ -78,11 +79,9 @@ class _PairingScreenState extends State<PairingScreen> {
       return;
     }
 
-    final scanned = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (_) => const _QrScannerScreen(),
-      ),
-    );
+    final scanned = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const _QrScannerScreen()));
     if (scanned == null) {
       return;
     }
@@ -210,8 +209,8 @@ class _PairingScreenState extends State<PairingScreen> {
       final resolvedClientId = await _resolveClientId();
       final normalizedClientId =
           resolvedClientId != null && resolvedClientId.trim().isNotEmpty
-              ? resolvedClientId.trim()
-              : null;
+          ? resolvedClientId.trim()
+          : null;
       final client = AgentCommandClient(
         baseUrl: url,
         client: httpClient,
@@ -281,20 +280,33 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingStatusIsError = false;
       _pairingDetailStatus = null;
       _pairingDetailStatusIsError = false;
+      _pairingErrorCode = null;
       _manualAgentUrl = null;
       _isPairing = false;
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
       if (parsed != null && parsed.isExpired) {
         _scanError = 'Token expired. Request a new token and retry.';
+      } else if (parsed != null && !parsed.isProtocolSupported) {
+        _scanError = _unsupportedProtocolMessage(parsed);
       }
     });
-    if (parsed != null && !parsed.isExpired) {
+    if (parsed != null && !parsed.isExpired && parsed.isProtocolSupported) {
       await _attemptAutoPairing(parsed);
     }
   }
 
   Future<void> _attemptAutoPairing(PairingPayload payload) async {
+    if (!payload.isProtocolSupported) {
+      if (mounted) {
+        setState(() {
+          _isPairing = false;
+          _pairingStatus = _unsupportedProtocolMessage(payload);
+          _pairingStatusIsError = true;
+        });
+      }
+      return;
+    }
     if (_isPairing) {
       return;
     }
@@ -304,6 +316,7 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingStatusIsError = false;
       _pairingDetailStatus = null;
       _pairingDetailStatusIsError = false;
+      _pairingErrorCode = null;
     });
     final result = await _confirmPairingWithUrls(payload);
     if (!mounted) {
@@ -323,12 +336,14 @@ class _PairingScreenState extends State<PairingScreen> {
         setState(() {
           _isPairing = false;
           _pairingAgentUrl = result.agentUrl;
-          _pairingUsesTunnel =
-              result.agentUrl == null ? null : _isTunnelUrl(payload, result.agentUrl!);
+          _pairingUsesTunnel = result.agentUrl == null
+              ? null
+              : _isTunnelUrl(payload, result.agentUrl!);
           _pairingStatus = 'Waiting for desktop approval.';
           _pairingStatusIsError = false;
           _pairingDetailStatus = null;
           _pairingDetailStatusIsError = false;
+          _pairingErrorCode = null;
         });
         _startPendingPolling(payload, result.agentUrl!);
         break;
@@ -342,6 +357,7 @@ class _PairingScreenState extends State<PairingScreen> {
           _pairingDetailStatus = result.detail;
           _pairingDetailStatusIsError =
               result.detail != null && result.detail!.trim().isNotEmpty;
+          _pairingErrorCode = result.errorCode?.trim();
         });
         break;
     }
@@ -364,6 +380,12 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       return;
     }
+    if (!payload.isProtocolSupported) {
+      setState(() {
+        _scanError = _unsupportedProtocolMessage(payload);
+      });
+      return;
+    }
     await _attemptAutoPairing(payload);
     if (widget.enableConnectivityRefresh) {
       await _refreshAgentConnectivity();
@@ -372,8 +394,7 @@ class _PairingScreenState extends State<PairingScreen> {
 
   void _startPendingPolling(PairingPayload payload, String agentUrl) {
     _pairingPoller?.cancel();
-    _pairingPoller =
-        Timer.periodic(const Duration(seconds: 2), (_) async {
+    _pairingPoller = Timer.periodic(const Duration(seconds: 2), (_) async {
       await _pollPendingPairing(payload, agentUrl);
     });
   }
@@ -416,12 +437,12 @@ class _PairingScreenState extends State<PairingScreen> {
       if (result.status == _PairingAttemptStatus.failed) {
         _pairingPoller?.cancel();
         setState(() {
-          _pairingStatus =
-              result.message ?? 'Desktop approval check failed.';
+          _pairingStatus = result.message ?? 'Desktop approval check failed.';
           _pairingStatusIsError = true;
           _pairingDetailStatus = result.detail;
           _pairingDetailStatusIsError =
               result.detail != null && result.detail!.trim().isNotEmpty;
+          _pairingErrorCode = result.errorCode?.trim();
         });
       }
     } finally {
@@ -431,9 +452,10 @@ class _PairingScreenState extends State<PairingScreen> {
 
   Future<void> _completePairing(
     PairingPayload payload,
-    String agentUrl,
-    {String? authToken, String? deviceId}
-  ) async {
+    String agentUrl, {
+    String? authToken,
+    String? deviceId,
+  }) async {
     _pairingPoller?.cancel();
     final resolvedToken = authToken?.trim();
     if (resolvedToken == null || resolvedToken.isEmpty) {
@@ -447,7 +469,8 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       return;
     }
-    final resolvedDeviceId = deviceId ??
+    final resolvedDeviceId =
+        deviceId ??
         (payload.deviceId?.trim().isNotEmpty == true ? payload.deviceId : null);
     setState(() {
       _pairingAgentUrl = agentUrl;
@@ -457,6 +480,7 @@ class _PairingScreenState extends State<PairingScreen> {
       _isPairing = false;
       _pairingDetailStatus = null;
       _pairingDetailStatusIsError = false;
+      _pairingErrorCode = null;
     });
     await _recordPairingEvent(
       payload,
@@ -474,13 +498,15 @@ class _PairingScreenState extends State<PairingScreen> {
     if (candidates.isEmpty) {
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
-        message: selection.message ??
+        message:
+            selection.message ??
             payload.tunnelError ??
             'No desktop URL found in the pairing payload.',
         detail: selection.detail,
       );
     }
     final errors = <String>[];
+    final errorCodes = <String>[];
     final attemptDetails = <String>[];
     for (final url in candidates) {
       final result = await _confirmPairingAtUrl(payload, url);
@@ -489,6 +515,10 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       if (result.message != null) {
         errors.add(result.message!);
+      }
+      final errorCode = result.errorCode?.trim();
+      if (errorCode != null && errorCode.isNotEmpty) {
+        errorCodes.add(errorCode);
       }
       attemptDetails.add(_formatAttemptDetail(url, result.message));
     }
@@ -499,19 +529,41 @@ class _PairingScreenState extends State<PairingScreen> {
           ? errors.first
           : 'Unable to reach the desktop agent.',
       detail: detail,
+      errorCode: errorCodes.isNotEmpty ? errorCodes.first : null,
     );
   }
 
   Future<_PairingCandidateSelection> _selectPairingCandidates(
     PairingPayload payload,
   ) async {
-    final tunnelUrl = payload.tunnelUrl?.trim() ?? '';
-    final frpUrl = payload.frpUrl?.trim() ?? '';
-    final remoteUrls = <String>[
-      if (tunnelUrl.isNotEmpty) tunnelUrl,
-      if (frpUrl.isNotEmpty && frpUrl != tunnelUrl) frpUrl,
-    ];
-    final localUrls = payload.localUrls;
+    final transportCandidates = payload.transports
+        .where((transport) => transport.enabled)
+        .toList();
+    final localUrls = transportCandidates
+        .where((transport) => transport.isLan)
+        .map((transport) => transport.url.trim())
+        .where((url) => url.isNotEmpty)
+        .toSet()
+        .toList();
+    final remoteUrls = transportCandidates
+        .where((transport) => transport.isRemote)
+        .map((transport) => transport.url.trim())
+        .where((url) => url.isNotEmpty)
+        .toSet()
+        .toList();
+    if (localUrls.isEmpty) {
+      localUrls.addAll(payload.localUrls);
+    }
+    if (remoteUrls.isEmpty) {
+      final tunnelUrl = payload.tunnelUrl?.trim() ?? '';
+      final frpUrl = payload.frpUrl?.trim() ?? '';
+      if (tunnelUrl.isNotEmpty) {
+        remoteUrls.add(tunnelUrl);
+      }
+      if (frpUrl.isNotEmpty && frpUrl != tunnelUrl) {
+        remoteUrls.add(frpUrl);
+      }
+    }
     final manualUrl = _manualAgentUrl?.trim();
     final currentSsid = await _currentWifiSsid();
     final currentIps = await _currentLocalIps();
@@ -527,11 +579,7 @@ class _PairingScreenState extends State<PairingScreen> {
       final rest = localUrls
           .where((url) => _normalizeManualUrl(url) != normalizedManual)
           .toList();
-      final candidates = <String>[
-        normalizedManual,
-        ...rest,
-        ...remoteUrls,
-      ];
+      final candidates = <String>[normalizedManual, ...rest, ...remoteUrls];
       return _PairingCandidateSelection(
         candidates: candidates,
         message: 'Using manually selected endpoint.',
@@ -541,8 +589,8 @@ class _PairingScreenState extends State<PairingScreen> {
       if (remoteUrls.isNotEmpty) {
         return _PairingCandidateSelection(candidates: remoteUrls);
       }
-      final message = payload.tunnelError != null &&
-              payload.tunnelError!.trim().isNotEmpty
+      final message =
+          payload.tunnelError != null && payload.tunnelError!.trim().isNotEmpty
           ? payload.tunnelError!
           : 'Remote URL unavailable. Disable "Force tunnel" or add an FRP URL.';
       return _PairingCandidateSelection(candidates: const [], message: message);
@@ -589,8 +637,8 @@ class _PairingScreenState extends State<PairingScreen> {
       return _PairingCandidateSelection(candidates: remoteUrls);
     }
 
-    final fallbackMessage = payload.tunnelError != null &&
-            payload.tunnelError!.trim().isNotEmpty
+    final fallbackMessage =
+        payload.tunnelError != null && payload.tunnelError!.trim().isNotEmpty
         ? payload.tunnelError!
         : 'No desktop URL found in the pairing payload.';
     return _PairingCandidateSelection(
@@ -619,7 +667,9 @@ class _PairingScreenState extends State<PairingScreen> {
   String _formatAttemptDetail(String url, String? message) {
     final label = _shortUrlLabel(url);
     final requestLabel = _appendPath(url, '/pairing/confirm');
-    final reason = message == null || message.trim().isEmpty ? 'Failed.' : message;
+    final reason = message == null || message.trim().isEmpty
+        ? 'Failed.'
+        : message;
     return '- $label ($requestLabel): $reason';
   }
 
@@ -638,12 +688,14 @@ class _PairingScreenState extends State<PairingScreen> {
   }
 
   String _formatLocalDiagnostics(List<_ReachabilityResult> diagnostics) {
-    final lines = diagnostics.map((result) {
-      final label = _shortUrlLabel(result.url);
-      final requestLabel = _appendPath(result.url, '/health');
-      final reason = result.reason ?? 'Unreachable.';
-      return '- $label ($requestLabel): $reason';
-    }).join('\n');
+    final lines = diagnostics
+        .map((result) {
+          final label = _shortUrlLabel(result.url);
+          final requestLabel = _appendPath(result.url, '/health');
+          final reason = result.reason ?? 'Unreachable.';
+          return '- $label ($requestLabel): $reason';
+        })
+        .join('\n');
     return [
       'Local checks:',
       lines,
@@ -680,8 +732,9 @@ class _PairingScreenState extends State<PairingScreen> {
     if (base == null) {
       return normalized + path;
     }
-    final basePath =
-        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
     final nextPath = basePath.isEmpty ? path : '$basePath$path';
     return base.replace(path: nextPath).toString();
   }
@@ -743,6 +796,7 @@ class _PairingScreenState extends State<PairingScreen> {
         status: _PairingAttemptStatus.failed,
         message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
     http.Response response;
@@ -753,6 +807,14 @@ class _PairingScreenState extends State<PairingScreen> {
         'secret': payload.secret,
         'client_name': _resolveDeviceName(),
       };
+      final protocolVersion = payload.protocolVersion?.trim();
+      if (protocolVersion != null && protocolVersion.isNotEmpty) {
+        requestBody['protocol_version'] = protocolVersion;
+      }
+      final nonce = payload.nonce?.trim();
+      if (nonce != null && nonce.isNotEmpty) {
+        requestBody['nonce'] = nonce;
+      }
       if (resolvedClientId != null && resolvedClientId.trim().isNotEmpty) {
         requestBody['client_id'] = resolvedClientId.trim();
       }
@@ -777,6 +839,7 @@ class _PairingScreenState extends State<PairingScreen> {
         message: _formatErrorMessage(presentation),
         detail: detail,
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
 
@@ -793,12 +856,14 @@ class _PairingScreenState extends State<PairingScreen> {
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.failed,
         message: _formatErrorMessage(presentation),
-        detail: errorInfo?.message != null &&
+        detail:
+            errorInfo?.message != null &&
                 errorInfo!.message!.trim().isNotEmpty &&
                 errorInfo.message != presentation.message
             ? errorInfo.message
             : null,
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
 
@@ -817,6 +882,7 @@ class _PairingScreenState extends State<PairingScreen> {
         status: _PairingAttemptStatus.failed,
         message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
 
@@ -832,6 +898,7 @@ class _PairingScreenState extends State<PairingScreen> {
         status: _PairingAttemptStatus.failed,
         message: _formatErrorMessage(presentation),
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
 
@@ -840,8 +907,9 @@ class _PairingScreenState extends State<PairingScreen> {
       final authTokenRaw =
           decoded['auth_token']?.toString().trim() ??
           decoded['authToken']?.toString().trim();
-      final resolvedAuthToken =
-          authTokenRaw != null && authTokenRaw.isNotEmpty ? authTokenRaw : null;
+      final resolvedAuthToken = authTokenRaw != null && authTokenRaw.isNotEmpty
+          ? authTokenRaw
+          : null;
       if (resolvedAuthToken == null) {
         return _PairingAttemptResult(
           status: _PairingAttemptStatus.failed,
@@ -853,8 +921,9 @@ class _PairingScreenState extends State<PairingScreen> {
       final deviceIdRaw =
           decoded['device_id']?.toString().trim() ??
           decoded['deviceId']?.toString().trim();
-      final resolvedDeviceId =
-          deviceIdRaw != null && deviceIdRaw.isNotEmpty ? deviceIdRaw : null;
+      final resolvedDeviceId = deviceIdRaw != null && deviceIdRaw.isNotEmpty
+          ? deviceIdRaw
+          : null;
       return _PairingAttemptResult(
         status: _PairingAttemptStatus.connected,
         agentUrl: baseUrl,
@@ -883,6 +952,7 @@ class _PairingScreenState extends State<PairingScreen> {
         message: _formatErrorMessage(presentation),
         detail: error['message']?.toString(),
         agentUrl: baseUrl,
+        errorCode: presentation.code,
       );
     }
 
@@ -897,6 +967,7 @@ class _PairingScreenState extends State<PairingScreen> {
       status: _PairingAttemptStatus.failed,
       message: _formatErrorMessage(presentation),
       agentUrl: baseUrl,
+      errorCode: presentation.code,
     );
   }
 
@@ -907,10 +978,12 @@ class _PairingScreenState extends State<PairingScreen> {
         'Agent URL must include a scheme (https://).',
       );
     }
-    final basePath =
-        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
-    final confirmPath =
-        basePath.isEmpty ? '/pairing/confirm' : '$basePath/pairing/confirm';
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
+    final confirmPath = basePath.isEmpty
+        ? '/pairing/confirm'
+        : '$basePath/pairing/confirm';
     return base.replace(path: confirmPath);
   }
 
@@ -921,13 +994,25 @@ class _PairingScreenState extends State<PairingScreen> {
         'Agent URL must include a scheme (https://).',
       );
     }
-    final basePath =
-        base.path.endsWith('/') ? base.path.substring(0, base.path.length - 1) : base.path;
+    final basePath = base.path.endsWith('/')
+        ? base.path.substring(0, base.path.length - 1)
+        : base.path;
     final healthPath = basePath.isEmpty ? '/health' : '$basePath/health';
     return base.replace(path: healthPath);
   }
 
   bool _isTunnelUrl(PairingPayload payload, String agentUrl) {
+    if (payload.transports.isNotEmpty) {
+      final normalizedTarget = _normalizeUrl(agentUrl);
+      for (final transport in payload.transports) {
+        if (!transport.enabled || !transport.isRemote) {
+          continue;
+        }
+        if (_normalizeUrl(transport.url) == normalizedTarget) {
+          return true;
+        }
+      }
+    }
     final tunnelUrl = payload.tunnelUrl?.trim();
     final frpUrl = payload.frpUrl?.trim();
     if (tunnelUrl != null && tunnelUrl.isNotEmpty) {
@@ -958,6 +1043,7 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingStatusIsError = false;
       _pairingDetailStatus = null;
       _pairingDetailStatusIsError = false;
+      _pairingErrorCode = null;
       _isPairing = false;
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
@@ -1049,9 +1135,7 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to save local history: ${error.toString()}',
-          ),
+          content: Text('Failed to save local history: ${error.toString()}'),
         ),
       );
     }
@@ -1159,8 +1243,9 @@ class _PairingScreenState extends State<PairingScreen> {
         toolSessions: sessions,
         timelineEvents: events,
       );
-      final exportJson =
-          const JsonEncoder.withIndent('  ').convert(bundle.toJson());
+      final exportJson = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(bundle.toJson());
       if (!mounted) {
         return;
       }
@@ -1193,9 +1278,7 @@ class _PairingScreenState extends State<PairingScreen> {
           title: const Text('Export bundle'),
           content: SizedBox(
             width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: SelectableText(exportJson),
-            ),
+            child: SingleChildScrollView(child: SelectableText(exportJson)),
           ),
           actions: [
             TextButton(
@@ -1335,6 +1418,60 @@ class _PairingScreenState extends State<PairingScreen> {
     }
   }
 
+  String _unsupportedProtocolMessage(PairingPayload payload) {
+    final version = payload.protocolVersionNormalized ?? 'unknown';
+    return 'Pairing protocol $version is unsupported. Update mobile/desktop app and regenerate QR.';
+  }
+
+  String? _extractErrorCodeFromStatusText(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final match = RegExp(
+      r'\(code:\s*([a-z0-9_]+)\)',
+      caseSensitive: false,
+    ).firstMatch(value);
+    final code = match?.group(1)?.trim().toLowerCase();
+    if (code == null || code.isEmpty) {
+      return null;
+    }
+    return code;
+  }
+
+  String? _resolvedPairingErrorCode() {
+    final directCode = _pairingErrorCode?.trim().toLowerCase();
+    if (directCode != null && directCode.isNotEmpty) {
+      return directCode;
+    }
+    final statusCode = _extractErrorCodeFromStatusText(_pairingStatus);
+    if (statusCode != null) {
+      return statusCode;
+    }
+    return _extractErrorCodeFromStatusText(_pairingDetailStatus);
+  }
+
+  String? _pairingRecoveryHintForCode(String? code) {
+    switch (code) {
+      case 'missing_nonce':
+        return '请在桌面端点击“New handshake”重新生成二维码后再扫码。';
+      default:
+        return null;
+    }
+  }
+
+  bool _requiresRegenerateQrAction(String? code) {
+    switch (code) {
+      case 'missing_nonce':
+      case 'nonce_mismatch':
+      case 'token_mismatch':
+      case 'secret_mismatch':
+      case 'token_expired':
+        return true;
+      default:
+        return false;
+    }
+  }
+
   Future<void> _loadHistory() async {
     try {
       final connections = await widget.storage.fetchConnections();
@@ -1400,8 +1537,7 @@ class _PairingScreenState extends State<PairingScreen> {
     }
     try {
       final info = NetworkInfo();
-      final ssid =
-          await info.getWifiName().timeout(const Duration(seconds: 1));
+      final ssid = await info.getWifiName().timeout(const Duration(seconds: 1));
       if (ssid == null) {
         return null;
       }
@@ -1598,11 +1734,7 @@ class _PairingScreenState extends State<PairingScreen> {
     try {
       final response = await client.get(uri).timeout(timeout);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return _ReachabilityResult(
-          url: baseUrl,
-          reachable: true,
-          reason: 'OK',
-        );
+        return _ReachabilityResult(url: baseUrl, reachable: true, reason: 'OK');
       }
       return _ReachabilityResult(
         url: baseUrl,
@@ -1637,12 +1769,12 @@ class _PairingScreenState extends State<PairingScreen> {
       allowUnknown: true,
     );
     final localUrls = _fallbackLocalUrls(agent);
-    final remoteUrls = <String>[
+    final remoteUrls = {
       if (agent.frpUrl != null && agent.frpUrl!.trim().isNotEmpty)
         agent.frpUrl!.trim(),
       if (agent.tunnelUrl != null && agent.tunnelUrl!.trim().isNotEmpty)
         agent.tunnelUrl!.trim(),
-    ].toSet().toList();
+    }.toList();
 
     final localFuture = sameLan && localUrls.isNotEmpty
         ? _probeReachability(localUrls, const Duration(seconds: 2))
@@ -1681,15 +1813,12 @@ class _PairingScreenState extends State<PairingScreen> {
     final errorDetail = _summarizeProbeFailures(
       localResults,
       remoteResults,
-      fallbackMessage:
-          (localUrls.isEmpty && remoteUrls.isEmpty)
-              ? 'No LAN/FRP endpoints available.'
-              : null,
+      fallbackMessage: (localUrls.isEmpty && remoteUrls.isEmpty)
+          ? 'No LAN/FRP endpoints available.'
+          : null,
     );
     return _AgentRouteResolution(
-      record: agent.copyWith(
-        status: 'offline',
-      ),
+      record: agent.copyWith(status: 'offline'),
       errorDetail: errorDetail,
     );
   }
@@ -1714,17 +1843,41 @@ class _PairingScreenState extends State<PairingScreen> {
           identity['host_name']?.toString() ?? identity['hostName']?.toString();
       final wifiSsid =
           identity['wifi_ssid']?.toString() ?? identity['wifiSsid']?.toString();
-      final localIps =
-          _parseLocalIps(identity['local_ips'] ?? identity['localIps']);
-      final localUrls = _parseLocalUrls(
+      final localIps = _parseLocalIps(
+        identity['local_ips'] ?? identity['localIps'],
+      );
+      final transportEndpoints = _parseTransportEndpoints(
+        identity['transports'],
+      );
+      final transportLocalUrls = transportEndpoints
+          .where((transport) => transport.enabled && transport.isLan)
+          .map((transport) => transport.url.trim())
+          .where((url) => url.isNotEmpty)
+          .toSet()
+          .toList();
+      final localUrlsFromPayload = _parseLocalUrls(
         identity['local_urls'] ??
             identity['localUrls'] ??
             identity['local_url'],
       );
-      final frpUrl =
-          identity['frp_url']?.toString() ?? identity['frpUrl']?.toString();
-      final tunnelUrl =
-          identity['tunnel_url']?.toString() ?? identity['tunnelUrl']?.toString();
+      final localUrls = transportLocalUrls.isNotEmpty
+          ? transportLocalUrls
+          : localUrlsFromPayload;
+      final frpTransportUrl = transportEndpoints
+          .where((transport) => transport.enabled && transport.type == 'frp')
+          .map((transport) => transport.url.trim())
+          .firstWhere((url) => url.isNotEmpty, orElse: () => '');
+      final tunTransportUrl = transportEndpoints
+          .where((transport) => transport.enabled && transport.type == 'tun')
+          .map((transport) => transport.url.trim())
+          .firstWhere((url) => url.isNotEmpty, orElse: () => '');
+      final frpUrl = frpTransportUrl.isNotEmpty
+          ? frpTransportUrl
+          : identity['frp_url']?.toString() ?? identity['frpUrl']?.toString();
+      final tunnelUrl = tunTransportUrl.isNotEmpty
+          ? tunTransportUrl
+          : identity['tunnel_url']?.toString() ??
+                identity['tunnelUrl']?.toString();
       final roiQuicPort = _parsePort(
         identity['roi_quic_port'] ?? identity['roiQuicPort'],
       );
@@ -1798,10 +1951,10 @@ class _PairingScreenState extends State<PairingScreen> {
           ),
         )
         .then((_) {
-      if (mounted) {
-        _loadHistory();
-      }
-    });
+          if (mounted) {
+            _loadHistory();
+          }
+        });
   }
 
   Future<void> _deleteAgent(ConnectionRecord agent) async {
@@ -1838,8 +1991,9 @@ class _PairingScreenState extends State<PairingScreen> {
       }
       setState(() {
         if (_activeAgentId == agent.id) {
-          _activeAgentId =
-              _connections.isNotEmpty ? _connections.first.id : null;
+          _activeAgentId = _connections.isNotEmpty
+              ? _connections.first.id
+              : null;
         }
       });
     } catch (error) {
@@ -1847,9 +2001,7 @@ class _PairingScreenState extends State<PairingScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to remove agent: ${error.toString()}'),
-        ),
+        SnackBar(content: Text('Failed to remove agent: ${error.toString()}')),
       );
     }
   }
@@ -1857,6 +2009,10 @@ class _PairingScreenState extends State<PairingScreen> {
   @override
   Widget build(BuildContext context) {
     final hasAgents = _connections.isNotEmpty;
+    final pairingErrorCode = _resolvedPairingErrorCode();
+    final pairingRecoveryHint = _pairingRecoveryHintForCode(pairingErrorCode);
+    final showRegenerateQrAction =
+        _requiresRegenerateQrAction(pairingErrorCode) && !_isPairing;
     return Scaffold(
       body: Stack(
         children: [
@@ -1871,8 +2027,7 @@ class _PairingScreenState extends State<PairingScreen> {
                   const SizedBox(height: 24),
                   PairingStepCard(
                     title: 'Add agent',
-                    description:
-                        'Scan a pairing token to add a desktop agent.',
+                    description: 'Scan a pairing token to add a desktop agent.',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1890,9 +2045,7 @@ class _PairingScreenState extends State<PairingScreen> {
                         ),
                         const SizedBox(height: 16),
                         if (_payload == null)
-                          const Text(
-                            'No pairing token scanned yet.',
-                          )
+                          const Text('No pairing token scanned yet.')
                         else
                           _PairingTokenDetails(payload: _payload!),
                         if (_payload != null &&
@@ -1900,7 +2053,8 @@ class _PairingScreenState extends State<PairingScreen> {
                           const SizedBox(height: 12),
                           Text(
                             'LAN endpoints',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
                                   color: const Color(0xFF64748B),
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -1941,7 +2095,8 @@ class _PairingScreenState extends State<PairingScreen> {
                           const SizedBox(height: 12),
                           Text(
                             'Public endpoint (FRP)',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
                                   color: const Color(0xFF64748B),
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -1949,17 +2104,13 @@ class _PairingScreenState extends State<PairingScreen> {
                           const SizedBox(height: 6),
                           Text(
                             _payload!.frpUrl!,
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: const Color(0xFF0F172A),
-                                ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: const Color(0xFF0F172A)),
                           ),
                         ],
                         if (_scanError != null) ...[
                           const SizedBox(height: 12),
-                          _InlineStatus(
-                            message: _scanError!,
-                            isError: true,
-                          ),
+                          _InlineStatus(message: _scanError!, isError: true),
                         ],
                         if (_payload?.tunnelError != null &&
                             _pairingStatus != _payload!.tunnelError) ...[
@@ -2006,9 +2157,7 @@ class _PairingScreenState extends State<PairingScreen> {
                                 const SizedBox(width: 12),
                                 Text(
                                   'Pairing in progress...',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
+                                  style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
                                         fontWeight: FontWeight.w600,
                                         color: const Color(0xFF0C4A6E),
@@ -2052,11 +2201,32 @@ class _PairingScreenState extends State<PairingScreen> {
                             isError: _pairingDetailStatusIsError,
                           ),
                         ],
+                        if (pairingRecoveryHint != null) ...[
+                          const SizedBox(height: 8),
+                          _InlineStatus(
+                            key: const Key('pairingRecoveryHint'),
+                            message: pairingRecoveryHint,
+                            isError: true,
+                          ),
+                        ],
+                        if (showRegenerateQrAction) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              key: const Key('regenerateQrButton'),
+                              onPressed: _scanQrPayload,
+                              icon: const Icon(Icons.qr_code_2),
+                              label: const Text('重新生成二维码'),
+                            ),
+                          ),
+                        ],
                         if (_pairingAgentUrl != null) ...[
                           const SizedBox(height: 10),
                           Text(
                             'Agent: $_pairingAgentUrl',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
                                   color: const Color(0xFF64748B),
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -2065,7 +2235,8 @@ class _PairingScreenState extends State<PairingScreen> {
                             const SizedBox(height: 4),
                             Text(
                               'Mode: ${_pairingUsesTunnel! ? 'Tunnel' : 'Local network'}',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
                                     color: const Color(0xFF94A3B8),
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -2102,16 +2273,12 @@ class _PairingScreenState extends State<PairingScreen> {
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleSmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                        ?.copyWith(fontWeight: FontWeight.w600),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     'Use the cloud tunnel even when the agent is on the same LAN.',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
+                                    style: Theme.of(context).textTheme.bodySmall
                                         ?.copyWith(
                                           color: const Color(0xFF64748B),
                                         ),
@@ -2134,7 +2301,8 @@ class _PairingScreenState extends State<PairingScreen> {
                                 _payload!.tunnelUrl!.trim().isEmpty)) ...[
                           const SizedBox(height: 12),
                           _InlineStatus(
-                            message: _payload?.tunnelError ??
+                            message:
+                                _payload?.tunnelError ??
                                 'Tunnel URL unavailable. Install Cloudflared and generate a new token.',
                             isError: true,
                           ),
@@ -2166,12 +2334,8 @@ class _PairingScreenState extends State<PairingScreen> {
                           )
                         : Text(
                             'No agents paired yet.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  color: const Color(0xFF64748B),
-                                ),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: const Color(0xFF64748B)),
                           ),
                   ),
                   const SizedBox(height: 20),
@@ -2226,4 +2390,3 @@ class _PairingScreenState extends State<PairingScreen> {
     );
   }
 }
-

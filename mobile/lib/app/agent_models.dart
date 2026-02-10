@@ -186,6 +186,47 @@ class RemoteTerminalSession {
   }
 }
 
+
+class AgentWsTicket {
+  const AgentWsTicket({
+    required this.token,
+    required this.scope,
+    required this.expiresAt,
+  });
+
+  final String token;
+  final String scope;
+  final DateTime expiresAt;
+
+  factory AgentWsTicket.fromPayload(Map<String, dynamic> payload) {
+    final token = payload['token']?.toString().trim() ?? '';
+    if (token.isEmpty) {
+      throw const AgentCommandFailure(
+        'WebSocket ticket missing token.',
+        code: 'invalid_response',
+      );
+    }
+    final scope = payload['scope']?.toString().trim() ?? '';
+    final expiresRaw = payload['expires_at'];
+    int expiresEpoch = 0;
+    if (expiresRaw is int) {
+      expiresEpoch = expiresRaw;
+    } else if (expiresRaw is num) {
+      expiresEpoch = expiresRaw.toInt();
+    } else if (expiresRaw is String) {
+      expiresEpoch = int.tryParse(expiresRaw) ?? 0;
+    }
+    final expiresAt = expiresEpoch > 0
+        ? DateTime.fromMillisecondsSinceEpoch(expiresEpoch * 1000)
+        : DateTime.now().add(const Duration(seconds: 20));
+    return AgentWsTicket(
+      token: token,
+      scope: scope,
+      expiresAt: expiresAt,
+    );
+  }
+}
+
 class AgentCommandClient {
   AgentCommandClient({
     required this.baseUrl,
@@ -275,11 +316,33 @@ class AgentCommandClient {
     return results;
   }
 
+  Future<AgentWsTicket> createWsTicket({
+    required String scope,
+    String? sessionId,
+  }) async {
+    final payload = <String, dynamic>{'scope': scope};
+    if (sessionId != null && sessionId.trim().isNotEmpty) {
+      payload['session_id'] = sessionId.trim();
+    }
+    final response = await _sendCommand(command: 'ws_ticket', payload: payload);
+    final responsePayload = response.payload;
+    if (responsePayload is! Map<String, dynamic>) {
+      throw AgentCommandFailure(
+        'Agent websocket ticket response missing payload.',
+        code: 'invalid_response',
+        endpoint: _commandUri().toString(),
+        requestId: response.requestId,
+      );
+    }
+    return AgentWsTicket.fromPayload(responsePayload);
+  }
+
   Future<Map<String, dynamic>> sendTerminalAction({
     required String action,
     String? sessionId,
     String? label,
     String? input,
+    List<int>? inputBytes,
     int? cols,
     int? rows,
     int? since,
@@ -297,6 +360,10 @@ class AgentCommandClient {
     }
     if (input != null && input.isNotEmpty) {
       payload['input'] = input;
+    }
+    if (inputBytes != null && inputBytes.isNotEmpty) {
+      payload['input_b64'] = base64Encode(inputBytes);
+      payload.remove('input');
     }
     if (cols != null) {
       payload['cols'] = cols;
@@ -1063,9 +1130,13 @@ bool _isIgnoredLocalUrl(String url) {
 }
 
 class PairingPayload {
+  static const Set<String> supportedProtocolVersions = {'1.0', '1.1'};
+
   const PairingPayload({
     required this.token,
     required this.secret,
+    this.protocolVersion,
+    this.nonce,
     this.expiresAt,
     this.deviceId,
     this.hostName,
@@ -1076,11 +1147,14 @@ class PairingPayload {
     this.roiQuicPort,
     this.tunnelError,
     this.localUrls = const [],
+    this.transports = const [],
     this.requiresApproval = false,
   });
 
   final String token;
   final String secret;
+  final String? protocolVersion;
+  final String? nonce;
   final DateTime? expiresAt;
   final String? deviceId;
   final String? hostName;
@@ -1091,7 +1165,24 @@ class PairingPayload {
   final int? roiQuicPort;
   final String? tunnelError;
   final List<String> localUrls;
+  final List<TransportEndpointModel> transports;
   final bool requiresApproval;
+
+  String? get protocolVersionNormalized {
+    final value = protocolVersion?.trim();
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
+
+  bool get isProtocolSupported {
+    final value = protocolVersionNormalized;
+    if (value == null) {
+      return true;
+    }
+    return supportedProtocolVersions.contains(value);
+  }
 
   bool get isExpired {
     if (expiresAt == null) {
@@ -1147,6 +1238,10 @@ class PairingPayload {
         data['secret']?.toString() ??
         data['pairing_secret']?.toString() ??
         data['pairingSecret']?.toString();
+    final protocolVersion =
+        data['protocol_version']?.toString() ??
+        data['protocolVersion']?.toString();
+    final nonce = data['nonce']?.toString();
     final expiresValue = data['expires_at'] ?? data['expiresAt'];
     if (token == null || secret == null || expiresValue == null) {
       return null;
@@ -1167,6 +1262,7 @@ class PairingPayload {
     );
     final tunnelError =
         data['tunnel_error']?.toString() ?? data['tunnelError']?.toString();
+    final transports = _parseTransportEndpoints(data['transports']);
     final localUrls = _parseLocalUrls(
       data['local_urls'] ?? data['localUrls'] ?? data['local_url'],
     );
@@ -1184,6 +1280,8 @@ class PairingPayload {
     return PairingPayload(
       token: token,
       secret: secret,
+      protocolVersion: protocolVersion,
+      nonce: nonce,
       expiresAt: expiresAt,
       deviceId: deviceId,
       hostName: hostName,
@@ -1194,11 +1292,23 @@ class PairingPayload {
       roiQuicPort: roiQuicPort,
       tunnelError: tunnelError,
       localUrls: localUrls,
+      transports: transports,
       requiresApproval: requiresApproval,
     );
   }
 
   List<String> get preferredUrls {
+    if (transports.isNotEmpty) {
+      final urls = transports
+          .where((transport) => transport.enabled)
+          .map((transport) => transport.url.trim())
+          .where((url) => url.isNotEmpty)
+          .toSet()
+          .toList();
+      if (urls.isNotEmpty) {
+        return urls;
+      }
+    }
     final urls = <String>[];
     urls.addAll(localUrls);
     if (tunnelUrl != null && tunnelUrl!.trim().isNotEmpty) {
@@ -1209,6 +1319,71 @@ class PairingPayload {
     }
     return urls.toSet().toList();
   }
+}
+
+class TransportEndpointModel {
+  const TransportEndpointModel({
+    required this.type,
+    required this.url,
+    required this.priority,
+    required this.probeTimeoutMs,
+    required this.enabled,
+  });
+
+  final String type;
+  final String url;
+  final int priority;
+  final int probeTimeoutMs;
+  final bool enabled;
+
+  bool get isLan => type.trim().toLowerCase() == 'lan';
+
+  bool get isRemote {
+    final normalized = type.trim().toLowerCase();
+    return normalized == 'frp' || normalized == 'tun';
+  }
+}
+
+List<TransportEndpointModel> _parseTransportEndpoints(dynamic raw) {
+  if (raw is! List) {
+    return const [];
+  }
+  final parsed = <TransportEndpointModel>[];
+  for (final item in raw) {
+    if (item is! Map) {
+      continue;
+    }
+    final map = Map<String, dynamic>.from(item);
+    final type = map['type']?.toString().trim().toLowerCase() ?? '';
+    final url = map['url']?.toString().trim() ?? '';
+    if (type.isEmpty || url.isEmpty) {
+      continue;
+    }
+    final priority = int.tryParse(map['priority']?.toString() ?? '') ?? 0;
+    final probeTimeoutMs =
+        int.tryParse(map['probe_timeout_ms']?.toString() ?? '') ??
+        int.tryParse(map['probeTimeoutMs']?.toString() ?? '') ??
+        (type == 'lan' ? 2000 : 3000);
+    final enabledRaw = map['enabled'];
+    final enabled = enabledRaw == null ? true : _parseBool(enabledRaw);
+    parsed.add(
+      TransportEndpointModel(
+        type: type,
+        url: url,
+        priority: priority,
+        probeTimeoutMs: probeTimeoutMs,
+        enabled: enabled,
+      ),
+    );
+  }
+  parsed.sort((a, b) {
+    final priorityCompare = b.priority.compareTo(a.priority);
+    if (priorityCompare != 0) {
+      return priorityCompare;
+    }
+    return a.url.compareTo(b.url);
+  });
+  return parsed;
 }
 
 class _ManualLoginInput {
@@ -1232,6 +1407,7 @@ class _PairingAttemptResult {
     required this.status,
     this.message,
     this.detail,
+    this.errorCode,
     this.agentUrl,
     this.authToken,
     this.deviceId,
@@ -1240,6 +1416,7 @@ class _PairingAttemptResult {
   final _PairingAttemptStatus status;
   final String? message;
   final String? detail;
+  final String? errorCode;
   final String? agentUrl;
   final String? authToken;
   final String? deviceId;

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::roi::RoiSessionInfo;
 use crate::roi::capture::RoiFrame;
+use crate::roi::RoiSessionInfo;
 
 #[derive(Clone, Debug)]
 pub struct RoiViewport {
@@ -39,7 +39,12 @@ impl RoiTileCache {
 
     pub fn should_send(&mut self, tile: &RoiTile) -> bool {
         let hash = fnv1a_hash(&tile.pixels);
-        let key = (tile.logical_x, tile.logical_y, tile.logical_w, tile.logical_h);
+        let key = (
+            tile.logical_x,
+            tile.logical_y,
+            tile.logical_w,
+            tile.logical_h,
+        );
         if let Some(prev) = self.hashes.get(&key) {
             if *prev == hash {
                 return false;
@@ -125,18 +130,10 @@ pub fn build_tiles(
                 if tile_w == 0 || tile_h == 0 {
                     break;
                 }
-                let (logical_left, logical_right) = map_physical_to_logical_bounds(
-                    x,
-                    x + tile_w,
-                    logical_width,
-                    frame.width,
-                );
-                let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
-                    y,
-                    y + tile_h,
-                    logical_height,
-                    frame.height,
-                );
+                let (logical_left, logical_right) =
+                    map_physical_to_logical_bounds(x, x + tile_w, logical_width, frame.width);
+                let (logical_top, logical_bottom) =
+                    map_physical_to_logical_bounds(y, y + tile_h, logical_height, frame.height);
                 let logical_w = logical_right.saturating_sub(logical_left).max(1);
                 let logical_h = logical_bottom.saturating_sub(logical_top).max(1);
                 let tile = RoiTile {
@@ -174,18 +171,10 @@ pub fn build_tiles(
             if tile_w == 0 || tile_h == 0 {
                 break;
             }
-            let (logical_left, logical_right) = map_physical_to_logical_bounds(
-                x,
-                x + tile_w,
-                logical_width,
-                frame.width,
-            );
-            let (logical_top, logical_bottom) = map_physical_to_logical_bounds(
-                y,
-                y + tile_h,
-                logical_height,
-                frame.height,
-            );
+            let (logical_left, logical_right) =
+                map_physical_to_logical_bounds(x, x + tile_w, logical_width, frame.width);
+            let (logical_top, logical_bottom) =
+                map_physical_to_logical_bounds(y, y + tile_h, logical_height, frame.height);
             let logical_w = logical_right.saturating_sub(logical_left).max(1);
             let logical_h = logical_bottom.saturating_sub(logical_top).max(1);
             let tile = RoiTile {
@@ -242,8 +231,7 @@ fn extract_tile(frame: &RoiFrame, x: usize, y: usize, width: usize, height: usiz
         let src_start = (y + row) * stride + x * 4;
         let src_end = src_start + width * 4;
         let dst_start = row * width * 4;
-        pixels[dst_start..dst_start + width * 4]
-            .copy_from_slice(&frame.data[src_start..src_end]);
+        pixels[dst_start..dst_start + width * 4].copy_from_slice(&frame.data[src_start..src_end]);
     }
     pixels
 }
@@ -261,12 +249,7 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
 mod tests {
     use super::map_physical_to_logical_bounds;
 
-    fn brute_bounds(
-        start: usize,
-        end: usize,
-        logical: u32,
-        physical: usize,
-    ) -> Option<(u32, u32)> {
+    fn brute_bounds(start: usize, end: usize, logical: u32, physical: usize) -> Option<(u32, u32)> {
         if logical == 0 || physical == 0 || end <= start {
             return None;
         }
@@ -296,8 +279,8 @@ mod tests {
             let mut x0 = 0usize;
             while x0 < physical {
                 let x1 = (x0 + 64).min(physical);
-                let expected = brute_bounds(x0, x1, logical, physical)
-                    .expect("expected logical coverage");
+                let expected =
+                    brute_bounds(x0, x1, logical, physical).expect("expected logical coverage");
                 let actual = map_physical_to_logical_bounds(x0, x1, logical, physical);
                 assert_eq!(
                     expected, actual,

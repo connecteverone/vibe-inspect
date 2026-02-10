@@ -63,8 +63,10 @@ void main() {
       'token': 'ABC123',
       'secret': 'SECRET77',
       'expires_at':
-          DateTime.now().add(const Duration(minutes: 2)).millisecondsSinceEpoch ~/
-              1000,
+          DateTime.now()
+              .add(const Duration(minutes: 2))
+              .millisecondsSinceEpoch ~/
+          1000,
       'tunnel_url': 'https://demo.trycloudflare.com',
     });
 
@@ -99,8 +101,10 @@ void main() {
       'token': 'OLD123',
       'secret': 'SECRET',
       'expires_at':
-          DateTime.now().subtract(const Duration(minutes: 1)).millisecondsSinceEpoch ~/
-              1000,
+          DateTime.now()
+              .subtract(const Duration(minutes: 1))
+              .millisecondsSinceEpoch ~/
+          1000,
     });
 
     await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
@@ -109,6 +113,159 @@ void main() {
 
     expect(find.textContaining('Token expired'), findsOneWidget);
     expect(find.byKey(const Key('retryButton')), findsOneWidget);
+  });
+
+  testWidgets('Unsupported protocol token is blocked before pairing request', (
+    tester,
+  ) async {
+    var requestCount = 0;
+    final mockClient = MockClient((request) async {
+      requestCount += 1;
+      return http.Response('Unexpected request', 500);
+    });
+
+    await tester.pumpWidget(
+      VibeInspectApp(
+        storageInitializer: const MemoryStorageInitializer(),
+        pairingHttpClient: mockClient,
+        forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('scanQrButton')));
+    await tester.pumpAndSettle();
+
+    final payload = jsonEncode({
+      'token': 'UNSUPPORTED-1',
+      'secret': 'SECRET',
+      'protocol_version': '2.0',
+      'expires_at':
+          DateTime.now()
+              .add(const Duration(minutes: 2))
+              .millisecondsSinceEpoch ~/
+          1000,
+    });
+
+    await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
+    await tester.tap(find.byKey(const Key('applyQrButton')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Pairing protocol 2.0 is unsupported'),
+      findsOneWidget,
+    );
+    expect(requestCount, 0);
+  });
+
+  testWidgets('Unsupported protocol blocks LAN use retry request', (
+    tester,
+  ) async {
+    var requestCount = 0;
+    final mockClient = MockClient((request) async {
+      requestCount += 1;
+      return http.Response('Unexpected request', 500);
+    });
+
+    await tester.pumpWidget(
+      VibeInspectApp(
+        storageInitializer: const MemoryStorageInitializer(),
+        pairingHttpClient: mockClient,
+        forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('scanQrButton')));
+    await tester.pumpAndSettle();
+
+    final payload = jsonEncode({
+      'token': 'UNSUPPORTED-2',
+      'secret': 'SECRET',
+      'protocol_version': '2.0',
+      'local_urls': ['https://192.168.1.10:3030'],
+      'expires_at':
+          DateTime.now()
+              .add(const Duration(minutes: 2))
+              .millisecondsSinceEpoch ~/
+          1000,
+    });
+
+    await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
+    await tester.tap(find.byKey(const Key('applyQrButton')));
+    await tester.pumpAndSettle();
+
+    final useButton = find.widgetWithText(OutlinedButton, 'Use').first;
+    await tester.tap(useButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Pairing protocol 2.0 is unsupported'),
+      findsOneWidget,
+    );
+    expect(requestCount, 0);
+  });
+
+  testWidgets('Missing nonce shows regenerate QR hint and action', (
+    tester,
+  ) async {
+    final mockClient = MockClient((request) async {
+      if (request.url.path.endsWith('/pairing/confirm')) {
+        return http.Response(
+          jsonEncode({
+            'error': {
+              'code': 'missing_nonce',
+              'message': 'Pairing nonce is required for this protocol version.',
+            },
+          }),
+          400,
+        );
+      }
+      return http.Response('Not found', 404);
+    });
+
+    await tester.pumpWidget(
+      VibeInspectApp(
+        storageInitializer: const MemoryStorageInitializer(),
+        pairingHttpClient: mockClient,
+        forceManualQr: true,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('scanQrButton')));
+    await tester.pumpAndSettle();
+
+    final payload = jsonEncode({
+      'token': 'NONCE-REQ-1',
+      'secret': 'SECRET',
+      'protocol_version': '1.1',
+      'expires_at':
+          DateTime.now()
+              .add(const Duration(minutes: 2))
+              .millisecondsSinceEpoch ~/
+          1000,
+      'local_urls': ['https://192.168.1.10:3030'],
+    });
+
+    await tester.enterText(find.byKey(const Key('qrPayloadField')), payload);
+    await tester.tap(find.byKey(const Key('applyQrButton')));
+    await pumpUntilFound(tester, find.textContaining('Pairing nonce missing'));
+
+    expect(find.byKey(const Key('pairingRecoveryHint')), findsOneWidget);
+    expect(find.byKey(const Key('regenerateQrButton')), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('regenerateQrButton')));
+    await tester.tap(find.byKey(const Key('regenerateQrButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('qrPayloadField')), findsOneWidget);
   });
 
   testWidgets('Tunnel error message is shown after scan', (tester) async {
@@ -129,8 +286,10 @@ void main() {
       'token': 'NEW456',
       'secret': 'SECRET',
       'expires_at':
-          DateTime.now().add(const Duration(minutes: 2)).millisecondsSinceEpoch ~/
-              1000,
+          DateTime.now()
+              .add(const Duration(minutes: 2))
+              .millisecondsSinceEpoch ~/
+          1000,
       'tunnel_error':
           'Cloudflared is not installed. Install it and retry pairing.',
     });
@@ -269,10 +428,7 @@ void main() {
           sessionId: terminalSessionId,
           type: 'terminal',
           title: 'npm test',
-          payload: {
-            'command': 'npm test',
-            'output_preview': '1 failing test',
-          },
+          payload: {'command': 'npm test', 'output_preview': '1 failing test'},
           createdAt: now,
         ),
       );
@@ -350,8 +506,9 @@ void main() {
     expect(find.text('Body must be valid JSON.'), findsOneWidget);
   });
 
-  testWidgets('Workspace session with missing context shows error state',
-      (tester) async {
+  testWidgets('Workspace session with missing context shows error state', (
+    tester,
+  ) async {
     final now = DateTime.now();
     const brokenEventId = 'api-event-missing';
     const apiSessionId = 'api-session-missing';
@@ -415,6 +572,47 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('API context is missing'), findsOneWidget);
+  });
+
+  test('Agent terminal action prefers input_b64 for multibyte payload', () async {
+    final requests = <Map<String, dynamic>>[];
+    final mockClient = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      requests.add(body);
+      return http.Response(
+        jsonEncode({
+          'request_id': body['request_id'] ?? 'req-1',
+          'status': 'ok',
+          'payload': {
+            'type': 'terminal',
+            'action': 'input',
+            'status': 'running',
+          },
+        }),
+        200,
+      );
+    });
+
+    final client = AgentCommandClient(
+      baseUrl: 'https://terminal.agent',
+      client: mockClient,
+      authToken: 'TOKEN',
+    );
+
+    final bytes = utf8.encode('中文输入✓🚀');
+    await client.sendTerminalAction(
+      action: 'input',
+      sessionId: 'session-1',
+      input: 'ignored',
+      inputBytes: bytes,
+    );
+
+    expect(requests, isNotEmpty);
+    final payload = requests.single['payload'] as Map<String, dynamic>;
+    expect(payload['action'], 'input');
+    expect(payload['session_id'], 'session-1');
+    expect(payload.containsKey('input'), isFalse);
+    expect(payload['input_b64'], base64Encode(bytes));
   });
 }
 

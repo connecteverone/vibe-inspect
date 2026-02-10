@@ -120,12 +120,14 @@ class RustdeskIconButton extends StatelessWidget {
     super.key,
     required this.icon,
     required this.onPressed,
+    this.tooltip,
     this.glassStyle = false,
     this.darkBackground = true,
   });
 
   final IconData icon;
   final VoidCallback onPressed;
+  final String? tooltip;
   final bool glassStyle;
   final bool darkBackground;
 
@@ -136,16 +138,19 @@ class RustdeskIconButton extends StatelessWidget {
       darkBackground: darkBackground,
       enabled: true,
     );
+    final iconChild = Padding(
+      padding: const EdgeInsets.all(10),
+      child: Icon(icon, size: 18, color: palette.iconForeground),
+    );
     return Material(
       color: palette.iconBackground,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Icon(icon, size: 18, color: palette.iconForeground),
-        ),
+        child: tooltip == null || tooltip!.isEmpty
+            ? iconChild
+            : Tooltip(message: tooltip!, child: iconChild),
       ),
     );
   }
@@ -171,7 +176,7 @@ class RustdeskMoreMenuButton extends StatelessWidget {
       enabled: true,
     );
     return PopupMenuButton<_RustdeskMoreAction>(
-      tooltip: 'More',
+      tooltip: 'More controls',
       color: palette.menuBackground,
       icon: Icon(Icons.more_horiz, color: palette.menuForeground),
       itemBuilder: (context) => [
@@ -179,7 +184,7 @@ class RustdeskMoreMenuButton extends StatelessWidget {
           value: _RustdeskMoreAction.keyboard,
           child: _RustdeskMoreMenuItem(
             icon: Icons.keyboard,
-            label: 'Keyboard',
+            label: 'Keyboard input',
             color: palette.menuForeground,
           ),
         ),
@@ -187,7 +192,7 @@ class RustdeskMoreMenuButton extends StatelessWidget {
           value: _RustdeskMoreAction.exitFullscreen,
           child: _RustdeskMoreMenuItem(
             icon: Icons.fullscreen_exit,
-            label: 'Exit fullscreen',
+            label: 'Exit fullscreen mode',
             color: palette.menuForeground,
           ),
         ),

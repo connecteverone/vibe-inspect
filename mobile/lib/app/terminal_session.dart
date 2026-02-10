@@ -57,10 +57,9 @@ class _TerminalSessionRow extends StatelessWidget {
         isActive ? const Color(0xFF93C5FD) : const Color(0xFFE2E8F0);
     final statusLabel = session.session.status.toUpperCase();
     final rawReason = session.lastEvent?.payload['error_message']?.toString();
-    final reason = rawReason?.trim();
+    final reason = rawReason?.trim() ?? '';
     final status = session.session.status.toLowerCase();
-    final showReason = reason != null &&
-        reason.isNotEmpty &&
+    final showReason = reason.isNotEmpty &&
         (status == 'closed' ||
             status == 'killed' ||
             status == 'exited' ||
@@ -115,7 +114,7 @@ class _TerminalSessionRow extends StatelessWidget {
                     if (showReason) ...[
                       const SizedBox(height: 4),
                       Text(
-                        _truncate(reason!, 60),
+                        _truncate(reason, 60),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: const Color(0xFFB91C1C),
                           fontWeight: FontWeight.w600,

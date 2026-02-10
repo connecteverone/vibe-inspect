@@ -11,7 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(author, version, about = "QUIC datagram micro-benchmark for VNC/ROI tuning")]
+#[command(
+    author,
+    version,
+    about = "QUIC datagram micro-benchmark for VNC/ROI tuning"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

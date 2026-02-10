@@ -1,6 +1,7 @@
 //! Shared terminal daemon core types and defaults.
 
 use axum::extract::ws::{Message, WebSocket};
+use base64::Engine;
 use directories::ProjectDirs;
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -56,12 +57,17 @@ const IDLE_TIMEOUT_REASON: &str = "Session closed after idle timeout.";
 const NOTIFICATION_RATE_LIMIT_SECS: u64 = 10;
 const NOTIFICATION_QUEUE_LIMIT: usize = 200;
 const NOTIFICATION_MESSAGE_LIMIT: usize = 200;
+const MAX_HISTORY_SNAPSHOT_CHARS: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalDiscoveryFile {
     pub ws_url: String,
     pub token: String,
     pub version: String,
+    #[serde(default)]
+    pub daemon_version: Option<String>,
+    #[serde(default)]
+    pub daemon_binary_path: Option<String>,
     pub pid: u32,
     pub created_at: u64,
     pub capabilities: Vec<String>,
@@ -140,6 +146,80 @@ fn resolve_shell() -> String {
     "sh".to_string()
 }
 
+fn shell_login_args(shell: &str) -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        return &[];
+    }
+
+    let shell_name = Path::new(shell)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(shell);
+
+    match shell_name {
+        "zsh" | "bash" | "fish" => &["-il"],
+        _ => &[],
+    }
+}
+
+const LOCALE_ENV_KEYS: &[&str] = &["LC_ALL", "LC_CTYPE", "LANG"];
+
+fn request_env_has_non_empty_value(env: Option<&HashMap<String, String>>, key: &str) -> bool {
+    env.and_then(|values| values.get(key))
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn request_env_contains_any_locale(env: Option<&HashMap<String, String>>) -> bool {
+    LOCALE_ENV_KEYS
+        .iter()
+        .copied()
+        .any(|key| request_env_has_non_empty_value(env, key))
+}
+
+fn is_utf8_locale(value: &str) -> bool {
+    let lowered = value.trim().to_ascii_lowercase();
+    lowered.contains("utf-8") || lowered.contains("utf8")
+}
+
+fn process_env_effective_locale_is_utf8() -> bool {
+    for key in LOCALE_ENV_KEYS.iter().copied() {
+        let Ok(value) = std::env::var(key) else {
+            continue;
+        };
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        return is_utf8_locale(trimmed);
+    }
+    false
+}
+
+fn default_utf8_locale() -> Option<&'static str> {
+    if cfg!(target_os = "macos") {
+        return Some("en_US.UTF-8");
+    }
+    if cfg!(target_os = "linux") {
+        return Some("C.UTF-8");
+    }
+    None
+}
+
+fn apply_default_utf8_locale_env(
+    cmd: &mut CommandBuilder,
+    request_env: Option<&HashMap<String, String>>,
+) {
+    if request_env_contains_any_locale(request_env) || process_env_effective_locale_is_utf8() {
+        return;
+    }
+    if let Some(locale) = default_utf8_locale() {
+        cmd.env("LANG", locale);
+        cmd.env("LC_CTYPE", locale);
+        cmd.env("LC_ALL", locale);
+    }
+}
+
 pub fn terminal_discovery_path() -> Option<PathBuf> {
     let dirs = ProjectDirs::from("com", "vibe", "vibe-inspect")?;
     Some(dirs.config_dir().join(TERMINALD_DISCOVERY_FILE))
@@ -151,9 +231,7 @@ pub fn read_discovery_file(path: &Path) -> Result<TerminalDiscoveryFile, std::io
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
-pub fn write_discovery_file(
-    discovery: &TerminalDiscoveryFile,
-) -> Result<PathBuf, std::io::Error> {
+pub fn write_discovery_file(discovery: &TerminalDiscoveryFile) -> Result<PathBuf, std::io::Error> {
     let path = terminal_discovery_path()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Config dir missing"))?;
     if let Some(parent) = path.parent() {
@@ -258,6 +336,15 @@ impl TerminalSessionStatus {
         }
     }
 
+    fn from_summary_status(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "running" => TerminalSessionStatus::Running,
+            "killed" => TerminalSessionStatus::Killed,
+            "error" => TerminalSessionStatus::Error,
+            _ => TerminalSessionStatus::Exited,
+        }
+    }
+
     fn is_ended(self) -> bool {
         !matches!(self, TerminalSessionStatus::Running)
     }
@@ -358,11 +445,7 @@ impl TerminalSession {
         output
     }
 
-    fn notifications_since(
-        &self,
-        since: u64,
-        limit: usize,
-    ) -> Vec<TerminalNotification> {
+    fn notifications_since(&self, since: u64, limit: usize) -> Vec<TerminalNotification> {
         let mut notifications = self
             .notifications
             .iter()
@@ -485,7 +568,7 @@ pub struct TerminalActionRequest {
     pub env: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSessionSummary {
     pub id: String,
     pub label: String,
@@ -497,6 +580,10 @@ pub struct TerminalSessionSummary {
     pub last_output: String,
     #[serde(default)]
     pub closed_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
+    #[serde(default)]
+    pub snapshot_truncated: bool,
 }
 
 pub struct TerminalError {
@@ -571,9 +658,7 @@ fn terminal_sessions_path() -> Option<PathBuf> {
     Some(dirs.config_dir().join(TERMINAL_SESSIONS_FILE))
 }
 
-fn normalize_history_entries(
-    sessions: &mut HashMap<String, TerminalSessionSummary>,
-) -> bool {
+fn normalize_history_entries(sessions: &mut HashMap<String, TerminalSessionSummary>) -> bool {
     let now = now_ts();
     let mut changed = false;
     for session in sessions.values_mut() {
@@ -684,7 +769,41 @@ pub fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
     }
 }
 
-fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
+fn trim_history_snapshot_tail(text: String) -> (String, bool) {
+    let char_count = text.chars().count();
+    if char_count <= MAX_HISTORY_SNAPSHOT_CHARS {
+        return (text, false);
+    }
+    let truncated = text
+        .chars()
+        .rev()
+        .take(MAX_HISTORY_SNAPSHOT_CHARS)
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    (truncated, true)
+}
+
+fn session_stream_snapshot(session: &TerminalSession) -> Option<(String, bool)> {
+    let mut text = String::new();
+    for chunk in session.buffer.iter() {
+        text.push_str(&chunk.data);
+    }
+    if text.trim().is_empty() {
+        text = session.snapshot_formatted().unwrap_or_default();
+    }
+    if text.trim().is_empty() {
+        return None;
+    }
+    let (snapshot, truncated) = trim_history_snapshot_tail(text);
+    Some((snapshot, truncated))
+}
+
+fn build_session_summary(
+    session: &TerminalSession,
+    include_snapshot: bool,
+) -> TerminalSessionSummary {
     let last_output = session
         .buffer
         .back()
@@ -702,6 +821,14 @@ fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
     } else {
         last_output
     };
+    let (snapshot, snapshot_truncated) = if include_snapshot {
+        match session_stream_snapshot(session) {
+            Some((snapshot, truncated)) => (Some(snapshot), truncated),
+            None => (None, false),
+        }
+    } else {
+        (None, false)
+    };
     TerminalSessionSummary {
         id: session.id.clone(),
         label: session.label.clone(),
@@ -711,11 +838,67 @@ fn build_session_summary(session: &TerminalSession) -> TerminalSessionSummary {
         exit_code: session.exit_code,
         last_output: preview,
         closed_reason: session.closed_reason.clone(),
+        snapshot,
+        snapshot_truncated,
     }
 }
 
+fn history_session_summary(session_id: &str) -> Option<TerminalSessionSummary> {
+    let history = terminal_history();
+    let history = history.lock().ok()?;
+    history.sessions.get(session_id).cloned()
+}
+
+fn merge_active_summary_into_history(
+    history: &mut TerminalSessionHistory,
+    summary: &TerminalSessionSummary,
+) -> bool {
+    match history.sessions.get(&summary.id) {
+        Some(existing) => {
+            let mut merged = summary.clone();
+            merged.snapshot = existing.snapshot.clone();
+            merged.snapshot_truncated = existing.snapshot_truncated;
+            if *existing == merged {
+                return false;
+            }
+            history.sessions.insert(summary.id.clone(), merged);
+            true
+        }
+        None => {
+            history.sessions.insert(summary.id.clone(), summary.clone());
+            true
+        }
+    }
+}
+
+fn build_history_session_payload(
+    action: &str,
+    summary: &TerminalSessionSummary,
+    include_snapshot: bool,
+) -> Value {
+    build_session_payload(
+        action,
+        summary.id.as_str(),
+        TerminalSessionStatus::from_summary_status(summary.status.as_str()),
+        0,
+        Vec::new(),
+        None,
+        include_snapshot && summary.snapshot_truncated,
+        if include_snapshot {
+            summary.snapshot.clone()
+        } else {
+            None
+        },
+        summary.exit_code,
+        summary.last_activity,
+        Some(summary.label.as_str()),
+        0,
+        Vec::new(),
+    )
+}
+
 fn persist_session_summary(session: &TerminalSession) {
-    let summary = build_session_summary(session);
+    let summary = build_session_summary(session, true);
     let history = terminal_history();
     let mut history = match history.lock() {
         Ok(history) => history,
@@ -734,7 +917,7 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
     let mut sessions = Vec::new();
     for session in manager.sessions.values() {
         if let Ok(session) = session.lock() {
-            sessions.push(build_session_summary(&session));
+            sessions.push(build_session_summary(&session, false));
         }
     }
     let active_ids = sessions
@@ -742,8 +925,9 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
         .map(|session| session.id.clone())
         .collect::<HashSet<_>>();
     if let Ok(mut history) = terminal_history().lock() {
+        let mut changed = false;
         for session in &sessions {
-            history.sessions.insert(session.id.clone(), session.clone());
+            changed = merge_active_summary_into_history(&mut history, session) || changed;
         }
         let now = now_ts();
         for session in history.sessions.values_mut() {
@@ -756,12 +940,18 @@ pub fn list_terminal_sessions() -> Vec<TerminalSessionSummary> {
                     session.closed_reason = Some(TERMINAL_RESTART_REASON.to_string());
                 }
                 session.last_activity = now;
+                changed = true;
             }
         }
-        history.persist();
+        if changed {
+            history.persist();
+        }
         for session in history.sessions.values() {
             if !active_ids.contains(&session.id) {
-                sessions.push(session.clone());
+                let mut view = session.clone();
+                view.snapshot = None;
+                view.snapshot_truncated = false;
+                sessions.push(view);
             }
         }
     }
@@ -780,6 +970,7 @@ pub fn handle_terminal_command(request: TerminalActionRequest) -> Result<Value, 
         "keepalive" => keepalive_session(request),
         "status" => status_session(request),
         "rename" => rename_session(request),
+        "delete" => delete_session(request),
         _ => Err(TerminalError::new(
             "unsupported_action",
             format!("Unsupported terminal action: {}", request.action),
@@ -893,7 +1084,11 @@ async fn run_terminal_stream(
         initial_output,
         initial_first_seq,
         initial_truncated,
-        if initial_truncated { initial_snapshot } else { None },
+        if initial_truncated {
+            initial_snapshot
+        } else {
+            None
+        },
         initial_exit,
         now_ts(),
         Some(initial_label.as_str()),
@@ -991,23 +1186,40 @@ async fn run_terminal_stream(
                         let action = parsed.get("action").and_then(|value| value.as_str()).unwrap_or("");
                         match action {
                             "input" => {
-                                if let Some(input) = parsed.get("data").and_then(|value| value.as_str()) {
-                                    let request = TerminalActionRequest {
-                                        action: "input".to_string(),
-                                        session_id: Some(session_id.clone()),
-                                        label: None,
-                                        input: Some(input.to_string()),
-                                        input_bytes: None,
-                                        cols: None,
-                                        rows: None,
-                                        since: None,
-                                        limit: None,
-                                        notify_since: None,
-                                        working_dir: None,
-                                        env: None,
-                                    };
-                                    let _ = handle_terminal_command(request);
+                                let data = parsed.get("data").and_then(|value| value.as_str());
+                                let data_b64 =
+                                    parsed.get("data_b64").and_then(|value| value.as_str());
+                                if data.is_some() && data_b64.is_some() {
+                                    continue;
                                 }
+                                let (input, input_bytes) = if let Some(input) = data {
+                                    (Some(input.to_string()), None)
+                                } else if let Some(encoded) = data_b64 {
+                                    let decoded = match base64::engine::general_purpose::STANDARD
+                                        .decode(encoded.as_bytes())
+                                    {
+                                        Ok(bytes) => bytes,
+                                        Err(_) => continue,
+                                    };
+                                    (None, Some(decoded))
+                                } else {
+                                    continue;
+                                };
+                                let request = TerminalActionRequest {
+                                    action: "input".to_string(),
+                                    session_id: Some(session_id.clone()),
+                                    label: None,
+                                    input,
+                                    input_bytes,
+                                    cols: None,
+                                    rows: None,
+                                    since: None,
+                                    limit: None,
+                                    notify_since: None,
+                                    working_dir: None,
+                                    env: None,
+                                };
+                                let _ = handle_terminal_command(request);
                             }
                             "resize" => {
                                 let cols = parsed.get("cols").and_then(|value| value.as_u64()).map(|value| value as u16);
@@ -1109,7 +1321,10 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         .map_err(|error| TerminalError::new("pty_error", error.to_string()))?;
 
     let shell = resolve_shell();
-    let mut cmd = CommandBuilder::new(shell);
+    let mut cmd = CommandBuilder::new(shell.clone());
+    for arg in shell_login_args(&shell) {
+        cmd.arg(*arg);
+    }
     if let Some(working_dir) = request.working_dir.clone() {
         if !working_dir.trim().is_empty() {
             cmd.cwd(working_dir);
@@ -1117,15 +1332,21 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
     } else if let Ok(home) = std::env::var("HOME") {
         cmd.cwd(home);
     }
-    if let Some(env) = request.env.clone() {
+    let request_env = request.env.clone();
+    if let Some(env) = request_env.as_ref() {
         for (key, value) in env {
             cmd.env(key, value);
         }
     }
-    if std::env::var("TERM").is_err() {
+    apply_default_utf8_locale_env(&mut cmd, request_env.as_ref());
+    if std::env::var("TERM").is_err()
+        && !request_env_has_non_empty_value(request_env.as_ref(), "TERM")
+    {
         cmd.env("TERM", "xterm-256color");
     }
-    cmd.env("COLORTERM", "truecolor");
+    if !request_env_has_non_empty_value(request_env.as_ref(), "COLORTERM") {
+        cmd.env("COLORTERM", "truecolor");
+    }
 
     let child = pair
         .slave
@@ -1223,53 +1444,69 @@ fn start_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
 
 fn poll_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
     let session_id = required_session_id(request.session_id)?;
+    let since = request.since.unwrap_or(0);
+    let notify_since = request.notify_since.unwrap_or(0);
+    let limit = request.limit.unwrap_or(OUTPUT_LIMIT_DEFAULT);
+
     let manager = terminal_manager();
     let session = {
         let manager = manager
             .lock()
             .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
-        manager
-            .session(&session_id)
-            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+        manager.session(&session_id)
     };
-    let session = session
-        .lock()
-        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    let since = request.since.unwrap_or(0);
-    let notify_since = request.notify_since.unwrap_or(0);
-    let limit = request.limit.unwrap_or(OUTPUT_LIMIT_DEFAULT);
-    let output = session.output_since(since, limit);
-    let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
-    let first_seq = session.first_seq();
-    let truncated = first_seq
-        .map(|first| since.saturating_add(1) < first)
-        .unwrap_or(false);
-    let snapshot = if truncated {
-        session.snapshot_formatted()
-    } else {
-        None
-    };
-    Ok(build_session_payload(
-        "poll",
-        &session.id,
-        session.status,
-        next_expected_seq(session.next_seq),
-        output,
-        first_seq,
-        truncated,
-        snapshot,
-        session.exit_code,
-        session.last_activity,
-        Some(session.label.as_str()),
-        session.notification_seq,
-        notifications,
+
+    if let Some(session) = session {
+        let session = session
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+        let output = session.output_since(since, limit);
+        let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
+        let first_seq = session.first_seq();
+        let truncated = first_seq
+            .map(|first| since.saturating_add(1) < first)
+            .unwrap_or(false);
+        let snapshot = if truncated {
+            session.snapshot_formatted()
+        } else {
+            None
+        };
+        return Ok(build_session_payload(
+            "poll",
+            &session.id,
+            session.status,
+            next_expected_seq(session.next_seq),
+            output,
+            first_seq,
+            truncated,
+            snapshot,
+            session.exit_code,
+            session.last_activity,
+            Some(session.label.as_str()),
+            session.notification_seq,
+            notifications,
+        ));
+    }
+
+    if let Some(summary) = history_session_summary(&session_id) {
+        let include_snapshot = since == 0;
+        return Ok(build_history_session_payload(
+            "poll",
+            &summary,
+            include_snapshot,
+        ));
+    }
+
+    Err(TerminalError::new(
+        "session_not_found",
+        "Session not found.",
     ))
 }
 
 fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
     let session_id = required_session_id(request.session_id)?;
     let input_bytes = match (request.input, request.input_bytes) {
-        (Some(input), None) => input.into_bytes(),
+        (Some(input), None) => terminal_input_string_to_bytes(input),
         (None, Some(bytes)) => bytes,
         (Some(_), Some(_)) => {
             return Err(TerminalError::new(
@@ -1284,6 +1521,7 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
             ))
         }
     };
+    let input_bytes = normalize_terminal_input_bytes(input_bytes);
     let manager = terminal_manager();
     let session = {
         let manager = manager
@@ -1326,6 +1564,100 @@ fn input_session(request: TerminalActionRequest) -> Result<Value, TerminalError>
         session.notification_seq,
         Vec::new(),
     ))
+}
+
+fn terminal_input_string_to_bytes(input: String) -> Vec<u8> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+    if input.is_ascii() {
+        return input.into_bytes();
+    }
+
+    let all_latin1 = input.chars().all(|ch| (ch as u32) <= 0x00FF);
+    if all_latin1 {
+        let has_c1_or_control = input.chars().any(|ch| {
+            let code = ch as u32;
+            matches!(code, 0x00..=0x1F | 0x7F..=0x9F)
+        });
+        if has_c1_or_control {
+            return input.chars().map(|ch| ch as u8).collect();
+        }
+    }
+
+    input.into_bytes()
+}
+
+fn normalize_terminal_input_bytes(input: Vec<u8>) -> Vec<u8> {
+    if !looks_like_utf16le_input(&input) {
+        return input;
+    }
+    let Some(decoded) = decode_utf16le_input(&input) else {
+        return input;
+    };
+    if !looks_like_readable_terminal_text(&decoded) {
+        return input;
+    }
+    decoded.into_bytes()
+}
+
+fn looks_like_utf16le_input(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return false;
+    }
+    if has_utf16le_null_pattern(bytes) {
+        return true;
+    }
+    bytes.iter().any(|byte| *byte >= 0x80) && !is_valid_utf8(bytes)
+}
+
+fn has_utf16le_null_pattern(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 || bytes.len() % 2 != 0 {
+        return false;
+    }
+    let pair_count = bytes.len() / 2;
+    let null_high_bytes = bytes
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .filter(|value| **value == 0)
+        .count();
+    null_high_bytes * 10 >= pair_count * 6
+}
+
+fn is_valid_utf8(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok()
+}
+
+fn decode_utf16le_input(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return None;
+    }
+    let mut code_units = Vec::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        code_units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    String::from_utf16(&code_units).ok()
+}
+
+fn looks_like_readable_terminal_text(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let mut printable = 0usize;
+    for ch in text.chars() {
+        if !is_readable_terminal_char(ch) {
+            return false;
+        }
+        if !ch.is_whitespace() {
+            printable += 1;
+        }
+    }
+    printable > 0
+}
+
+fn is_readable_terminal_char(ch: char) -> bool {
+    matches!(ch, '\t' | '\n' | '\r') || !ch.is_control()
 }
 
 fn resize_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
@@ -1388,43 +1720,57 @@ fn stop_session(request: TerminalActionRequest) -> Result<Value, TerminalError> 
         let manager = manager
             .lock()
             .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
-        manager
-            .session(&session_id)
-            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+        manager.session(&session_id)
     };
-    let mut session = session
-        .lock()
-        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    let _ = session.child.kill();
-    session.status = TerminalSessionStatus::Killed;
-    session.exit_code = None;
-    session.last_activity = now_ts();
-    persist_session_summary(&session);
-    let reason = if request.action == "kill" { "kill" } else { "stop" };
-    log_session_event(
-        "session_stop",
-        "info",
-        json!({
-            "session_id": session.id.as_str(),
-            "label": session.label.as_str(),
-            "reason": reason,
-            "status": session.status.as_str(),
-        }),
-    );
-    Ok(build_session_payload(
-        "stop",
-        &session.id,
-        session.status,
-        next_expected_seq(session.next_seq),
-        Vec::new(),
-        session.first_seq(),
-        false,
-        None,
-        session.exit_code,
-        session.last_activity,
-        Some(session.label.as_str()),
-        session.notification_seq,
-        Vec::new(),
+
+    if let Some(session) = session {
+        let mut session = session
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+        let _ = session.child.kill();
+        session.status = TerminalSessionStatus::Killed;
+        session.exit_code = None;
+        session.last_activity = now_ts();
+        persist_session_summary(&session);
+        let reason = if request.action == "kill" {
+            "kill"
+        } else {
+            "stop"
+        };
+        log_session_event(
+            "session_stop",
+            "info",
+            json!({
+                "session_id": session.id.as_str(),
+                "label": session.label.as_str(),
+                "reason": reason,
+                "status": session.status.as_str(),
+            }),
+        );
+        return Ok(build_session_payload(
+            "stop",
+            &session.id,
+            session.status,
+            next_expected_seq(session.next_seq),
+            Vec::new(),
+            session.first_seq(),
+            false,
+            None,
+            session.exit_code,
+            session.last_activity,
+            Some(session.label.as_str()),
+            session.notification_seq,
+            Vec::new(),
+        ));
+    }
+
+    if let Some(summary) = history_session_summary(&session_id) {
+        return Ok(build_history_session_payload("stop", &summary, true));
+    }
+
+    Err(TerminalError::new(
+        "session_not_found",
+        "Session not found.",
     ))
 }
 
@@ -1476,30 +1822,40 @@ fn status_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         let manager = manager
             .lock()
             .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
-        manager
-            .session(&session_id)
-            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+        manager.session(&session_id)
     };
-    let session = session
-        .lock()
-        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    let snapshot = session.snapshot_formatted();
-    let notify_since = request.notify_since.unwrap_or(0);
-    let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
-    Ok(build_session_payload(
-        "status",
-        &session.id,
-        session.status,
-        next_expected_seq(session.next_seq),
-        Vec::new(),
-        session.first_seq(),
-        false,
-        snapshot,
-        session.exit_code,
-        session.last_activity,
-        Some(session.label.as_str()),
-        session.notification_seq,
-        notifications,
+
+    if let Some(session) = session {
+        let session = session
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+        let snapshot = session.snapshot_formatted();
+        let notify_since = request.notify_since.unwrap_or(0);
+        let notifications = session.notifications_since(notify_since, NOTIFICATION_QUEUE_LIMIT);
+        return Ok(build_session_payload(
+            "status",
+            &session.id,
+            session.status,
+            next_expected_seq(session.next_seq),
+            Vec::new(),
+            session.first_seq(),
+            false,
+            snapshot,
+            session.exit_code,
+            session.last_activity,
+            Some(session.label.as_str()),
+            session.notification_seq,
+            notifications,
+        ));
+    }
+
+    if let Some(summary) = history_session_summary(&session_id) {
+        return Ok(build_history_session_payload("status", &summary, true));
+    }
+
+    Err(TerminalError::new(
+        "session_not_found",
+        "Session not found.",
     ))
 }
 
@@ -1511,33 +1867,110 @@ fn rename_session(request: TerminalActionRequest) -> Result<Value, TerminalError
         let manager = manager
             .lock()
             .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
-        manager
-            .session(&session_id)
-            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?
+        manager.session(&session_id)
     };
-    let mut session = session
-        .lock()
-        .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
-    if session.label != label {
-        session.label = label.clone();
-        session.last_activity = now_ts();
-        persist_session_summary(&session);
+
+    if let Some(session) = session {
+        let mut session = session
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Session unavailable."))?;
+        if session.label != label {
+            session.label = label.clone();
+            session.last_activity = now_ts();
+            persist_session_summary(&session);
+        }
+        return Ok(build_session_payload(
+            "rename",
+            &session.id,
+            session.status,
+            next_expected_seq(session.next_seq),
+            Vec::new(),
+            session.first_seq(),
+            false,
+            None,
+            session.exit_code,
+            session.last_activity,
+            Some(label.as_str()),
+            session.notification_seq,
+            Vec::new(),
+        ));
     }
-    Ok(build_session_payload(
+
+    let history = terminal_history();
+    let mut history = history
+        .lock()
+        .map_err(|_| TerminalError::new("state_locked", "Terminal history unavailable."))?;
+    let mut changed = false;
+    let payload_summary = {
+        let summary = history
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| TerminalError::new("session_not_found", "Session not found."))?;
+        if summary.label != label {
+            summary.label = label.clone();
+            summary.last_activity = now_ts();
+            changed = true;
+        }
+        summary.clone()
+    };
+    if changed {
+        history.persist();
+    }
+    Ok(build_history_session_payload(
         "rename",
-        &session.id,
-        session.status,
-        next_expected_seq(session.next_seq),
-        Vec::new(),
-        session.first_seq(),
+        &payload_summary,
         false,
-        None,
-        session.exit_code,
-        session.last_activity,
-        Some(label.as_str()),
-        session.notification_seq,
-        Vec::new(),
     ))
+}
+
+fn delete_session(request: TerminalActionRequest) -> Result<Value, TerminalError> {
+    let session_id = required_session_id(request.session_id)?;
+    let mut removed_active = false;
+    let manager = terminal_manager();
+    {
+        let mut manager = manager
+            .lock()
+            .map_err(|_| TerminalError::new("state_locked", "Terminal state unavailable."))?;
+        if let Some(session) = manager.session(&session_id) {
+            if let Ok(mut session) = session.lock() {
+                if !session.status.is_ended() {
+                    let _ = session.child.kill();
+                    session.status = TerminalSessionStatus::Killed;
+                    session.exit_code = None;
+                    session.closed_reason = Some("Deleted by user.".to_string());
+                    session.last_activity = now_ts();
+                }
+            }
+            manager.remove_session(&session_id);
+            removed_active = true;
+        }
+    }
+
+    let history = terminal_history();
+    let mut history = history
+        .lock()
+        .map_err(|_| TerminalError::new("state_locked", "Terminal history unavailable."))?;
+    let removed_history = history.sessions.remove(&session_id).is_some();
+    if removed_history {
+        history.persist();
+    }
+
+    if !removed_active && !removed_history {
+        return Err(TerminalError::new(
+            "session_not_found",
+            "Session not found.",
+        ));
+    }
+
+    Ok(json!({
+        "type": "terminal",
+        "action": "delete",
+        "session_id": session_id,
+        "status": "deleted",
+        "removed_active": removed_active,
+        "removed_history": removed_history,
+        "last_activity": now_ts(),
+    }))
 }
 
 fn resolve_session_id(requested: Option<String>) -> Result<String, TerminalError> {
@@ -1551,8 +1984,8 @@ fn resolve_session_id(requested: Option<String>) -> Result<String, TerminalError
 }
 
 fn required_session_id(session_id: Option<String>) -> Result<String, TerminalError> {
-    let session_id = session_id
-        .ok_or_else(|| TerminalError::new("missing_session", "Missing session id."))?;
+    let session_id =
+        session_id.ok_or_else(|| TerminalError::new("missing_session", "Missing session id."))?;
     let trimmed = session_id.trim().to_string();
     if trimmed.is_empty() {
         return Err(TerminalError::new("missing_session", "Missing session id."));
@@ -1757,29 +2190,7 @@ fn spawn_cleanup(manager: Arc<Mutex<TerminalManager>>) {
         for id in &expired_ids {
             manager.remove_session(id);
         }
-        let active_ids = manager
-            .sessions
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
         drop(manager);
-        if let Ok(mut history) = terminal_history().lock() {
-            let mut changed = false;
-            history.sessions.retain(|session_id, summary| {
-                if active_ids.contains(session_id) {
-                    return true;
-                }
-                let idle = now.saturating_sub(summary.last_activity);
-                if idle >= idle_config.ttl_secs {
-                    changed = true;
-                    return false;
-                }
-                true
-            });
-            if changed {
-                history.persist();
-            }
-        }
     });
 }
 
@@ -1873,7 +2284,9 @@ fn decode_utf8_stream(carry: &mut Vec<u8>, bytes: &[u8]) -> String {
                 let valid_up_to = error.valid_up_to();
                 if valid_up_to > 0 {
                     let valid = &carry[..valid_up_to];
-                    output.push_str(unsafe { std::str::from_utf8_unchecked(valid) });
+                    let valid_text =
+                        std::str::from_utf8(valid).expect("valid UTF-8 slice from parser boundary");
+                    output.push_str(valid_text);
                     carry.drain(..valid_up_to);
                 }
                 match error.error_len() {
@@ -1995,10 +2408,7 @@ mod tests {
         assert_eq!(seqs, vec![1, 2, 3]);
 
         let output = session.output_since(0, 10);
-        let output_seqs = output
-            .iter()
-            .map(|chunk| chunk.seq)
-            .collect::<Vec<_>>();
+        let output_seqs = output.iter().map(|chunk| chunk.seq).collect::<Vec<_>>();
         assert_eq!(output_seqs, vec![1, 2, 3]);
         assert_eq!(next_expected_seq(session.next_seq), 4);
         let _ = session.child.kill();
@@ -2024,6 +2434,119 @@ mod tests {
         let chunk = session.buffer.back().expect("chunk");
         assert!(chunk.data.contains('\u{FFFD}'));
         let _ = session.child.kill();
+    }
+
+    #[test]
+    fn login_args_match_platform_shell_expectations() {
+        #[cfg(windows)]
+        {
+            assert!(shell_login_args("powershell.exe").is_empty());
+            assert!(shell_login_args("cmd.exe").is_empty());
+        }
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(shell_login_args("/bin/zsh"), &["-il"]);
+            assert_eq!(shell_login_args("/bin/bash"), &["-il"]);
+            assert_eq!(shell_login_args("/opt/homebrew/bin/fish"), &["-il"]);
+        }
+    }
+
+    #[test]
+    fn login_args_disabled_for_non_login_shells() {
+        assert!(shell_login_args("/bin/sh").is_empty());
+    }
+
+    #[test]
+    fn request_env_contains_any_locale_detects_lang_and_ctype() {
+        let mut env = HashMap::new();
+        env.insert("LANG".to_string(), "zh_CN.UTF-8".to_string());
+        assert!(request_env_contains_any_locale(Some(&env)));
+
+        env.remove("LANG");
+        env.insert("LC_CTYPE".to_string(), "en_US.UTF-8".to_string());
+        assert!(request_env_contains_any_locale(Some(&env)));
+    }
+
+    #[test]
+    fn request_env_contains_any_locale_ignores_empty_values() {
+        let mut env = HashMap::new();
+        env.insert("LANG".to_string(), "   ".to_string());
+        assert!(!request_env_contains_any_locale(Some(&env)));
+    }
+
+    #[test]
+    fn default_utf8_locale_matches_platform() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(default_utf8_locale(), Some("en_US.UTF-8"));
+
+        #[cfg(target_os = "linux")]
+        assert_eq!(default_utf8_locale(), Some("C.UTF-8"));
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        assert_eq!(default_utf8_locale(), None);
+    }
+
+    #[test]
+    fn utf8_locale_detector_matches_common_values() {
+        assert!(is_utf8_locale("en_US.UTF-8"));
+        assert!(is_utf8_locale("C.UTF8"));
+        assert!(!is_utf8_locale("C"));
+    }
+
+    #[test]
+    fn normalize_terminal_input_bytes_decodes_utf16le_multibyte_text() {
+        let mut utf16_bytes = Vec::new();
+        for unit in "中文输入✓🚀".encode_utf16() {
+            utf16_bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+
+        let normalized = normalize_terminal_input_bytes(utf16_bytes);
+
+        assert_eq!(String::from_utf8(normalized).expect("utf8"), "中文输入✓🚀");
+    }
+
+    #[test]
+    fn normalize_terminal_input_bytes_decodes_utf16le_ascii_text() {
+        let utf16_bytes = vec![
+            b'e', 0, b'c', 0, b'h', 0, b'o', 0, b' ', 0, b'h', 0, b'i', 0, b'\n', 0,
+        ];
+
+        let normalized = normalize_terminal_input_bytes(utf16_bytes);
+
+        assert_eq!(normalized, b"echo hi\n");
+    }
+
+    #[test]
+    fn terminal_input_string_to_bytes_preserves_byte_stream_codepoints() {
+        let input: String = [0x0093u16, 0x0088u16]
+            .into_iter()
+            .map(|unit| char::from_u32(unit as u32).expect("char"))
+            .collect();
+
+        let bytes = terminal_input_string_to_bytes(input);
+
+        assert_eq!(bytes, vec![0x93, 0x88]);
+    }
+
+    #[test]
+    fn terminal_input_string_to_bytes_keeps_utf8_for_latin1_printable_text() {
+        let bytes = terminal_input_string_to_bytes("café".to_string());
+
+        assert_eq!(bytes, "café".as_bytes());
+    }
+
+    #[test]
+    fn terminal_input_string_to_bytes_keeps_utf8_for_unicode_text() {
+        let bytes = terminal_input_string_to_bytes("中文输入".to_string());
+
+        assert_eq!(bytes, "中文输入".as_bytes());
+    }
+
+    #[test]
+    fn normalize_terminal_input_bytes_preserves_escape_sequences() {
+        let bytes = vec![27, 91, 65];
+        assert_eq!(normalize_terminal_input_bytes(bytes.clone()), bytes);
     }
 
     #[test]
@@ -2058,7 +2581,10 @@ mod tests {
             Ok(payload) => payload,
             Err(error) => panic!("poll payload failed: {}", error.code),
         };
-        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            payload.get("truncated").and_then(Value::as_bool),
+            Some(true)
+        );
         assert!(payload.get("snapshot").and_then(Value::as_str).is_some());
     }
 
@@ -2082,7 +2608,10 @@ mod tests {
             Ok(payload) => payload,
             Err(error) => panic!("resize payload failed: {}", error.code),
         };
-        assert_eq!(payload.get("action").and_then(Value::as_str), Some("resize"));
+        assert_eq!(
+            payload.get("action").and_then(Value::as_str),
+            Some("resize")
+        );
         let session = managed.session.lock().expect("session lock");
         assert_eq!(session.cols, 80);
         assert_eq!(session.rows, 40);
@@ -2110,5 +2639,178 @@ mod tests {
             Err(error) => error,
         };
         assert_eq!(error.code, "invalid_size");
+    }
+
+    fn remove_history_entry(session_id: &str) {
+        if let Ok(mut history) = terminal_history().lock() {
+            if history.sessions.remove(session_id).is_some() {
+                history.persist();
+            }
+        }
+    }
+
+    #[test]
+    fn status_session_uses_history_when_session_not_active() {
+        let session_id = "history-status-session";
+        remove_history_entry(session_id);
+        let now = now_ts();
+        {
+            let mut history = terminal_history().lock().expect("history lock");
+            history.sessions.insert(
+                session_id.to_string(),
+                TerminalSessionSummary {
+                    id: session_id.to_string(),
+                    label: "History Session".to_string(),
+                    status: "exited".to_string(),
+                    created_at: now.saturating_sub(10),
+                    last_activity: now,
+                    exit_code: Some(0),
+                    last_output: "echo hi".to_string(),
+                    closed_reason: Some("Ended".to_string()),
+                    snapshot: Some("$ echo hi\nhi\n".to_string()),
+                    snapshot_truncated: false,
+                },
+            );
+            history.persist();
+        }
+
+        let payload = match status_session(TerminalActionRequest {
+            action: "status".to_string(),
+            session_id: Some(session_id.to_string()),
+            label: None,
+            input: None,
+            input_bytes: None,
+            cols: None,
+            rows: None,
+            since: None,
+            limit: None,
+            notify_since: Some(0),
+            working_dir: None,
+            env: None,
+        }) {
+            Ok(payload) => payload,
+            Err(error) => panic!("status payload failed: {}", error.code),
+        };
+
+        assert_eq!(
+            payload.get("session_id").and_then(Value::as_str),
+            Some(session_id)
+        );
+        assert_eq!(
+            payload.get("status").and_then(Value::as_str),
+            Some("exited")
+        );
+        assert_eq!(
+            payload.get("snapshot").and_then(Value::as_str),
+            Some("$ echo hi\nhi\n")
+        );
+
+        remove_history_entry(session_id);
+    }
+
+    #[test]
+    fn stop_session_returns_history_payload_for_ended_session() {
+        let session_id = "history-stop-session";
+        remove_history_entry(session_id);
+        let now = now_ts();
+        {
+            let mut history = terminal_history().lock().expect("history lock");
+            history.sessions.insert(
+                session_id.to_string(),
+                TerminalSessionSummary {
+                    id: session_id.to_string(),
+                    label: "Ended Session".to_string(),
+                    status: "killed".to_string(),
+                    created_at: now.saturating_sub(20),
+                    last_activity: now,
+                    exit_code: None,
+                    last_output: "last line".to_string(),
+                    closed_reason: Some("Disconnected".to_string()),
+                    snapshot: Some("$ ls\n".to_string()),
+                    snapshot_truncated: false,
+                },
+            );
+            history.persist();
+        }
+
+        let payload = match stop_session(TerminalActionRequest {
+            action: "stop".to_string(),
+            session_id: Some(session_id.to_string()),
+            label: None,
+            input: None,
+            input_bytes: None,
+            cols: None,
+            rows: None,
+            since: None,
+            limit: None,
+            notify_since: None,
+            working_dir: None,
+            env: None,
+        }) {
+            Ok(payload) => payload,
+            Err(error) => panic!("stop payload failed: {}", error.code),
+        };
+
+        assert_eq!(
+            payload.get("session_id").and_then(Value::as_str),
+            Some(session_id)
+        );
+        assert_eq!(
+            payload.get("status").and_then(Value::as_str),
+            Some("killed")
+        );
+
+        remove_history_entry(session_id);
+    }
+
+    #[test]
+    fn delete_session_removes_history_entry() {
+        let session_id = "history-delete-session";
+        remove_history_entry(session_id);
+        let now = now_ts();
+        {
+            let mut history = terminal_history().lock().expect("history lock");
+            history.sessions.insert(
+                session_id.to_string(),
+                TerminalSessionSummary {
+                    id: session_id.to_string(),
+                    label: "Delete Session".to_string(),
+                    status: "exited".to_string(),
+                    created_at: now.saturating_sub(10),
+                    last_activity: now,
+                    exit_code: Some(0),
+                    last_output: "done".to_string(),
+                    closed_reason: None,
+                    snapshot: Some("done\n".to_string()),
+                    snapshot_truncated: false,
+                },
+            );
+            history.persist();
+        }
+
+        let payload = match delete_session(TerminalActionRequest {
+            action: "delete".to_string(),
+            session_id: Some(session_id.to_string()),
+            label: None,
+            input: None,
+            input_bytes: None,
+            cols: None,
+            rows: None,
+            since: None,
+            limit: None,
+            notify_since: None,
+            working_dir: None,
+            env: None,
+        }) {
+            Ok(payload) => payload,
+            Err(error) => panic!("delete payload failed: {}", error.code),
+        };
+
+        assert_eq!(
+            payload.get("status").and_then(Value::as_str),
+            Some("deleted")
+        );
+        let history = terminal_history().lock().expect("history lock");
+        assert!(!history.sessions.contains_key(session_id));
     }
 }

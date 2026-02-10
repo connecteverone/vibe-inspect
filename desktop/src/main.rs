@@ -1,18 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod auth;
 mod command;
 #[cfg(target_os = "macos")]
 mod cursor_macos;
 mod identity;
 mod pairing;
+mod quic;
 mod remote_engine;
 mod remote_media;
-mod terminal;
-mod server;
-mod vnc;
 mod roi;
-mod quic;
-mod auth;
+mod server;
+mod terminal;
+mod terminald_launcher;
+mod vnc;
 
 fn main() {
     #[cfg(target_os = "windows")]

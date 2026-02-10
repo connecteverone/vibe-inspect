@@ -110,9 +110,11 @@ class VncCanvasProbe extends StatelessWidget {
                     alignment: Alignment.topLeft,
                     child: Transform(
                       alignment: Alignment.topLeft,
-                      transform: Matrix4.identity()
-                        ..translate(translation.dx, translation.dy)
-                        ..scale(scale, scale),
+                      transform: Matrix4.translationValues(
+                        translation.dx,
+                        translation.dy,
+                        0,
+                      )..multiply(Matrix4.diagonal3Values(scale, scale, 1)),
                       child: SizedBox(
                         width: frameSize.width,
                         height: frameSize.height,

@@ -24,7 +24,32 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       _startPolling();
       return;
     }
-    final uri = _terminalWsUri(baseUrl, active.session.id);
+    String? wsTicket;
+    final agentClient = _agentClient;
+    if (agentClient != null) {
+      try {
+        final ticket = await agentClient.createWsTicket(
+          scope: 'terminal_ws',
+          sessionId: active.session.id,
+        );
+        if (ticket.expiresAt.isAfter(DateTime.now())) {
+          wsTicket = ticket.token;
+        }
+      } on AgentCommandFailure catch (error) {
+        final presentation = _presentAgentFailure(
+          error,
+          fallbackMessage: 'Unable to create websocket ticket.',
+        );
+        _logErrorDetails('terminal_ws_ticket', presentation);
+      } catch (_) {
+        // Fallback to auth token query path for compatibility.
+      }
+    }
+    final uri = _terminalWsUri(
+      baseUrl,
+      active.session.id,
+      wsTicket: wsTicket,
+    );
     if (uri == null) {
       _startPolling();
       return;
@@ -77,21 +102,18 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
 
   void _startTerminalKeepalive() {
     _terminalKeepaliveTimer?.cancel();
-    _terminalKeepaliveTimer = Timer.periodic(
-      const Duration(seconds: 12),
-      (_) {
-        if (!_terminalChannelReady) {
-          return;
-        }
-        try {
-          _terminalChannel?.sink.add(jsonEncode({'action': 'keepalive'}));
-        } catch (_) {
-          _disconnectTerminalStream();
-          _scheduleTerminalReconnect();
-          _startPolling();
-        }
-      },
-    );
+    _terminalKeepaliveTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (!_terminalChannelReady) {
+        return;
+      }
+      try {
+        _terminalChannel?.sink.add(jsonEncode({'action': 'keepalive'}));
+      } catch (_) {
+        _disconnectTerminalStream();
+        _scheduleTerminalReconnect();
+        _startPolling();
+      }
+    });
   }
 
   void _scheduleTerminalReconnect() {
@@ -103,11 +125,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (active == null || baseUrl == null || baseUrl.isEmpty) {
       return;
     }
-    _terminalReconnectAttempts =
-        (_terminalReconnectAttempts + 1).clamp(1, 6);
+    _terminalReconnectAttempts = (_terminalReconnectAttempts + 1).clamp(1, 6);
     final seconds = 1 << (_terminalReconnectAttempts - 1);
-    final delay =
-        Duration(seconds: seconds > 12 ? 12 : seconds);
+    final delay = Duration(seconds: seconds > 12 ? 12 : seconds);
     _terminalReconnectTimer = Timer(delay, () {
       _terminalReconnectTimer = null;
       _connectTerminalStream();
@@ -143,6 +163,10 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (decoded['type'] != 'terminal' && decoded['status'] == null) {
       return;
     }
+    if (_handleTerminalControlEvent(sessionId, decoded)) {
+      _terminalReconnectAttempts = 0;
+      return;
+    }
     _terminalReconnectAttempts = 0;
     unawaited(
       _applyTerminalPayload(
@@ -152,6 +176,59 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         command: active.lastCommand,
       ),
     );
+  }
+
+  bool _handleTerminalControlEvent(
+    String sessionId,
+    Map<String, dynamic> payload,
+  ) {
+    final action = payload['action']?.toString().toLowerCase() ?? '';
+    if (action.isEmpty) {
+      return false;
+    }
+
+    switch (action) {
+      case 'stream_paused':
+        final reason = payload['reason']?.toString().trim();
+        final retryAfterMs = payload['retry_after_ms'];
+        final retrySeconds = retryAfterMs is num
+            ? (retryAfterMs / 1000).ceil().clamp(1, 30)
+            : 1;
+        final suffix = reason == null || reason.isEmpty ? '' : ' ($reason)';
+        _setTerminalStatusMessage(
+          'Terminal stream paused$suffix, retrying in ${retrySeconds}s.',
+        );
+        return true;
+      case 'stream_resumed':
+        if (sessionId == _activeSessionId) {
+          _updateState(() {
+            _statusMessage = null;
+            _statusIsError = false;
+          });
+        }
+        return true;
+      case 'session_warning':
+        final message = payload['message']?.toString().trim() ?? '';
+        final reason = payload['reason']?.toString().toLowerCase() ?? '';
+        if (message.isNotEmpty) {
+          _setTerminalStatusMessage(
+            message,
+            isError: reason == 'payload_too_large',
+          );
+        }
+        return true;
+      case 'request_error':
+        final error = payload['error'];
+        if (error is Map) {
+          final message = error['message']?.toString().trim() ?? '';
+          if (message.isNotEmpty) {
+            _setTerminalStatusMessage(message, isError: true);
+          }
+        }
+        return true;
+      default:
+        return false;
+    }
   }
 
   Future<void> _loadSessions() async {
@@ -182,7 +259,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
           final remote = remoteById.remove(session.id);
           if (remote == null) {
             final status = session.status.toLowerCase();
-            if (_isTerminalClosed(status) || !_shouldCloseMissingRemote(status)) {
+            if (_isTerminalClosed(status) ||
+                !_shouldCloseMissingRemote(status)) {
               merged.add(session);
             } else {
               final closedSession = _sessionWithStatus(session, 'closed');
@@ -192,10 +270,12 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
             }
             continue;
           }
-          final remoteStatus =
-              remote.status.trim().isNotEmpty ? remote.status : session.status;
-          final remoteLabel =
-              remote.label.trim().isNotEmpty ? remote.label : session.label;
+          final remoteStatus = remote.status.trim().isNotEmpty
+              ? remote.status
+              : session.status;
+          final remoteLabel = remote.label.trim().isNotEmpty
+              ? remote.label
+              : session.label;
           final statusChanged = remoteStatus != session.status;
           final labelChanged = remoteLabel != session.label;
           final updated = statusChanged || labelChanged
@@ -239,8 +319,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         }
         terminalSessions = merged;
       } else {
-        remoteError = remoteResult.errorMessage ??
-            'Unable to load terminal sessions.';
+        remoteError =
+            remoteResult.errorMessage ?? 'Unable to load terminal sessions.';
       }
       final terminalEvents = events
           .where((event) => event.type.toLowerCase() == 'terminal')
@@ -271,8 +351,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
             : _parseOutputEntries(event.payload, event.createdAt);
         final lastCommand = event?.payload['command']?.toString();
         final nextSeq = event == null ? 0 : _parseNextSeq(event.payload);
-        final notificationSeq =
-            event == null ? 0 : _parseNotificationSeq(event.payload);
+        final notificationSeq = event == null
+            ? 0
+            : _parseNotificationSeq(event.payload);
         final exitCode = event == null ? null : _parseExitCode(event.payload);
         return TerminalSessionView(
           session: session,
@@ -295,7 +376,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       }
       _updateState(() {
         _sessions = views;
-        _activeSessionId = initialSession?.id ??
+        _activeSessionId =
+            initialSession?.id ??
             (views.isNotEmpty ? views.first.session.id : null);
         _terminals = terminals;
         _statusMessage = null;
@@ -460,10 +542,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         cols: _defaultCols,
         rows: _defaultRows,
       );
-      await _applyTerminalPayload(
-        sessionId: session.id,
-        payload: payload,
-      );
+      await _applyTerminalPayload(sessionId: session.id, payload: payload);
       return true;
     } on AgentCommandFailure catch (error) {
       if (error.code == 'session_exists') {
@@ -688,7 +767,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
                       itemBuilder: (context, index) {
                         final session = _sessions[index];
                         final status = session.session.status.toLowerCase();
-                        final canClose = status != 'closed' &&
+                        final canClose =
+                            status != 'closed' &&
                             status != 'killed' &&
                             status != 'exited';
                         return _TerminalSessionRow(
@@ -777,10 +857,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         ..._sessions,
       ];
       _activeSessionId = session.id;
-      _terminals = {
-        ..._terminals,
-        session.id: terminal,
-      };
+      _terminals = {..._terminals, session.id: terminal};
       _statusMessage = null;
       _statusIsError = false;
     });
@@ -794,18 +871,15 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _renameActiveSession() async {
     final active = _activeSession;
     if (active == null) {
-      _setTerminalStatusMessage(
-        'Select a session to rename.',
-        isError: true,
-      );
+      _setTerminalStatusMessage('Select a session to rename.', isError: true);
       return;
     }
     await _renameSession(active);
@@ -865,6 +939,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       );
       await _persistSession(previousSession);
     }
+
     final updatedSession = ToolSession(
       id: previousSession.id,
       type: previousSession.type,
@@ -873,10 +948,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       agentId: previousSession.agentId,
       createdAt: previousSession.createdAt,
     );
-    _replaceSession(
-      previousSession.id,
-      view.copyWith(session: updatedSession),
-    );
+    _replaceSession(previousSession.id, view.copyWith(session: updatedSession));
     await _persistSession(updatedSession);
 
     final agentClient = _agentClient;
@@ -934,10 +1006,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (!mounted) {
       return;
     }
-    _replaceSession(
-      sessionId,
-      view.copyWith(session: updated),
-    );
+    _replaceSession(sessionId, view.copyWith(session: updated));
     if (sessionId == _terminalChannelSessionId) {
       _disconnectTerminalStream();
     }
@@ -955,18 +1024,13 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
   void _replaceSession(String sessionId, TerminalSessionView updated) {
     _updateState(() {
       _sessions = _sessions
-          .map(
-            (session) =>
-                session.session.id == sessionId ? updated : session,
-          )
+          .map((session) => session.session.id == sessionId ? updated : session)
           .toList();
     });
   }
 
   bool _isTerminalClosed(String status) {
-    return status == 'closed' ||
-        status == 'killed' ||
-        status == 'exited';
+    return status == 'closed' || status == 'killed' || status == 'exited';
   }
 
   bool _shouldCloseMissingRemote(String status) {
@@ -1002,43 +1066,155 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       return;
     }
     final resolved = _applyTerminalModifiers(data);
-    _updateCommandBuffer(sessionId, resolved);
-    unawaited(_sendTerminalInput(sessionId, resolved, view: view));
+    final encodedInput = _encodeTerminalInputBytes(resolved);
+    _updateCommandBuffer(sessionId, encodedInput);
+    unawaited(
+      _sendTerminalInput(
+        sessionId,
+        resolved,
+        inputBytes: encodedInput,
+        view: view,
+      ),
+    );
     _consumeOneShotModifiers();
   }
 
-  void _updateCommandBuffer(String sessionId, String data) {
+  void _updateCommandBuffer(String sessionId, List<int> inputBytes) {
+    if (inputBytes.isEmpty) {
+      return;
+    }
     final buffer = _commandBuffers.putIfAbsent(sessionId, () => <int>[]);
     var skippingEscape = false;
-    for (final rune in data.runes) {
+    for (final byte in inputBytes) {
       if (skippingEscape) {
-        if (rune >= 64 && rune <= 126) {
+        if (byte >= 64 && byte <= 126) {
           skippingEscape = false;
         }
         continue;
       }
-      if (rune == 27) {
+      if (byte == 27) {
         skippingEscape = true;
         continue;
       }
-      if (rune == 10 || rune == 13) {
-        final command = String.fromCharCodes(buffer).trim();
+      if (byte == 10 || byte == 13) {
+        final command = utf8.decode(buffer, allowMalformed: true).trim();
         buffer.clear();
         if (command.isNotEmpty) {
           unawaited(_recordCommand(sessionId, command));
         }
         continue;
       }
-      if (rune == 8 || rune == 127) {
-        if (buffer.isNotEmpty) {
-          buffer.removeLast();
+      if (byte == 8 || byte == 127) {
+        _trimCommandBufferTrailingScalar(buffer);
+        continue;
+      }
+      if (byte < 32) {
+        continue;
+      }
+      buffer.add(byte);
+    }
+  }
+
+  List<int> _encodeTerminalInputBytes(String data) {
+    if (data.isEmpty) {
+      return const <int>[];
+    }
+    final codeUnits = data.codeUnits;
+    final isByteStream = codeUnits.every((unit) => unit >= 0 && unit <= 0xFF);
+    if (isByteStream) {
+      final bytes = List<int>.from(codeUnits, growable: false);
+      if (_isLikelyUtf16LeInput(bytes)) {
+        final decoded = _decodeUtf16LeInput(bytes);
+        if (_looksLikeReadableUtf16Text(decoded)) {
+          return utf8.encode(decoded);
         }
-        continue;
       }
-      if (rune < 32) {
-        continue;
+      return bytes;
+    }
+    return utf8.encode(data);
+  }
+
+  bool _isLikelyUtf16LeInput(List<int> bytes) {
+    if (bytes.length < 2 || bytes.length.isOdd) {
+      return false;
+    }
+
+    final hasExtendedByte = bytes.any((value) => value >= 0x80);
+    if (!hasExtendedByte) {
+      return false;
+    }
+
+    return !_isValidUtf8Sequence(bytes);
+  }
+
+  bool _isValidUtf8Sequence(List<int> bytes) {
+    try {
+      utf8.decode(bytes, allowMalformed: false);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _decodeUtf16LeInput(List<int> bytes) {
+    final codeUnits = <int>[];
+    for (var index = 0; index + 1 < bytes.length; index += 2) {
+      codeUnits.add(bytes[index] | (bytes[index + 1] << 8));
+    }
+    return String.fromCharCodes(codeUnits);
+  }
+
+  bool _looksLikeReadableUtf16Text(String text) {
+    if (text.isEmpty) {
+      return false;
+    }
+    var nonAsciiCount = 0;
+    for (final rune in text.runes) {
+      if (!_isReadableRune(rune)) {
+        return false;
       }
-      buffer.add(rune);
+      if (rune > 0x7F) {
+        nonAsciiCount += 1;
+      }
+    }
+    return nonAsciiCount > 0;
+  }
+
+  bool _isReadableRune(int rune) {
+    if (rune == 0x09 || rune == 0x0A || rune == 0x0D) {
+      return true;
+    }
+    if (rune < 0x20) {
+      return false;
+    }
+    if (rune == 0x7F) {
+      return false;
+    }
+    if (rune >= 0x80 && rune <= 0x9F) {
+      return false;
+    }
+    return true;
+  }
+
+  void _trimCommandBufferTrailingScalar(List<int> buffer) {
+    if (buffer.isEmpty) {
+      return;
+    }
+    final trailing = buffer.removeLast();
+    if ((trailing & 0x80) == 0) {
+      return;
+    }
+    while (buffer.isNotEmpty && (buffer.last & 0xC0) == 0x80) {
+      buffer.removeLast();
+    }
+    if (buffer.isEmpty) {
+      return;
+    }
+    final lead = buffer.last;
+    if ((lead & 0xE0) == 0xC0 ||
+        (lead & 0xF0) == 0xE0 ||
+        (lead & 0xF8) == 0xF0) {
+      buffer.removeLast();
     }
   }
 
@@ -1081,10 +1257,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (!mounted) {
       return;
     }
-    final updatedView = active.copyWith(
-      lastCommand: command,
-      lastEvent: event,
-    );
+    final updatedView = active.copyWith(lastCommand: command, lastEvent: event);
     _replaceSession(active.session.id, updatedView);
     await _sendTerminalInput(
       active.session.id,
@@ -1097,6 +1270,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
   Future<void> _sendTerminalInput(
     String sessionId,
     String data, {
+    List<int>? inputBytes,
     TerminalSessionView? view,
     bool triggerPoll = false,
   }) async {
@@ -1104,12 +1278,16 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (activeView == null) {
       return;
     }
+    final resolvedInputBytes = inputBytes ?? _encodeTerminalInputBytes(data);
+    if (resolvedInputBytes.isEmpty) {
+      return;
+    }
+    final inputB64 = base64Encode(resolvedInputBytes);
     if (_terminalChannelReady && _terminalChannelSessionId == sessionId) {
       try {
-        _terminalChannel?.sink.add(jsonEncode({
-          'action': 'input',
-          'data': data,
-        }));
+        _terminalChannel?.sink.add(
+          jsonEncode({'action': 'input', 'data_b64': inputB64}),
+        );
       } catch (_) {
         _disconnectTerminalStream();
         _startPolling();
@@ -1134,7 +1312,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       await agentClient.sendTerminalAction(
         action: 'input',
         sessionId: sessionId,
-        input: data,
+        inputBytes: resolvedInputBytes,
       );
       if (triggerPoll) {
         _startPolling();
@@ -1167,11 +1345,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     }
   }
 
-  Future<void> _sendTerminalResize(
-    String sessionId,
-    int cols,
-    int rows,
-  ) async {
+  Future<void> _sendTerminalResize(String sessionId, int cols, int rows) async {
     if (cols <= 0 || rows <= 0) {
       return;
     }
@@ -1183,11 +1357,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     _terminalSizes[sessionId] = nextGrid;
     if (_terminalChannelReady && _terminalChannelSessionId == sessionId) {
       try {
-        _terminalChannel?.sink.add(jsonEncode({
-          'action': 'resize',
-          'cols': cols,
-          'rows': rows,
-        }));
+        _terminalChannel?.sink.add(
+          jsonEncode({'action': 'resize', 'cols': cols, 'rows': rows}),
+        );
       } catch (_) {
         _disconnectTerminalStream();
         _startPolling();
@@ -1297,9 +1469,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to save terminal session: ${error.toString()}',
-          ),
+          content: Text('Failed to save terminal session: ${error.toString()}'),
         ),
       );
     }
@@ -1334,9 +1504,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Failed to save terminal event: ${error.toString()}',
-            ),
+            content: Text('Failed to save terminal event: ${error.toString()}'),
           ),
         );
       }
@@ -1411,9 +1579,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to save terminal output: ${error.toString()}',
-          ),
+          content: Text('Failed to save terminal output: ${error.toString()}'),
         ),
       );
     }
@@ -1432,25 +1598,31 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     }
     final status = payload['status']?.toString() ?? view.session.status;
     final labelRaw = payload['label']?.toString() ?? '';
-    final resolvedLabel =
-        labelRaw.trim().isNotEmpty ? labelRaw.trim() : view.session.label;
+    final resolvedLabel = labelRaw.trim().isNotEmpty
+        ? labelRaw.trim()
+        : view.session.label;
     final action = payload['action']?.toString() ?? '';
     final nextSeq = _parseNextSeq(payload, fallback: view.nextSeq);
-    final notificationNextSeq =
-        _parseNotificationSeq(payload, fallback: view.notificationSeq);
+    final notificationNextSeq = _parseNotificationSeq(
+      payload,
+      fallback: view.notificationSeq,
+    );
     final firstSeq =
-        _parseChunkSeq(payload['first_seq']) ?? _extractFirstSeq(payload['output']);
+        _parseChunkSeq(payload['first_seq']) ??
+        _extractFirstSeq(payload['output']);
     final lastDelivered = _terminalSince(view.nextSeq);
     final expectedNext = view.nextSeq;
     final truncated = payload['truncated'] == true;
-    final hasGap = truncated ||
+    final hasGap =
+        truncated ||
         (view.nextSeq > 0 && firstSeq != null && firstSeq > expectedNext);
-    final missingHistory = (truncated && view.nextSeq <= 1) ||
+    final missingHistory =
+        (truncated && view.nextSeq <= 1) ||
         (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
-    final shouldReset =
-        action == 'start' || nextSeq < view.nextSeq || hasGap;
+    final shouldReset = action == 'start' || nextSeq < view.nextSeq || hasGap;
     final parsedExitCode = _parseExitCode(payload);
-    final exitCode = parsedExitCode ??
+    final exitCode =
+        parsedExitCode ??
         (status.toLowerCase() == 'running' ? null : view.exitCode);
     final snapshotRaw = payload['snapshot']?.toString();
     final snapshot = snapshotRaw != null && snapshotRaw.isNotEmpty
@@ -1464,8 +1636,11 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     final mergedOutput = shouldReset
         ? outputEntries
         : _mergeOutputEntries(view.output, outputEntries);
-    final updatedSession =
-        _sessionWithStatus(view.session, status, label: resolvedLabel);
+    final updatedSession = _sessionWithStatus(
+      view.session,
+      status,
+      label: resolvedLabel,
+    );
     final updatedView = view.copyWith(
       session: updatedSession,
       output: mergedOutput,
@@ -1486,9 +1661,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (sessionId == _activeSessionId) {
       if (hasGap && !_terminalGapWarned.contains(sessionId)) {
         _terminalGapWarned.add(sessionId);
-        _setTerminalStatusMessage(
-          'Terminal output dropped; screen re-synced.',
-        );
+        _setTerminalStatusMessage('Terminal output dropped; screen re-synced.');
       } else if (missingHistory &&
           !_terminalTruncateWarned.contains(sessionId)) {
         _terminalTruncateWarned.add(sessionId);
@@ -1604,8 +1777,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     }
     final last = _terminalPersistedAt[sessionId];
     final now = DateTime.now();
-    if (last == null ||
-        now.difference(last) > _terminalPersistInterval) {
+    if (last == null || now.difference(last) > _terminalPersistInterval) {
       _terminalPersistedAt[sessionId] = now;
       return true;
     }
@@ -1740,10 +1912,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     return fallback;
   }
 
-  int _parseNotificationSeq(
-    Map<String, dynamic> payload, {
-    int fallback = 0,
-  }) {
+  int _parseNotificationSeq(Map<String, dynamic> payload, {int fallback = 0}) {
     final raw = payload['notification_next_seq'] ?? payload['notify_next_seq'];
     if (raw is int) {
       return raw;
@@ -1811,8 +1980,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         continue;
       }
       final rawId = item['id']?.toString() ?? '';
-      final notificationId =
-          rawId.trim().isNotEmpty ? rawId.trim() : createStorageId();
+      final notificationId = rawId.trim().isNotEmpty
+          ? rawId.trim()
+          : createStorageId();
       final level = item['level']?.toString().toLowerCase() ?? 'info';
       final createdAt =
           _parseEpochSeconds(item['created_at']) ?? DateTime.now();
@@ -1936,10 +2106,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
           .toList();
     }
     if (raw is String) {
-      return raw
-          .split('\n')
-          .where((line) => line.isNotEmpty)
-          .toList();
+      return raw.split('\n').where((line) => line.isNotEmpty).toList();
     }
     return [raw.toString()];
   }
@@ -1951,5 +2118,4 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     final preview = entries.take(3).map((entry) => entry.text).toList();
     return preview.join('\n');
   }
-
 }

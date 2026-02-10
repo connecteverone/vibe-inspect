@@ -1,13 +1,13 @@
 use crate::auth::{
-    ensure_auth_not_blocked, ensure_client_allowed, record_client_activity, track_client_connection,
-    validate_auth_token, AuthError,
+    ensure_auth_not_blocked, ensure_client_allowed, record_client_activity,
+    track_client_connection, validate_auth_token, AuthError,
 };
 use crate::pairing::PairingState;
+use crate::remote_engine::{RemoteManager, RemoteQuicContext};
 use crate::roi::{
     build_tiles, RoiCapturer, RoiFrame, RoiManager, RoiSessionInfo, RoiTile, RoiTileCache,
     RoiViewport,
 };
-use crate::remote_engine::{RemoteManager, RemoteQuicContext};
 use crate::vnc::serve_vnc_quic;
 use bytes::Bytes;
 use flate2::write::ZlibEncoder;
@@ -578,11 +578,7 @@ fn run_roi_stream(
     let mut capturer = if fake_capture {
         None
     } else {
-        match RoiCapturer::new(
-            info.display_index,
-            info.screen_width,
-            info.screen_height,
-        ) {
+        match RoiCapturer::new(info.display_index, info.screen_width, info.screen_height) {
             Ok(capturer) => Some(capturer),
             Err(error) => {
                 eprintln!("ROI capture init failed: {error}");
@@ -636,31 +632,31 @@ fn run_roi_stream(
             }
         } else if let Some(capturer) = capturer.as_mut() {
             if let Some(frame) = capturer.capture() {
-            frame_id = frame_id.wrapping_add(1);
-            let viewport = RoiViewport {
-                center_x: request.center_x,
-                center_y: request.center_y,
-                viewport_width: request.viewport_width,
-                viewport_height: request.viewport_height,
-                prefetch_radius: request.prefetch_radius,
-                zoom: request.zoom,
-            };
-            let tiles = build_tiles(
-                &frame,
-                &info,
-                &viewport,
-                tile_size,
-                frame_id,
-                frame_id & 1 == 1,
-                budget,
-                &mut cache,
-            );
-            for tile in tiles {
-                if send_tile_datagrams(&connection, &tile, max_datagram).is_err() {
-                    running.store(false, Ordering::SeqCst);
-                    break;
+                frame_id = frame_id.wrapping_add(1);
+                let viewport = RoiViewport {
+                    center_x: request.center_x,
+                    center_y: request.center_y,
+                    viewport_width: request.viewport_width,
+                    viewport_height: request.viewport_height,
+                    prefetch_radius: request.prefetch_radius,
+                    zoom: request.zoom,
+                };
+                let tiles = build_tiles(
+                    &frame,
+                    &info,
+                    &viewport,
+                    tile_size,
+                    frame_id,
+                    frame_id & 1 == 1,
+                    budget,
+                    &mut cache,
+                );
+                for tile in tiles {
+                    if send_tile_datagrams(&connection, &tile, max_datagram).is_err() {
+                        running.store(false, Ordering::SeqCst);
+                        break;
+                    }
                 }
-            }
             }
         }
         thread::sleep(interval);
@@ -710,7 +706,11 @@ fn build_fake_frame(info: &RoiSessionInfo) -> RoiFrame {
             data[idx + 3] = 255;
         }
     }
-    RoiFrame { data, width, height }
+    RoiFrame {
+        data,
+        width,
+        height,
+    }
 }
 
 fn send_tile_datagrams(
@@ -789,15 +789,15 @@ mod tests {
         std::env::set_var("ROI_FAKE_CAPTURE", "1");
         let roi_manager = Arc::new(Mutex::new(RoiManager::new(0)));
         let server_config = build_server_config().expect("server config");
-        let endpoint = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap())
-            .expect("endpoint");
+        let endpoint =
+            Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).expect("endpoint");
         let port = endpoint.local_addr().expect("addr").port();
         let running = Arc::new(AtomicBool::new(true));
         let runner = {
             let roi = roi_manager.clone();
             let running = running.clone();
             tokio::spawn(async move {
-                run_quic_server(endpoint, Some(roi), None, None, running).await;
+                run_quic_server(endpoint, Some(roi), None, None, None, running).await;
             })
         };
 
@@ -817,8 +817,7 @@ mod tests {
         };
 
         let mut client_endpoint =
-            Endpoint::client("0.0.0.0:0".parse::<SocketAddr>().unwrap())
-                .expect("client endpoint");
+            Endpoint::client("0.0.0.0:0".parse::<SocketAddr>().unwrap()).expect("client endpoint");
         client_endpoint.set_default_client_config(build_insecure_client_config());
         let connection = client_endpoint
             .connect(SocketAddr::from(([127, 0, 0, 1], port)), "vibe-inspect")
@@ -880,12 +879,9 @@ mod tests {
             .dangerous()
             .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_no_client_auth();
-        let mut config = quinn::ClientConfig::new(
-            Arc::new(
-                quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-                    .expect("quic client config"),
-            ),
-        );
+        let mut config = quinn::ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quic client config"),
+        ));
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams(100u32.into());
         config.transport_config(Arc::new(transport));

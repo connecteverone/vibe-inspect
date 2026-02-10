@@ -60,15 +60,15 @@ impl RoiManager {
     pub fn start_session(&mut self, request: RoiSessionRequest) -> RoiSessionInfo {
         let token = generate_token(32);
         let issued_at = current_unix_seconds();
-    let info = RoiSessionInfo {
-        session_id: request.session_id.clone(),
-        token,
-        quic_port: self.quic_port,
-        display_index: request.display_index,
-        framebuffer_width: request.framebuffer_width,
-        framebuffer_height: request.framebuffer_height,
-        screen_width: request.screen_width,
-        screen_height: request.screen_height,
+        let info = RoiSessionInfo {
+            session_id: request.session_id.clone(),
+            token,
+            quic_port: self.quic_port,
+            display_index: request.display_index,
+            framebuffer_width: request.framebuffer_width,
+            framebuffer_height: request.framebuffer_height,
+            screen_width: request.screen_width,
+            screen_height: request.screen_height,
             issued_at,
         };
         let session = RoiSession {

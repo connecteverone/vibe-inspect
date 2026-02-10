@@ -1,10 +1,7 @@
 part of '../main.dart';
 
 class _VncRecoveryCard extends StatelessWidget {
-  const _VncRecoveryCard({
-    required this.message,
-    required this.onRetry,
-  });
+  const _VncRecoveryCard({required this.message, required this.onRetry});
 
   final String message;
   final VoidCallback onRetry;
@@ -62,10 +59,7 @@ class _VncRecoveryCard extends StatelessWidget {
 }
 
 class _VncSpecialKeyButton extends StatelessWidget {
-  const _VncSpecialKeyButton({
-    required this.label,
-    required this.onPressed,
-  });
+  const _VncSpecialKeyButton({required this.label, required this.onPressed});
 
   final String label;
   final VoidCallback onPressed;
@@ -81,19 +75,16 @@ class _VncSpecialKeyButton extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
 }
 
 class _VncPointer extends StatelessWidget {
-  const _VncPointer({
-    required this.isClicking,
-    required this.isFocusing,
-  });
+  const _VncPointer({required this.isClicking, required this.isFocusing});
 
   final bool isClicking;
   final bool isFocusing;
@@ -111,10 +102,7 @@ class _VncPointer extends StatelessWidget {
             height: 32,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withAlpha(180),
-                width: 2,
-              ),
+              border: Border.all(color: Colors.white.withAlpha(180), width: 2),
             ),
           ),
         ),
@@ -170,19 +158,16 @@ class _VncZoomBadge extends StatelessWidget {
       child: Text(
         '${(value * 100).round()}%',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
 }
 
 class _VncStatsBadge extends StatelessWidget {
-  const _VncStatsBadge({
-    required this.latencyMs,
-    required this.fps,
-  });
+  const _VncStatsBadge({required this.latencyMs, required this.fps});
 
   final int? latencyMs;
   final double fps;
@@ -207,10 +192,11 @@ class _VncStatsBadge extends StatelessWidget {
     final fpsLabel = fpsValue <= 0
         ? '--'
         : fpsValue >= 10
-            ? fpsValue.toStringAsFixed(0)
-            : fpsValue.toStringAsFixed(1);
-    final latencyLabel =
-        latencyMs == null ? '--' : '${latencyMs!.clamp(0, 9999)}';
+        ? fpsValue.toStringAsFixed(0)
+        : fpsValue.toStringAsFixed(1);
+    final latencyLabel = latencyMs == null
+        ? '--'
+        : '${latencyMs!.clamp(0, 9999)}';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -226,16 +212,16 @@ class _VncStatsBadge extends StatelessWidget {
               Text(
                 'Latency ',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               Text(
                 '$latencyLabel ms',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _latencyColor(),
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: _latencyColor(),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -243,9 +229,9 @@ class _VncStatsBadge extends StatelessWidget {
           Text(
             '$fpsLabel fps',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -268,34 +254,25 @@ class _VncDebugRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseLabelStyle = labelStyle ??
+    final baseLabelStyle =
+        labelStyle ??
         Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.white70,
-              fontWeight: FontWeight.w600,
-            );
-    final baseValueStyle = valueStyle ??
+          color: Colors.white70,
+          fontWeight: FontWeight.w600,
+        );
+    final baseValueStyle =
+        valueStyle ??
         Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            );
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+        );
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 86,
-            child: Text(
-              label,
-              style: baseLabelStyle,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: baseValueStyle,
-            ),
-          ),
+          SizedBox(width: 86, child: Text(label, style: baseLabelStyle)),
+          Expanded(child: Text(value, style: baseValueStyle)),
         ],
       ),
     );
@@ -331,9 +308,9 @@ class _VncOverlayIconButton extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -362,16 +339,8 @@ class _CalibrationTarget extends StatelessWidget {
               border: Border.all(color: Colors.white, width: 2),
             ),
           ),
-          Container(
-            width: 36,
-            height: 2,
-            color: Colors.white.withAlpha(200),
-          ),
-          Container(
-            width: 2,
-            height: 36,
-            color: Colors.white.withAlpha(200),
-          ),
+          Container(width: 36, height: 2, color: Colors.white.withAlpha(200)),
+          Container(width: 2, height: 36, color: Colors.white.withAlpha(200)),
         ],
       ),
     );
@@ -426,9 +395,9 @@ class _CalibrationSlider extends StatelessWidget {
           Text(
             label,
             style: theme.textTheme.bodySmall?.copyWith(
-                  color: labelColor ?? const Color(0xFF0F172A),
-                  fontWeight: FontWeight.w600,
-                ),
+              color: labelColor ?? const Color(0xFF0F172A),
+              fontWeight: FontWeight.w600,
+            ),
           ),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
@@ -529,15 +498,18 @@ class _VncZoomBarState extends State<_VncZoomBar> {
           onDoubleTap: widget.enabled ? widget.onReset : null,
           onTapDown: widget.enabled
               ? (details) {
-                  final nextValue =
-                      _valueForPosition(details.localPosition.dy, height);
+                  final nextValue = _valueForPosition(
+                    details.localPosition.dy,
+                    height,
+                  );
                   _setValue(nextValue);
                   _commitValue(nextValue);
                 }
               : null,
           onVerticalDragUpdate: widget.enabled
-              ? (details) =>
-                  _setValue(_valueForPosition(details.localPosition.dy, height))
+              ? (details) => _setValue(
+                  _valueForPosition(details.localPosition.dy, height),
+                )
               : null,
           onVerticalDragEnd: widget.enabled ? (_) => _commitValue() : null,
           child: Container(
@@ -563,11 +535,9 @@ class _VncZoomBarState extends State<_VncZoomBar> {
                     '${widget.max.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      color: widget.glassStyle ? Colors.white : Colors.white70,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -578,11 +548,9 @@ class _VncZoomBarState extends State<_VncZoomBar> {
                     '${widget.min.toStringAsFixed(1)}x',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: widget.glassStyle
-                              ? Colors.white
-                              : Colors.white70,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      color: widget.glassStyle ? Colors.white : Colors.white70,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -611,8 +579,8 @@ class _VncZoomBarState extends State<_VncZoomBar> {
                     decoration: BoxDecoration(
                       color: widget.enabled
                           ? (widget.glassStyle
-                              ? Colors.white.withAlpha(160)
-                              : const Color(0xFF38BDF8))
+                                ? Colors.white.withAlpha(160)
+                                : const Color(0xFF38BDF8))
                           : Colors.white24,
                       borderRadius: BorderRadius.circular(999),
                       boxShadow: [
@@ -627,11 +595,11 @@ class _VncZoomBarState extends State<_VncZoomBar> {
                       child: Text(
                         '${(clamped * 100).round()}%',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: widget.glassStyle
-                                  ? const Color(0xFF0F172A)
-                                  : Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          color: widget.glassStyle
+                              ? const Color(0xFF0F172A)
+                              : Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -676,23 +644,23 @@ class _VncShortcutOverlay extends StatelessWidget {
           spacing: 8,
           children: [
             _VncShortcutButton(
-              label: 'Esc',
+              label: 'Send Esc',
               onPressed: enabled ? onEsc : null,
             ),
             _VncShortcutButton(
-              label: 'Cmd',
+              label: 'Send Cmd',
               onPressed: enabled ? onCmd : null,
             ),
             _VncShortcutButton(
-              label: 'Tab',
+              label: 'Send Tab',
               onPressed: enabled ? onTab : null,
             ),
             _VncShortcutButton(
-              label: 'Ctrl',
+              label: 'Send Ctrl',
               onPressed: enabled ? onCtrl : null,
             ),
             _VncShortcutButton(
-              label: 'Kbd',
+              label: 'Keyboard input',
               onPressed: enabled ? onKeyboard : null,
               icon: Icons.keyboard,
             ),
@@ -704,11 +672,7 @@ class _VncShortcutOverlay extends StatelessWidget {
 }
 
 class _VncShortcutButton extends StatelessWidget {
-  const _VncShortcutButton({
-    required this.label,
-    this.icon,
-    this.onPressed,
-  });
+  const _VncShortcutButton({required this.label, this.icon, this.onPressed});
 
   final String label;
   final IconData? icon;
@@ -734,9 +698,9 @@ class _VncShortcutButton extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -784,9 +748,9 @@ class _VncControlAction extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: foreground,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -870,19 +834,16 @@ class _VncTrackpadSurface extends StatelessWidget {
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.touch_app,
-                        color: iconColor,
-                      ),
+                      Icon(Icons.touch_app, color: iconColor),
                       const SizedBox(height: 8),
                       Text(
                         enabled
                             ? 'Trackpad ready'
                             : (disabledMessage ?? 'Connect to enable input'),
                         style: theme.textTheme.bodySmall?.copyWith(
-                              color: textColor,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          color: textColor,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   )
@@ -910,7 +871,9 @@ class _VncGestureHint extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: glassStyle ? Colors.white.withAlpha(24) : const Color(0xFFF1F5F9),
+        color: glassStyle
+            ? Colors.white.withAlpha(24)
+            : const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
           color: glassStyle
@@ -930,9 +893,9 @@ class _VncGestureHint extends StatelessWidget {
           Text(
             label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: glassStyle ? Colors.white70 : const Color(0xFF475569),
-                  fontWeight: FontWeight.w600,
-                ),
+              color: glassStyle ? Colors.white70 : const Color(0xFF475569),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -1008,10 +971,7 @@ class ContextMissingScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _KeyValueRow(
-                    label: 'Type',
-                    value: event.type.toUpperCase(),
-                  ),
+                  _KeyValueRow(label: 'Type', value: event.type.toUpperCase()),
                   _KeyValueRow(label: 'Title', value: event.title),
                   _KeyValueRow(
                     label: 'Timestamp',
@@ -1040,12 +1000,7 @@ class _HeadersBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: headers.entries
-          .map(
-            (entry) => _KeyValueRow(
-              label: entry.key,
-              value: entry.value,
-            ),
-          )
+          .map((entry) => _KeyValueRow(label: entry.key, value: entry.value))
           .toList(),
     );
   }
@@ -1063,9 +1018,9 @@ class _EmptyHint extends StatelessWidget {
       child: Text(
         text,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: const Color(0xFF94A3B8),
-              fontWeight: FontWeight.w600,
-            ),
+          color: const Color(0xFF94A3B8),
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -1080,27 +1035,15 @@ class _StatusPillColor {
 
 _StatusPillColor _statusPillColor(int? status) {
   if (status == null) {
-    return const _StatusPillColor(
-      Color(0xFFE2E8F0),
-      Color(0xFF475569),
-    );
+    return const _StatusPillColor(Color(0xFFE2E8F0), Color(0xFF475569));
   }
   if (status >= 200 && status < 300) {
-    return const _StatusPillColor(
-      Color(0xFFDCFCE7),
-      Color(0xFF166534),
-    );
+    return const _StatusPillColor(Color(0xFFDCFCE7), Color(0xFF166534));
   }
   if (status >= 400) {
-    return const _StatusPillColor(
-      Color(0xFFFEE2E2),
-      Color(0xFFB91C1C),
-    );
+    return const _StatusPillColor(Color(0xFFFEE2E2), Color(0xFFB91C1C));
   }
-  return const _StatusPillColor(
-    Color(0xFFFEF3C7),
-    Color(0xFF92400E),
-  );
+  return const _StatusPillColor(Color(0xFFFEF3C7), Color(0xFF92400E));
 }
 
 Map<String, String> _parseHeaders(dynamic raw) {
@@ -1169,8 +1112,9 @@ void _diffJsonValues(
     return;
   }
   if (current is List && previous is List) {
-    final maxLength =
-        current.length > previous.length ? current.length : previous.length;
+    final maxLength = current.length > previous.length
+        ? current.length
+        : previous.length;
     for (var index = 0; index < maxLength; index += 1) {
       final childPath = _childJsonPath(path, index.toString());
       if (index >= current.length || index >= previous.length) {
@@ -1269,7 +1213,8 @@ String _describeNetworkError(Object error) {
   if (lower.contains('connection refused') || lower.contains('errno = 61')) {
     return 'Connection refused (errno 61). The host is reachable but the port was rejected by the OS/firewall.';
   }
-  if (lower.contains('network is unreachable') || lower.contains('errno = 51')) {
+  if (lower.contains('network is unreachable') ||
+      lower.contains('errno = 51')) {
     return 'Network is unreachable (errno 51). The app has no route to the LAN. Check Wi-Fi and local network permission.';
   }
   if (lower.contains('timed out') || lower.contains('timeout')) {
@@ -1298,8 +1243,9 @@ ErrorPresentation _buildErrorPresentation({
   String? requestId,
   Object? details,
 }) {
-  final normalizedCode =
-      code != null && code.trim().isNotEmpty ? code.trim() : 'unknown_error';
+  final normalizedCode = code != null && code.trim().isNotEmpty
+      ? code.trim()
+      : 'unknown_error';
   final resolvedFallback = (message ?? '').trim().isNotEmpty
       ? message!.trim()
       : (fallbackMessage ?? 'Something went wrong.');
@@ -1344,8 +1290,9 @@ ErrorPresentation _presentUnexpectedFailure(
 
 String _formatErrorMessage(ErrorPresentation error) {
   final trimmed = error.message.trim();
-  final message =
-      trimmed.isNotEmpty ? trimmed : 'Something went wrong. Please try again.';
+  final message = trimmed.isNotEmpty
+      ? trimmed
+      : 'Something went wrong. Please try again.';
   if (error.code.isNotEmpty && error.code != 'unknown_error') {
     return '$message (code: ${error.code})';
   }
@@ -1378,11 +1325,20 @@ String? _friendlyMessageForCode(String code) {
   switch (code.toLowerCase()) {
     case 'invalid_token':
       return 'Invalid token. Check the token and try again.';
+    case 'invalid_token_length':
+      return 'Token must be 64 characters.';
+    case 'invalid_token_format':
+      return 'Token must use only letters and numbers.';
     case 'token_expired':
       return 'Token expired. Generate a new token.';
     case 'token_mismatch':
     case 'secret_mismatch':
+    case 'nonce_mismatch':
       return 'Pairing token mismatch. Generate a new token and try again.';
+    case 'missing_nonce':
+      return 'Pairing nonce missing. Regenerate QR and retry.';
+    case 'unsupported_protocol':
+      return 'Client protocol unsupported. Please update the app.';
     case 'missing_token':
       return 'Pairing token is missing. Generate a new token.';
     case 'requires_approval':

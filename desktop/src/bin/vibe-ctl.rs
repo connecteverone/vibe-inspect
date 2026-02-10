@@ -3,9 +3,10 @@ use clap::{Args, Parser, Subcommand};
 use crossterm::terminal;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use desktop::terminal_core::{
-    read_discovery_file, terminal_discovery_path, TerminalSessionSummary,
-    DEFAULT_TERMINALD_WS_URL, TERMINALD_PROTOCOL_VERSION,
+    read_discovery_file, terminal_discovery_path, TerminalSessionSummary, DEFAULT_TERMINALD_WS_URL,
+    TERMINALD_PROTOCOL_VERSION,
 };
+use desktop::terminald_launcher::start_terminald_with_fallback;
 use futures_util::{SinkExt, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 use serde_json::{json, Map, Value};
@@ -14,21 +15,19 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
-#[cfg(unix)]
-use tokio::signal::unix::{signal, SignalKind};
 
 const ENV_TERMINALD_CONFIG: &str = "VIBE_CTL_CONFIG";
 const ENV_TERMINALD_ENDPOINT: &str = "VIBE_CTL_ENDPOINT";
 const ENV_TERMINALD_TOKEN: &str = "VIBE_CTL_TOKEN";
 const ENV_TERMINALD_AUTOSTART: &str = "VIBE_TERMINALD_AUTOSTART";
-const ENV_TERMINALD_BIN: &str = "VIBE_TERMINALD_BIN";
 const TERMINALD_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const TERMINALD_AUTOSTART_TIMEOUT: Duration = Duration::from_secs(3);
 const TERMINALD_DISCOVERY_POLL: Duration = Duration::from_millis(150);
@@ -199,7 +198,10 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             let data = terminald_request(&overrides, "list", None, None).await?;
             if args.json {
                 let payload = serde_json::to_string_pretty(&data).map_err(|error| {
-                    CliError::new("connection_failed", format!("Failed to format JSON: {error}"))
+                    CliError::new(
+                        "connection_failed",
+                        format!("Failed to format JSON: {error}"),
+                    )
                 })?;
                 println!("{payload}");
             } else {
@@ -207,8 +209,8 @@ async fn run(cli: Cli) -> Result<(), CliError> {
                     .get("sessions")
                     .cloned()
                     .unwrap_or(Value::Array(Vec::new()));
-                let sessions: Vec<TerminalSessionSummary> =
-                    serde_json::from_value(sessions_value).map_err(|error| {
+                let sessions: Vec<TerminalSessionSummary> = serde_json::from_value(sessions_value)
+                    .map_err(|error| {
                         CliError::new(
                             "connection_failed",
                             format!("Failed to parse sessions: {error}"),
@@ -230,33 +232,15 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         }
         Command::Send(args) => {
             let payload = build_input_payload(&args)?;
-            terminald_request(
-                &overrides,
-                "input",
-                Some(args.target),
-                Some(payload),
-            )
-            .await?;
+            terminald_request(&overrides, "input", Some(args.target), Some(payload)).await?;
         }
         Command::Resize(args) => {
             let payload = json!({ "cols": args.cols, "rows": args.rows });
-            terminald_request(
-                &overrides,
-                "resize",
-                Some(args.target),
-                Some(payload),
-            )
-            .await?;
+            terminald_request(&overrides, "resize", Some(args.target), Some(payload)).await?;
         }
         Command::Rename(args) => {
             let payload = json!({ "label": args.label });
-            terminald_request(
-                &overrides,
-                "rename",
-                Some(args.target),
-                Some(payload),
-            )
-            .await?;
+            terminald_request(&overrides, "rename", Some(args.target), Some(payload)).await?;
         }
         Command::Stop(args) => {
             let action = if args.force { "kill" } else { "stop" };
@@ -314,6 +298,14 @@ fn print_debug_info(data: &Value) -> Result<(), CliError> {
     let active_connections = read_metric(metrics, "active_connections")?;
     let dropped_chunks_total = read_metric(metrics, "dropped_chunks_total")?;
     let ws_backpressure_events_total = read_metric(metrics, "ws_backpressure_events_total")?;
+    let ws_auth_attempts_total = read_metric_or_default(metrics, "ws_auth_attempts_total");
+    let ws_auth_success_total = read_metric_or_default(metrics, "ws_auth_success_total");
+    let reconnect_success_rate_percent =
+        read_metric_or_default(metrics, "reconnect_success_rate_percent");
+    let pause_duration_p50_ms = read_metric_or_default(metrics, "pause_duration_p50_ms");
+    let pause_duration_p95_ms = read_metric_or_default(metrics, "pause_duration_p95_ms");
+    let pause_duration_samples_total =
+        read_metric_or_default(metrics, "pause_duration_samples_total");
 
     println!("server_version: {version}");
     println!("server_time: {server_time}");
@@ -322,13 +314,16 @@ fn print_debug_info(data: &Value) -> Result<(), CliError> {
     println!("active_connections: {active_connections}");
     println!("dropped_chunks_total: {dropped_chunks_total}");
     println!("ws_backpressure_events_total: {ws_backpressure_events_total}");
+    println!("ws_auth_attempts_total: {ws_auth_attempts_total}");
+    println!("ws_auth_success_total: {ws_auth_success_total}");
+    println!("reconnect_success_rate_percent: {reconnect_success_rate_percent}");
+    println!("pause_duration_p50_ms: {pause_duration_p50_ms}");
+    println!("pause_duration_p95_ms: {pause_duration_p95_ms}");
+    println!("pause_duration_samples_total: {pause_duration_samples_total}");
     Ok(())
 }
 
-fn read_metric(
-    metrics: &serde_json::Map<String, Value>,
-    key: &str,
-) -> Result<u64, CliError> {
+fn read_metric(metrics: &serde_json::Map<String, Value>, key: &str) -> Result<u64, CliError> {
     metrics
         .get(key)
         .and_then(|value| value.as_u64())
@@ -338,6 +333,13 @@ fn read_metric(
                 format!("Missing metric '{key}' in response."),
             )
         })
+}
+
+fn read_metric_or_default(metrics: &serde_json::Map<String, Value>, key: &str) -> u64 {
+    metrics
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
 }
 
 fn build_start_payload(args: &NewArgs) -> Result<Option<Value>, CliError> {
@@ -428,7 +430,10 @@ impl RawModeGuard {
     fn new(enable: bool) -> Result<Self, CliError> {
         if enable {
             enable_raw_mode().map_err(|error| {
-                CliError::new("terminal_error", format!("Failed to enable raw mode: {error}"))
+                CliError::new(
+                    "terminal_error",
+                    format!("Failed to enable raw mode: {error}"),
+                )
             })?;
         }
         Ok(Self { enabled: enable })
@@ -443,12 +448,9 @@ impl Drop for RawModeGuard {
     }
 }
 
-async fn attach_session(
-    overrides: &ConfigOverrides,
-    args: AttachArgs,
-) -> Result<(), CliError> {
+async fn attach_session(overrides: &ConfigOverrides, args: AttachArgs) -> Result<(), CliError> {
     let detach_sequence = parse_detach_sequence(&args.detach_key, args.detach_timeout_ms)?;
-    let mut socket = connect_terminald(overrides).await?;
+    let socket = connect_terminald(overrides).await?;
     let (mut sender, mut receiver) = socket.split();
 
     let attach_id = random_request_id();
@@ -472,7 +474,14 @@ async fn attach_session(
         })?;
 
     let mut stdout = std::io::stdout();
-    wait_for_attach(&mut receiver, &mut sender, &attach_id, &args.target, &mut stdout).await?;
+    wait_for_attach(
+        &mut receiver,
+        &mut sender,
+        &attach_id,
+        &args.target,
+        &mut stdout,
+    )
+    .await?;
 
     let _raw_guard = RawModeGuard::new(!args.no_raw)?;
 
@@ -550,39 +559,67 @@ fn parse_detach_sequence(value: &str, timeout_ms: u64) -> Result<DetachSequence,
     let prefix = parse_key_token(tokens[0])?;
     let key = parse_key_token(tokens[1])?;
     let timeout = Duration::from_millis(timeout_ms.max(1));
-    Ok(DetachSequence { prefix, key, timeout })
+    Ok(DetachSequence {
+        prefix,
+        key,
+        timeout,
+    })
 }
 
 fn parse_key_token(token: &str) -> Result<u8, CliError> {
     let normalized = token.trim();
     if normalized.is_empty() {
-        return Err(CliError::new("invalid_request", "Detach key token is empty."));
+        return Err(CliError::new(
+            "invalid_request",
+            "Detach key token is empty.",
+        ));
     }
     let lower = normalized.to_lowercase();
-    if let Some(rest) = lower.strip_prefix("ctrl-").or_else(|| lower.strip_prefix("c-")) {
+    if let Some(rest) = lower
+        .strip_prefix("ctrl-")
+        .or_else(|| lower.strip_prefix("c-"))
+    {
         let mut chars = rest.chars();
         let Some(ch) = chars.next() else {
-            return Err(CliError::new("invalid_request", "Detach key missing character."));
+            return Err(CliError::new(
+                "invalid_request",
+                "Detach key missing character.",
+            ));
         };
         if chars.next().is_some() {
-            return Err(CliError::new("invalid_request", "Detach key must be a single character."));
+            return Err(CliError::new(
+                "invalid_request",
+                "Detach key must be a single character.",
+            ));
         }
         let byte = ch as u32;
         if byte > u8::MAX as u32 {
-            return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
+            return Err(CliError::new(
+                "invalid_request",
+                "Detach key must be ASCII.",
+            ));
         }
         return Ok((byte as u8) & 0x1f);
     }
     let mut chars = normalized.chars();
     let Some(ch) = chars.next() else {
-        return Err(CliError::new("invalid_request", "Detach key missing character."));
+        return Err(CliError::new(
+            "invalid_request",
+            "Detach key missing character.",
+        ));
     };
     if chars.next().is_some() {
-        return Err(CliError::new("invalid_request", "Detach key must be a single character."));
+        return Err(CliError::new(
+            "invalid_request",
+            "Detach key must be a single character.",
+        ));
     }
     let byte = ch as u32;
     if byte > u8::MAX as u32 {
-        return Err(CliError::new("invalid_request", "Detach key must be ASCII."));
+        return Err(CliError::new(
+            "invalid_request",
+            "Detach key must be ASCII.",
+        ));
     }
     Ok(byte as u8)
 }
@@ -595,10 +632,7 @@ fn spawn_stdin_reader(sender: mpsc::Sender<Vec<u8>>) -> thread::JoinHandle<()> {
             match stdin.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
-                    if sender
-                        .blocking_send(buffer[..count].to_vec())
-                        .is_err()
-                    {
+                    if sender.blocking_send(buffer[..count].to_vec()).is_err() {
                         break;
                     }
                 }
@@ -773,7 +807,10 @@ fn parse_terminald_error(text: &str) -> Option<CliError> {
     if parsed.get("type")?.as_str()? != "res" {
         return None;
     }
-    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let ok = parsed
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     if ok {
         return None;
     }
@@ -791,22 +828,22 @@ fn parse_terminald_error(text: &str) -> Option<CliError> {
 
 fn write_terminal_payload(payload: &Value, stdout: &mut dyn Write) -> Result<(), CliError> {
     if let Some(snapshot) = payload.get("snapshot").and_then(|value| value.as_str()) {
-        stdout
-            .write_all(snapshot.as_bytes())
-            .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
+        stdout.write_all(snapshot.as_bytes()).map_err(|error| {
+            CliError::new("terminal_error", format!("stdout write failed: {error}"))
+        })?;
     }
     if let Some(output) = payload.get("output").and_then(|value| value.as_array()) {
         for chunk in output {
             if let Some(data) = chunk.get("data").and_then(|value| value.as_str()) {
-                stdout
-                    .write_all(data.as_bytes())
-                    .map_err(|error| CliError::new("terminal_error", format!("stdout write failed: {error}")))?;
+                stdout.write_all(data.as_bytes()).map_err(|error| {
+                    CliError::new("terminal_error", format!("stdout write failed: {error}"))
+                })?;
             }
         }
     }
-    stdout
-        .flush()
-        .map_err(|error| CliError::new("terminal_error", format!("stdout flush failed: {error}")))?;
+    stdout.flush().map_err(|error| {
+        CliError::new("terminal_error", format!("stdout flush failed: {error}"))
+    })?;
     Ok(())
 }
 
@@ -881,10 +918,7 @@ async fn send_resize(
     send_terminald_action(sender, "resize", session_id, Some(payload)).await
 }
 
-async fn send_detach(
-    sender: &mut TerminaldSink,
-    session_id: &str,
-) -> Result<(), CliError> {
+async fn send_detach(sender: &mut TerminaldSink, session_id: &str) -> Result<(), CliError> {
     send_terminald_action(sender, "detach", session_id, None).await
 }
 
@@ -895,16 +929,17 @@ async fn send_terminald_action(
     payload: Option<Value>,
 ) -> Result<(), CliError> {
     let request_id = random_request_id();
-    let request = build_terminald_request(
-        &request_id,
-        action,
-        Some(session_id.to_string()),
-        payload,
-    );
+    let request =
+        build_terminald_request(&request_id, action, Some(session_id.to_string()), payload);
     sender
         .send(TungsteniteMessage::Text(request.to_string().into()))
         .await
-        .map_err(|error| CliError::new("connection_failed", format!("Failed to send {action}: {error}")))?;
+        .map_err(|error| {
+            CliError::new(
+                "connection_failed",
+                format!("Failed to send {action}: {error}"),
+            )
+        })?;
     Ok(())
 }
 
@@ -958,7 +993,12 @@ async fn terminald_request(
     socket
         .send(TungsteniteMessage::Text(request.to_string().into()))
         .await
-        .map_err(|error| CliError::new("connection_failed", format!("Failed to send request: {error}")))?;
+        .map_err(|error| {
+            CliError::new(
+                "connection_failed",
+                format!("Failed to send request: {error}"),
+            )
+        })?;
 
     while let Some(message) = socket.next().await {
         match message {
@@ -1014,7 +1054,9 @@ async fn connect_terminald(overrides: &ConfigOverrides) -> Result<TerminaldSocke
         match connect_and_auth(&resolved.ws_url, &token).await {
             Ok(socket) => return Ok(socket),
             Err(error) => {
-                if should_autostart(&resolved, attempted_start) {
+                if should_autostart(&resolved, attempted_start)
+                    && should_autostart_after_error(&error)
+                {
                     attempted_start = true;
                     try_start_terminald().await?;
                     if let Some(updated) = wait_for_terminald_config(overrides) {
@@ -1030,6 +1072,10 @@ async fn connect_terminald(overrides: &ConfigOverrides) -> Result<TerminaldSocke
 
 fn should_autostart(config: &ResolvedConfig, attempted_start: bool) -> bool {
     !config.config_override && autostart_enabled() && !attempted_start
+}
+
+fn should_autostart_after_error(error: &CliError) -> bool {
+    !matches!(error.code, "version_mismatch")
 }
 
 async fn connect_and_auth(ws_url: &str, token: &str) -> Result<TerminaldSocket, CliError> {
@@ -1065,7 +1111,10 @@ async fn connect_and_auth(ws_url: &str, token: &str) -> Result<TerminaldSocket, 
         .send(TungsteniteMessage::Text(auth_request.to_string().into()))
         .await
         .map_err(|error| {
-            CliError::new("connection_failed", format!("Failed to send auth request: {error}"))
+            CliError::new(
+                "connection_failed",
+                format!("Failed to send auth request: {error}"),
+            )
         })?;
 
     while let Some(message) = socket.next().await {
@@ -1165,57 +1214,16 @@ fn wait_for_terminald_config(overrides: &ConfigOverrides) -> Option<ResolvedConf
 }
 
 async fn try_start_terminald() -> Result<(), CliError> {
-    tokio::task::spawn_blocking(|| start_terminald_process())
+    tokio::task::spawn_blocking(start_terminald_with_fallback)
         .await
-        .unwrap_or_else(|error| {
-            Err(CliError::new(
+        .map_err(|error| {
+            CliError::new(
                 "connection_failed",
                 format!("Terminal daemon start failed: {error}"),
-            ))
-        })
-}
-
-fn start_terminald_process() -> Result<(), CliError> {
-    let binary = resolve_terminald_binary();
-    let mut command = match binary {
-        Some(path) => ProcessCommand::new(path),
-        None => ProcessCommand::new("terminald"),
-    };
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command.spawn().map_err(|error| {
-        CliError::new(
-            "connection_failed",
-            format!("Failed to start terminal daemon: {error}"),
-        )
-    })?;
-    thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
-}
-
-fn resolve_terminald_binary() -> Option<PathBuf> {
-    if let Some(path) = read_env_value(ENV_TERMINALD_BIN) {
-        return Some(PathBuf::from(path));
-    }
-    if let Ok(mut exe) = env::current_exe() {
-        exe.set_file_name(terminald_executable_name());
-        if exe.exists() {
-            return Some(exe);
-        }
-    }
-    None
-}
-
-fn terminald_executable_name() -> &'static str {
-    if cfg!(windows) {
-        "terminald.exe"
-    } else {
-        "terminald"
-    }
+            )
+        })?
+        .map(|_| ())
+        .map_err(|error| CliError::new("connection_failed", error))
 }
 
 fn build_terminald_request(
@@ -1240,10 +1248,7 @@ fn build_terminald_request(
     request
 }
 
-fn parse_terminald_response(
-    text: &str,
-    request_id: &str,
-) -> Option<Result<Value, CliError>> {
+fn parse_terminald_response(text: &str, request_id: &str) -> Option<Result<Value, CliError>> {
     let parsed: Value = serde_json::from_str(text).ok()?;
     if parsed.get("type")?.as_str()? != "res" {
         return None;
@@ -1251,7 +1256,10 @@ fn parse_terminald_response(
     if parsed.get("id")?.as_str()? != request_id {
         return None;
     }
-    let ok = parsed.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let ok = parsed
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     if ok {
         return Some(Ok(parsed.get("data").cloned().unwrap_or(Value::Null)));
     }

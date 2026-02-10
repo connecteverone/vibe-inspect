@@ -30,9 +30,9 @@ extension _VncSessionUi on _VncSessionScreenState {
             children: [
               Text(
                 'Send keystrokes',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -57,9 +57,9 @@ extension _VncSessionUi on _VncSessionScreenState {
               Text(
                 'Special keys',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF64748B),
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: const Color(0xFF64748B),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -195,7 +195,8 @@ extension _VncSessionUi on _VncSessionScreenState {
       _lastLayoutFullscreen = _isFullscreen;
       return;
     }
-    final sizeDelta = (viewSize.width - _lastLayoutSize.width).abs() +
+    final sizeDelta =
+        (viewSize.width - _lastLayoutSize.width).abs() +
         (viewSize.height - _lastLayoutSize.height).abs();
     final landscapeChanged =
         _lastLayoutLandscape != null && _lastLayoutLandscape != isLandscape;
@@ -314,8 +315,10 @@ extension _VncSessionUi on _VncSessionScreenState {
     _calibrationSamples.add(_pointerPosition);
     if (_calibrationSamples.length < _calibrationTargets.length) {
       _updateState(() {
-        _calibrationStep =
-            (_calibrationStep + 1).clamp(0, _calibrationTargets.length - 1);
+        _calibrationStep = (_calibrationStep + 1).clamp(
+          0,
+          _calibrationTargets.length - 1,
+        );
       });
       return;
     }
@@ -347,19 +350,25 @@ extension _VncSessionUi on _VncSessionScreenState {
   }
 
   void _updateTrackpadMoreAnchorByDelta(Offset delta, Size areaSize) {
-    final width = areaSize.width -
+    final width =
+        areaSize.width -
         _trackpadMoreButtonWidth -
         _trackpadMoreButtonMargin * 2;
-    final height = areaSize.height -
+    final height =
+        areaSize.height -
         _trackpadMoreButtonHeight -
         _trackpadMoreButtonMargin * 2;
     if (width <= 0 || height <= 0) {
       return;
     }
-    final nextDx =
-        (_trackpadMoreAnchor.dx * width + delta.dx).clamp(0.0, width);
-    final nextDy =
-        (_trackpadMoreAnchor.dy * height + delta.dy).clamp(0.0, height);
+    final nextDx = (_trackpadMoreAnchor.dx * width + delta.dx).clamp(
+      0.0,
+      width,
+    );
+    final nextDy = (_trackpadMoreAnchor.dy * height + delta.dy).clamp(
+      0.0,
+      height,
+    );
     _updateState(() {
       _trackpadMoreAnchor = Offset(nextDx / width, nextDy / height);
     });
@@ -409,16 +418,16 @@ extension _VncSessionUi on _VncSessionScreenState {
                     Text(
                       '更多操作',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFF0F172A),
-                          ),
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0F172A),
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '键盘输入、调试视图与校准操作。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF64748B),
-                          ),
+                        color: const Color(0xFF64748B),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     ListTile(
@@ -437,9 +446,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Debug view'),
-                      subtitle: Text(
-                        _debugPanelVisible ? 'Visible' : 'Hidden',
-                      ),
+                      subtitle: Text(_debugPanelVisible ? 'Visible' : 'Hidden'),
                       value: _debugPanelVisible,
                       onChanged: updateDebugVisibility,
                     ),
@@ -543,10 +550,12 @@ extension _VncSessionUi on _VncSessionScreenState {
     required bool isInteractive,
   }) {
     final theme = Theme.of(context);
-    final width = areaSize.width -
+    final width =
+        areaSize.width -
         _trackpadMoreButtonWidth -
         _trackpadMoreButtonMargin * 2;
-    final height = areaSize.height -
+    final height =
+        areaSize.height -
         _trackpadMoreButtonHeight -
         _trackpadMoreButtonMargin * 2;
     final safeWidth = width <= 0 ? 0.0 : width;
@@ -563,10 +572,8 @@ extension _VncSessionUi on _VncSessionScreenState {
       top: top,
       child: GestureDetector(
         onPanUpdate: isDragging
-            ? (details) => _updateTrackpadMoreAnchorByDelta(
-                  details.delta,
-                  areaSize,
-                )
+            ? (details) =>
+                  _updateTrackpadMoreAnchorByDelta(details.delta, areaSize)
             : null,
         onTap: () => _openTrackpadMoreSheet(isInteractive: isInteractive),
         onLongPress: () {
@@ -610,9 +617,9 @@ extension _VncSessionUi on _VncSessionScreenState {
               Text(
                 label,
                 style: theme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -693,17 +700,15 @@ extension _VncSessionUi on _VncSessionScreenState {
     final canvas = LayoutBuilder(
       builder: (context, constraints) {
         _devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
-        final viewSize = Size(
-          constraints.maxWidth,
-          constraints.maxHeight,
-        );
+        final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
         _maybeHandleLayoutChange(viewSize, isLandscape);
         final previousViewSize = _lastViewSize;
         _lastViewSize = viewSize;
         if (_roiSession != null && _roiLastRequestAt == null) {
           _scheduleRoiRequest();
         }
-        final viewDelta = (viewSize.width - previousViewSize.width).abs() +
+        final viewDelta =
+            (viewSize.width - previousViewSize.width).abs() +
             (viewSize.height - previousViewSize.height).abs();
         if (isInteractive && viewDelta > 6) {
           _autoSizedOnce = false;
@@ -716,12 +721,14 @@ extension _VncSessionUi on _VncSessionScreenState {
         final pointerScreen = _pointerToScreen(viewSize);
         final targetScreen =
             _isAutoCalibrating && _calibrationTargets.isNotEmpty
-                ? _frameToScreen(
-                    _calibrationTargets[_calibrationStep
-                        .clamp(0, _calibrationTargets.length - 1)],
-                    viewSize,
-                  )
-                : null;
+            ? _frameToScreen(
+                _calibrationTargets[_calibrationStep.clamp(
+                  0,
+                  _calibrationTargets.length - 1,
+                )],
+                viewSize,
+              )
+            : null;
         final translation = _calculateTranslation(viewSize);
         final scale = _baseScale(viewSize, contentSize: displaySize) * _zoom;
         final cursorImage = _cursorImage;
@@ -742,10 +749,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [
-                        Color(0xFF0B1120),
-                        Color(0xFF1E293B),
-                      ],
+                      colors: [Color(0xFF0B1120), Color(0xFF1E293B)],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -812,22 +816,28 @@ extension _VncSessionUi on _VncSessionScreenState {
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (details) {
-                      final framePos =
-                          _screenToFrame(details.localPosition, viewSize);
+                      final framePos = _screenToFrame(
+                        details.localPosition,
+                        viewSize,
+                      );
                       _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanStart: (details) {
                       _directDragActive = true;
-                      final framePos =
-                          _screenToFrame(details.localPosition, viewSize);
+                      final framePos = _screenToFrame(
+                        details.localPosition,
+                        viewSize,
+                      );
                       _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanUpdate: (details) {
                       if (!_directDragActive) {
                         return;
                       }
-                      final framePos =
-                          _screenToFrame(details.localPosition, viewSize);
+                      final framePos = _screenToFrame(
+                        details.localPosition,
+                        viewSize,
+                      );
                       _setPointerPosition(_removeInputCalibration(framePos));
                     },
                     onPanEnd: (_) {
@@ -865,9 +875,8 @@ extension _VncSessionUi on _VncSessionScreenState {
                     message: 'Controls',
                     child: FloatingActionButton.small(
                       heroTag: 'vncControlsFab-${widget.session.id}',
-                      onPressed: () => _openLandscapeControls(
-                        isInteractive: isInteractive,
-                      ),
+                      onPressed: () =>
+                          _openLandscapeControls(isInteractive: isInteractive),
                       backgroundColor: isInteractive
                           ? Colors.black.withAlpha(170)
                           : Colors.black.withAlpha(100),
@@ -939,7 +948,9 @@ extension _VncSessionUi on _VncSessionScreenState {
                               if (isFullscreen) ...[
                                 const SizedBox(height: 12),
                                 FilledButton.icon(
-                                  onPressed: _isConnecting ? null : _startStream,
+                                  onPressed: _isConnecting
+                                      ? null
+                                      : _startStream,
                                   icon: const Icon(Icons.refresh),
                                   label: const Text('Retry stream'),
                                 ),
@@ -975,16 +986,16 @@ extension _VncSessionUi on _VncSessionScreenState {
                         Text(
                           '自动校准 ${_calibrationStep + 1}/${_calibrationTargets.length}',
                           style: theme.textTheme.bodyMedium?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Text(
                           '依次对准四个角标记，然后点“记录当前点”。',
                           style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.white70,
-                              ),
+                            color: Colors.white70,
+                          ),
                         ),
                         const SizedBox(height: 10),
                         Row(
@@ -1064,8 +1075,8 @@ extension _VncSessionUi on _VncSessionScreenState {
     final vncStatus = _connectionError != null
         ? '错误'
         : _isConnecting
-            ? '连接中'
-            : '已连接';
+        ? '连接中'
+        : '已连接';
     final vncSessionId = _lastVncSessionInfo?.sessionId ?? '-';
     final frameLabel = _frameSize.width <= 0 || _frameSize.height <= 0
         ? '-'
@@ -1084,10 +1095,11 @@ extension _VncSessionUi on _VncSessionScreenState {
     final roiLastRequestLabel = _formatSince(_roiLastRequestAt);
     final roiTileLabel = _roiTileCount == 0
         ? '-'
-        : '${_roiTileCount} (${_formatBytes(_roiTileBytes)})';
+        : '$_roiTileCount (${_formatBytes(_roiTileBytes)})';
     final roiCacheLabel = _roiImages.isEmpty ? '-' : '${_roiImages.length}';
-    final roiErrorLabel =
-        _roiLastError == null || _roiLastError!.isEmpty ? '-' : _roiLastError!;
+    final roiErrorLabel = _roiLastError == null || _roiLastError!.isEmpty
+        ? '-'
+        : _roiLastError!;
 
     const panelWidth = 300.0;
     final background = Colors.black.withAlpha(165);
@@ -1254,7 +1266,10 @@ extension _VncSessionUi on _VncSessionScreenState {
                 });
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: background,
                   borderRadius: BorderRadius.circular(999),
@@ -1346,11 +1361,15 @@ extension _VncSessionUi on _VncSessionScreenState {
                       glassStyle: isLandscape,
                       height: height,
                       showLabel: !isLandscape,
-                      disabledMessage:
-                          _directInputEnabled ? 'Direct touch enabled' : null,
-                      onDoubleTapDown:
-                          trackpadEnabled ? _handleTrackpadDoubleTapDown : null,
-                      onDoubleTap: trackpadEnabled ? _handleTrackpadDoubleTap : null,
+                      disabledMessage: _directInputEnabled
+                          ? 'Direct touch enabled'
+                          : null,
+                      onDoubleTapDown: trackpadEnabled
+                          ? _handleTrackpadDoubleTapDown
+                          : null,
+                      onDoubleTap: trackpadEnabled
+                          ? _handleTrackpadDoubleTap
+                          : null,
                       onPointerDown: _handleTrackpadPointerDown,
                       onPointerMove: _handleTrackpadPointerMove,
                       onPointerHover: _handleTrackpadPointerHover,
@@ -1420,8 +1439,7 @@ extension _VncSessionUi on _VncSessionScreenState {
         : _frameSize.width / _frameSize.height;
     final minControlsHeight = 240.0;
     final maxViewHeight = safeHeight - minControlsHeight;
-    final rawViewHeight =
-        aspect <= 0 ? safeHeight * 0.6 : safeWidth / aspect;
+    final rawViewHeight = aspect <= 0 ? safeHeight * 0.6 : safeWidth / aspect;
     final viewHeight = maxViewHeight > 0
         ? (rawViewHeight <= maxViewHeight ? rawViewHeight : maxViewHeight)
         : safeHeight * 0.6;
@@ -1451,7 +1469,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               top: 12,
               child: _VncOverlayIconButton(
                 icon: Icons.fullscreen_exit,
-                label: 'Exit',
+                label: 'Exit fullscreen',
                 onPressed: () => _setFullscreen(false),
               ),
             ),
@@ -1460,7 +1478,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               top: 12,
               child: _VncOverlayIconButton(
                 icon: Icons.keyboard,
-                label: 'Kbd',
+                label: 'Keyboard input',
                 onPressed: _showKeyboardInput,
               ),
             ),
@@ -1491,12 +1509,8 @@ extension _VncSessionUi on _VncSessionScreenState {
     return LayoutBuilder(
       builder: (context, constraints) {
         final areaSize = Size(constraints.maxWidth, constraints.maxHeight);
-        final zoomHeight =
-            (constraints.maxHeight - 140).clamp(220.0, 360.0);
-        _updateTrackpadSize(
-          areaSize,
-          source: 'fullscreen_landscape_overlay',
-        );
+        final zoomHeight = (constraints.maxHeight - 140).clamp(220.0, 360.0);
+        _updateTrackpadSize(areaSize, source: 'fullscreen_landscape_overlay');
         return Stack(
           children: [
             Positioned.fill(
@@ -1517,10 +1531,12 @@ extension _VncSessionUi on _VncSessionScreenState {
                   behavior: HitTestBehavior.opaque,
                   onPanStart: trackpadEnabled ? (_) {} : null,
                   onPanUpdate: trackpadEnabled ? (_) {} : null,
-                  onDoubleTapDown:
-                      trackpadEnabled ? _handleTrackpadDoubleTapDown : null,
-                  onDoubleTap:
-                      trackpadEnabled ? _handleTrackpadDoubleTap : null,
+                  onDoubleTapDown: trackpadEnabled
+                      ? _handleTrackpadDoubleTapDown
+                      : null,
+                  onDoubleTap: trackpadEnabled
+                      ? _handleTrackpadDoubleTap
+                      : null,
                   onSecondaryTap: () => _sendClick(2),
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
@@ -1540,7 +1556,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               top: 12 + safePadding.top,
               child: _VncOverlayIconButton(
                 icon: Icons.fullscreen_exit,
-                label: 'Exit',
+                label: 'Exit fullscreen',
                 onPressed: () => _setFullscreen(false),
               ),
             ),
@@ -1549,7 +1565,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               top: 12 + safePadding.top,
               child: _VncOverlayIconButton(
                 icon: Icons.keyboard,
-                label: 'Kbd',
+                label: 'Keyboard input',
                 onPressed: _showKeyboardInput,
               ),
             ),
@@ -1602,8 +1618,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                         decoration: BoxDecoration(
                           color: Colors.black.withAlpha(110),
                           borderRadius: BorderRadius.circular(12),
-                          border:
-                              Border.all(color: Colors.white.withAlpha(60)),
+                          border: Border.all(color: Colors.white.withAlpha(60)),
                         ),
                         child: _buildTrackpadClickBar(
                           enabled: trackpadEnabled,
@@ -1633,13 +1648,16 @@ extension _VncSessionUi on _VncSessionScreenState {
         Text(
           '输入模式',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
-              ),
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
         ),
         const SizedBox(height: 6),
         ToggleButtons(
-          isSelected: [_directInputEnabled == false, _directInputEnabled == true],
+          isSelected: [
+            _directInputEnabled == false,
+            _directInputEnabled == true,
+          ],
           onPressed: isInteractive
               ? (index) {
                   _updateState(() {
@@ -1664,9 +1682,9 @@ extension _VncSessionUi on _VncSessionScreenState {
         if (_directInputEnabled)
           Text(
             '提示：直接在 VNC 画面上滑动移动光标（不触发点击）。',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF94A3B8),
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF94A3B8)),
           ),
         const SizedBox(height: 12),
         SizedBox(
@@ -1711,15 +1729,17 @@ extension _VncSessionUi on _VncSessionScreenState {
                             onDoubleTapDown: trackpadEnabled
                                 ? _handleTrackpadDoubleTapDown
                                 : null,
-                            onDoubleTap:
-                                trackpadEnabled ? _handleTrackpadDoubleTap : null,
+                            onDoubleTap: trackpadEnabled
+                                ? _handleTrackpadDoubleTap
+                                : null,
                             onPointerDown: _handleTrackpadPointerDown,
                             onPointerMove: _handleTrackpadPointerMove,
                             onPointerHover: _handleTrackpadPointerHover,
                             onPointerUp: _handleTrackpadPointerUp,
                             onPointerCancel: _handleTrackpadPointerCancel,
                             onPointerSignal: _handleTrackpadPointerSignal,
-                            onPointerPanZoomUpdate: _handleTrackpadPanZoomUpdate,
+                            onPointerPanZoomUpdate:
+                                _handleTrackpadPanZoomUpdate,
                           );
                         },
                       ),
@@ -1773,10 +1793,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               label: const Text('复制日志'),
             ),
             const SizedBox(width: 8),
-            TextButton(
-              onPressed: _clearAgentLogs,
-              child: const Text('清空日志'),
-            ),
+            TextButton(onPressed: _clearAgentLogs, child: const Text('清空日志')),
           ],
         ),
         if (kDebugMode) ...[
@@ -1824,9 +1841,9 @@ extension _VncSessionUi on _VncSessionScreenState {
         Text(
           '视图模式',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
-              ),
+            color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
         ),
         const SizedBox(height: 6),
         ToggleButtons(
@@ -1842,11 +1859,9 @@ extension _VncSessionUi on _VncSessionScreenState {
                     _autoSizedOnce = false;
                   });
                   if (_cursorDebugEnabled) {
-                    _logCursorDebug(
-                      'view_mode',
-                      {'mode': _viewMode.name},
-                      force: true,
-                    );
+                    _logCursorDebug('view_mode', {
+                      'mode': _viewMode.name,
+                    }, force: true);
                   }
                   _requestStreamRefresh(resetAutoResize: true);
                 }
@@ -1870,9 +1885,7 @@ extension _VncSessionUi on _VncSessionScreenState {
         ),
         const SizedBox(height: 12),
         Theme(
-          data: Theme.of(context).copyWith(
-            dividerColor: Colors.transparent,
-          ),
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
             tilePadding: EdgeInsets.zero,
             childrenPadding: EdgeInsets.zero,
@@ -1880,25 +1893,24 @@ extension _VncSessionUi on _VncSessionScreenState {
             title: Text(
               '高级选项',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
             ),
             subtitle: Text(
               '编码与质量 / 压缩',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: glassStyle ? Colors.white54 : const Color(0xFF94A3B8),
-                  ),
+                color: glassStyle ? Colors.white54 : const Color(0xFF94A3B8),
+              ),
             ),
             children: [
               const SizedBox(height: 6),
               Text(
                 '编码与质量',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color:
-                          glassStyle ? Colors.white70 : const Color(0xFF64748B),
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: glassStyle ? Colors.white70 : const Color(0xFF64748B),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 6),
               SwitchListTile.adaptive(
@@ -1968,7 +1980,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                     : null,
               ),
               DropdownButtonFormField<VncEncodingPreference>(
-                value: _encodingPreference,
+                initialValue: _encodingPreference,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   isDense: true,
@@ -2005,7 +2017,7 @@ extension _VncSessionUi on _VncSessionScreenState {
               ),
               const SizedBox(height: 8),
               _CalibrationSlider(
-                label: '压缩级别 (${_tightCompressionLevel})',
+                label: '压缩级别 ($_tightCompressionLevel)',
                 value: _tightCompressionLevel.toDouble(),
                 min: 0,
                 max: 9,
@@ -2034,7 +2046,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                 ),
                 if (_tightJpegEnabled)
                   _CalibrationSlider(
-                    label: 'JPEG 质量 (${_tightQualityLevel})',
+                    label: 'JPEG 质量 ($_tightQualityLevel)',
                     value: _tightQualityLevel.toDouble(),
                     min: 0,
                     max: 9,
@@ -2066,8 +2078,9 @@ extension _VncSessionUi on _VncSessionScreenState {
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
-              onPressed:
-                  isInteractive ? () => unawaited(_resetCalibration()) : null,
+              onPressed: isInteractive
+                  ? () => unawaited(_resetCalibration())
+                  : null,
               icon: const Icon(Icons.restart_alt),
               label: const Text('重置校准'),
             ),
@@ -2121,10 +2134,10 @@ extension _VncSessionUi on _VncSessionScreenState {
     required bool enabled,
     bool glassStyle = false,
   }) {
-    final borderColor =
-        glassStyle ? Colors.white.withAlpha(60) : const Color(0xFFE2E8F0);
-    final background =
-        glassStyle ? Colors.white.withAlpha(18) : Colors.white;
+    final borderColor = glassStyle
+        ? Colors.white.withAlpha(60)
+        : const Color(0xFFE2E8F0);
+    final background = glassStyle ? Colors.white.withAlpha(18) : Colors.white;
     final textColor = glassStyle ? Colors.white : const Color(0xFF0F172A);
     return Container(
       height: 40,
@@ -2243,9 +2256,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                             children: [
                               Text(
                                 'Controls',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
+                                style: Theme.of(context).textTheme.titleMedium
                                     ?.copyWith(
                                       fontWeight: FontWeight.w700,
                                       color: Colors.white,
@@ -2256,14 +2267,18 @@ extension _VncSessionUi on _VncSessionScreenState {
                                 TextButton.icon(
                                   onPressed: () => _setFullscreen(false),
                                   icon: const Icon(Icons.fullscreen_exit),
-                                  label: const Text('Exit'),
+                                  label: const Text('Exit fullscreen'),
                                   style: TextButton.styleFrom(
                                     foregroundColor: Colors.white,
                                   ),
                                 ),
                               IconButton(
-                                onPressed: () => Navigator.of(context).maybePop(),
-                                icon: const Icon(Icons.close, color: Colors.white),
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                                icon: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                ),
                                 tooltip: 'Close',
                               ),
                             ],
@@ -2275,14 +2290,15 @@ extension _VncSessionUi on _VncSessionScreenState {
                             children: [
                               _VncControlAction(
                                 icon: Icons.keyboard,
-                                label: 'Keyboard',
-                                onPressed:
-                                    isInteractive ? _showKeyboardInput : null,
+                                label: 'Keyboard input',
+                                onPressed: isInteractive
+                                    ? _showKeyboardInput
+                                    : null,
                                 glassStyle: true,
                               ),
                               _VncControlAction(
                                 icon: Icons.close,
-                                label: 'Esc',
+                                label: 'Send Esc',
                                 onPressed: isInteractive
                                     ? () => _sendKeyPress(0xff1b)
                                     : null,
@@ -2290,7 +2306,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.keyboard_command_key,
-                                label: 'Cmd',
+                                label: 'Send Cmd',
                                 onPressed: isInteractive
                                     ? () => _sendKeyPress(0xffe7)
                                     : null,
@@ -2298,7 +2314,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.keyboard_tab,
-                                label: 'Tab',
+                                label: 'Send Tab',
                                 onPressed: isInteractive
                                     ? () => _sendKeyPress(0xff09)
                                     : null,
@@ -2306,7 +2322,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.keyboard_control_key,
-                                label: 'Ctrl',
+                                label: 'Send Ctrl',
                                 onPressed: isInteractive
                                     ? () => _sendKeyPress(0xffe3)
                                     : null,
@@ -2320,7 +2336,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.monitor,
-                                label: '显示器',
+                                label: 'Switch display',
                                 onPressed: _availableDisplays.length > 1
                                     ? _openDisplayPicker
                                     : null,
@@ -2328,7 +2344,7 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.tune,
-                                label: '校准',
+                                label: 'Input calibration',
                                 onPressed: () => _openCalibrationSheet(
                                   isInteractive: isInteractive,
                                 ),
@@ -2336,9 +2352,8 @@ extension _VncSessionUi on _VncSessionScreenState {
                               ),
                               _VncControlAction(
                                 icon: Icons.restart_alt,
-                                label: '重置校准',
-                                onPressed: () =>
-                                    unawaited(_resetCalibration()),
+                                label: 'Reset calibration',
+                                onPressed: () => unawaited(_resetCalibration()),
                                 glassStyle: true,
                               ),
                             ],
@@ -2424,7 +2439,8 @@ extension _VncSessionUi on _VncSessionScreenState {
                       const SizedBox(height: 12),
                       Text(
                         '输入校准',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: const Color(0xFF0F172A),
                             ),
@@ -2433,8 +2449,8 @@ extension _VncSessionUi on _VncSessionScreenState {
                       Text(
                         '调节缩放与偏移，让触摸板光标与远端光标对齐。',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF64748B),
-                            ),
+                          color: const Color(0xFF64748B),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       FilledButton.icon(
@@ -2542,9 +2558,9 @@ extension _VncSessionUi on _VncSessionScreenState {
                 Text(
                   '选择显示器',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF0F172A),
-                      ),
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF0F172A),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 ..._availableDisplays.map((display) {
@@ -2552,8 +2568,9 @@ extension _VncSessionUi on _VncSessionScreenState {
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(display.label),
-                    trailing:
-                        isSelected ? const Icon(Icons.check) : const SizedBox(),
+                    trailing: isSelected
+                        ? const Icon(Icons.check)
+                        : const SizedBox(),
                     onTap: () async {
                       _updateState(() {
                         _selectedDisplayIndex = display.index;
@@ -2576,5 +2593,4 @@ extension _VncSessionUi on _VncSessionScreenState {
       },
     );
   }
-
 }

@@ -10,6 +10,22 @@ const IDENTITY_FILE: &str = "agent_identity.json";
 const DEVICE_ID_SALT: &str = "vibe-inspect-device";
 const LONG_TOKEN_LEN: usize = 64;
 
+fn validate_long_token_value(token: &str) -> Result<(), std::io::Error> {
+    if token.len() != LONG_TOKEN_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Token must be {LONG_TOKEN_LEN} characters."),
+        ));
+    }
+    if !token.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Token must use only letters and numbers.",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentIdentity {
     pub device_id: String,
@@ -54,9 +70,7 @@ pub fn load_or_create_identity() -> AgentIdentity {
     if let Some(path) = identity_path() {
         if let Ok(contents) = fs::read_to_string(&path) {
             if let Ok(identity) = serde_json::from_str::<AgentIdentity>(&contents) {
-                if !identity.device_id.trim().is_empty()
-                    && !identity.auth_token.trim().is_empty()
-                {
+                if !identity.device_id.trim().is_empty() && !identity.auth_token.trim().is_empty() {
                     let mut hydrated = identity;
                     hydrated.ensure_listen_port();
                     hydrated.ensure_roi_quic_port();
@@ -161,9 +175,7 @@ impl AgentIdentity {
     pub fn find_token_for_client(&self, client_id: &str) -> Option<AuthTokenRecord> {
         self.auth_tokens
             .iter()
-            .find(|record| {
-                record.is_active() && record.client_id.as_deref() == Some(client_id)
-            })
+            .find(|record| record.is_active() && record.client_id.as_deref() == Some(client_id))
             .cloned()
     }
 
@@ -176,6 +188,7 @@ impl AgentIdentity {
         if trimmed.is_empty() {
             return Ok(());
         }
+        validate_long_token_value(&trimmed)?;
         self.auth_token = trimmed.clone();
         self.upsert_token(AuthTokenRecord {
             token: trimmed,
@@ -216,11 +229,7 @@ impl AgentIdentity {
         client_id: Option<String>,
     ) -> Result<AuthTokenRecord, std::io::Error> {
         let mut token = generate_token(LONG_TOKEN_LEN);
-        while self
-            .auth_tokens
-            .iter()
-            .any(|record| record.token == token)
-        {
+        while self.auth_tokens.iter().any(|record| record.token == token) {
             token = generate_token(LONG_TOKEN_LEN);
         }
         let record = AuthTokenRecord {
@@ -251,6 +260,7 @@ impl AgentIdentity {
                 client_id: None,
             });
         }
+        validate_long_token_value(&trimmed)?;
         if let Some(existing) = self
             .auth_tokens
             .iter()
@@ -279,11 +289,7 @@ impl AgentIdentity {
         {
             return save_identity(self);
         }
-        if let Some(next) = self
-            .auth_tokens
-            .iter()
-            .find(|record| record.is_active())
-        {
+        if let Some(next) = self.auth_tokens.iter().find(|record| record.is_active()) {
             self.auth_token = next.token.clone();
         } else {
             self.auth_token = generate_token(LONG_TOKEN_LEN);
@@ -298,16 +304,11 @@ impl AgentIdentity {
         save_identity(self)
     }
 
-    pub fn revoke_tokens_for_client(
-        &mut self,
-        client_id: &str,
-    ) -> Result<usize, std::io::Error> {
+    pub fn revoke_tokens_for_client(&mut self, client_id: &str) -> Result<usize, std::io::Error> {
         let now = now_ts();
         let mut revoked = 0;
         for record in &mut self.auth_tokens {
-            if record.revoked_at.is_none()
-                && record.client_id.as_deref() == Some(client_id)
-            {
+            if record.revoked_at.is_none() && record.client_id.as_deref() == Some(client_id) {
                 record.revoked_at = Some(now);
                 revoked += 1;
             }
@@ -323,11 +324,7 @@ impl AgentIdentity {
             save_identity(self)?;
             return Ok(revoked);
         }
-        if let Some(next) = self
-            .auth_tokens
-            .iter()
-            .find(|record| record.is_active())
-        {
+        if let Some(next) = self.auth_tokens.iter().find(|record| record.is_active()) {
             self.auth_token = next.token.clone();
             save_identity(self)?;
             return Ok(revoked);
@@ -344,10 +341,7 @@ impl AgentIdentity {
         Ok(revoked)
     }
 
-    pub fn token_for_client(
-        &mut self,
-        client_id: &str,
-    ) -> Result<AuthTokenRecord, std::io::Error> {
+    pub fn token_for_client(&mut self, client_id: &str) -> Result<AuthTokenRecord, std::io::Error> {
         if let Some(record) = self
             .auth_tokens
             .iter()
@@ -558,9 +552,7 @@ fn read_linux_machine_id() -> Option<String> {
 #[cfg(target_os = "windows")]
 fn read_windows_machine_guid() -> Option<String> {
     use std::ptr::null_mut;
-    use windows_sys::Win32::System::Registry::{
-        RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ,
-    };
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 
     let subkey = to_wide("SOFTWARE\\Microsoft\\Cryptography");
     let value = to_wide("MachineGuid");

@@ -145,7 +145,6 @@ class VncRfbClient {
   int _greenShift = 8;
   int _blueShift = 0;
   int _cpixelSize = 3;
-  bool _cpixel24A = true;
   ui.PixelFormat _format = ui.PixelFormat.bgra8888;
   Uint8List _framebuffer = Uint8List(0);
   List<int> _preferredEncodings = const [];
@@ -1370,7 +1369,6 @@ class VncRfbClient {
     _greenShift = greenShift;
     _blueShift = blueShift;
     _cpixelSize = _bytesPerPixel;
-    _cpixel24A = false;
     if (_trueColour && bitsPerPixel == 32 && _depth <= 24) {
       final rgbLower =
           ((_redMax << _redShift) < (1 << 24)) &&
@@ -1380,7 +1378,6 @@ class VncRfbClient {
           _redShift > 7 && _greenShift > 7 && _blueShift > 7;
       if (rgbLower || rgbUpper) {
         _cpixelSize = 3;
-        _cpixel24A = (rgbLower && !_bigEndian) || (rgbUpper && _bigEndian);
       }
     }
     _format = ui.PixelFormat.bgra8888;
@@ -1523,7 +1520,7 @@ class _ByteQueue {
       _compact();
     }
     if (_end + data.length > _buffer.length) {
-      var newLength = _buffer.length == 0 ? 1024 : _buffer.length;
+      var newLength = _buffer.isEmpty ? 1024 : _buffer.length;
       while (newLength < required) {
         newLength = newLength < 1024 ? 1024 : newLength * 2;
       }

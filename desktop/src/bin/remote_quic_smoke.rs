@@ -2,9 +2,7 @@ use clap::Parser;
 use hbb_common::rendezvous_proto::ConnType;
 use hbb_common::tcp::FramedStream;
 use hbb_common::Stream as RustDeskStream;
-use librustdesk::{
-    set_preconnected_stream, Data, InvokeUiSession, QualityStatus, Remote, Session,
-};
+use librustdesk::{set_preconnected_stream, Data, InvokeUiSession, QualityStatus, Remote, Session};
 use quinn::{ClientConfig, Endpoint};
 use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -26,7 +24,10 @@ use hbb_common::tokio::sync::mpsc;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Parser, Debug)]
-#[command(name = "remote-quic-smoke", about = "Remote QUIC smoke test with RustDesk client")]
+#[command(
+    name = "remote-quic-smoke",
+    about = "Remote QUIC smoke test with RustDesk client"
+)]
 struct Args {
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
@@ -127,12 +128,7 @@ impl TestUi {
     fn send_login(&self, password: String) {
         if let Ok(lock) = self.sender.lock() {
             if let Some(sender) = lock.as_ref() {
-                let _ = sender.send(Data::Login((
-                    String::new(),
-                    String::new(),
-                    password,
-                    true,
-                )));
+                let _ = sender.send(Data::Login((String::new(), String::new(), password, true)));
             }
         }
     }
@@ -176,15 +172,7 @@ impl InvokeUiSession for TestUi {
     fn set_cursor_data(&self, _cd: CursorData) {}
     fn set_cursor_id(&self, _id: String) {}
     fn set_cursor_position(&self, _cp: CursorPosition) {}
-    fn set_display(
-        &self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        _cursor_embedded: bool,
-        scale: f64,
-    ) {
+    fn set_display(&self, x: i32, y: i32, w: i32, h: i32, _cursor_embedded: bool, scale: f64) {
         println!("set_display: x={x} y={y} w={w} h={h} scale={scale}");
     }
     fn switch_display(&self, _display: &SwitchDisplay) {}
@@ -335,10 +323,9 @@ impl tokio::io::AsyncWrite for QuicBiStream {
                 }
                 std::task::Poll::Ready(Ok(size))
             }
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -349,10 +336,9 @@ impl tokio::io::AsyncWrite for QuicBiStream {
     ) -> std::task::Poll<std::io::Result<()>> {
         match std::pin::Pin::new(&mut self.send).poll_flush(cx) {
             std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -363,10 +349,9 @@ impl tokio::io::AsyncWrite for QuicBiStream {
     ) -> std::task::Poll<std::io::Result<()>> {
         match std::pin::Pin::new(&mut self.send).poll_shutdown(cx) {
             std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(())),
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                error,
-            ))),
+            std::task::Poll::Ready(Err(error)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, error)))
+            }
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -437,13 +422,12 @@ fn build_insecure_client_config() -> Result<ClientConfig, String> {
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
     let mut config = ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .map_err(|err| err.to_string())?,
+        quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|err| err.to_string())?,
     ));
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
-    let idle_timeout = quinn::IdleTimeout::try_from(Duration::from_secs(20))
-        .map_err(|e| e.to_string())?;
+    let idle_timeout =
+        quinn::IdleTimeout::try_from(Duration::from_secs(20)).map_err(|e| e.to_string())?;
     transport.max_idle_timeout(Some(idle_timeout));
     transport.max_concurrent_bidi_streams(100u32.into());
     config.transport_config(Arc::new(transport));
@@ -589,13 +573,21 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_id = remote_payload
         .get("session_id")
         .and_then(|v| v.as_str())
-        .or_else(|| session_info.and_then(|info| info.get("session_id")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            session_info
+                .and_then(|info| info.get("session_id"))
+                .and_then(|v| v.as_str())
+        })
         .ok_or("missing session_id")?
         .to_string();
     let token = remote_payload
         .get("token")
         .and_then(|v| v.as_str())
-        .or_else(|| session_info.and_then(|info| info.get("token")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            session_info
+                .and_then(|info| info.get("token"))
+                .and_then(|v| v.as_str())
+        })
         .ok_or("missing token")?
         .to_string();
     let connect_uri = session_info
@@ -643,7 +635,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if ready.status != "ready" {
             return Err(format!("remote not ready: {:?}", ready).into());
         }
-        println!("remote ready: status={} data_stream={}", ready.status, ready.data_stream);
+        println!(
+            "remote ready: status={} data_stream={}",
+            ready.status, ready.data_stream
+        );
 
         let ready_at = Instant::now();
         if let Ok(mut lock) = stats_clone.lock() {

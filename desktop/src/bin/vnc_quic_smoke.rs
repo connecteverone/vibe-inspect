@@ -6,8 +6,8 @@ use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
 use std::time::Instant;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Parser, Debug)]
 #[command(name = "vnc-quic-smoke", about = "VNC QUIC handshake smoke test")]
@@ -101,8 +101,7 @@ fn build_insecure_client_config() -> Result<ClientConfig, String> {
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
     let mut config = ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .map_err(|err| err.to_string())?,
+        quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|err| err.to_string())?,
     ));
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -136,7 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "client_name": "vnc-quic-smoke",
     });
     let hello_bytes = serde_json::to_vec(&hello)?;
-    send.write_all(&(hello_bytes.len() as u32).to_be_bytes()).await?;
+    send.write_all(&(hello_bytes.len() as u32).to_be_bytes())
+        .await?;
     send.write_all(&hello_bytes).await?;
     send.flush().await?;
 

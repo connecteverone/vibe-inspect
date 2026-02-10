@@ -7,11 +7,12 @@ mod cursor_macos;
 mod identity;
 mod pairing;
 mod quic;
-mod remote_media;
 mod remote_engine;
+mod remote_media;
 mod roi;
 mod server;
 mod terminal;
+pub mod terminald_launcher;
 mod vnc;
 
 pub use pairing::PairingState;

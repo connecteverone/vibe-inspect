@@ -1,0 +1,38 @@
+[
+  {
+    "name": "utf8_ansi_clear",
+    "script": "python3 - <<'PY'\nimport sys\ne='\\x1b'\nfor i in range(1, 8):\n    sys.stdout.write(f\"{e}[2J{e}[HFRAME-{i:02d} ✅ UTF8 中文 😀 {e}[31mRED{i:02d}{e}[0m\\n\")\nsys.stdout.flush()\nPY\n",
+    "markers": [
+      "\u001b[2J\u001b[H",
+      "FRAME-07",
+      "✅ UTF8 中文 😀",
+      "RED07"
+    ]
+  },
+  {
+    "name": "osc8_truecolor_alt_screen",
+    "script": "python3 - <<'PY'\nimport sys\ne='\\x1b'\nsys.stdout.write(f\"{e}[38;2;1;200;120mTRUECOLOR_OK{e}[0m\\n\")\nsys.stdout.write(f\"{e}]8;;https://example.com{e}\\\\OSC8_LINK{e}]8;;{e}\\\\\\n\")\nsys.stdout.write(f\"{e}[?1049hALT_SCREEN_ON\\n\")\nfor i in range(1, 11):\n    sys.stdout.write(f\"{e}[2J{e}[Halt-frame-{i:02d}\\n\")\nsys.stdout.write(f\"{e}[?1049lALT_SCREEN_OFF\\n\")\nsys.stdout.flush()\nPY\n",
+    "markers": [
+      "TRUECOLOR_OK",
+      "\u001b]8;;https://example.com",
+      "\u001b[?1049h",
+      "alt-frame-10",
+      "\u001b[?1049l",
+      "ALT_SCREEN_OFF"
+    ]
+  },
+  {
+    "name": "csi_and_bracketed_paste",
+    "script": "python3 - <<'PY'\nimport sys\ne='\\x1b'\nsys.stdout.write(f\"{e}[sCURSOR_SAVE{e}[uCURSOR_RESTORE\\n\")\nsys.stdout.write(f\"{e}[2;5rSCROLL_REGION_SET\\n{e}[rSCROLL_REGION_RESET\\n\")\nsys.stdout.write(f\"{e}[LINSERT_LINE{e}[MDELETE_LINE\\n\")\nsys.stdout.write(f\"{e}[?2004hBRACKET_MODE_ON\\n{e}[200~PASTED_PAYLOAD{e}[201~\\n{e}[?2004lBRACKET_MODE_OFF\\n\")\nsys.stdout.write(\"CSI_PHASE2_DONE\\n\")\nsys.stdout.flush()\nPY\n",
+    "markers": [
+      "\u001b[sCURSOR_SAVE\u001b[uCURSOR_RESTORE",
+      "\u001b[2;5r",
+      "\u001b[rSCROLL_REGION_RESET",
+      "\u001b[LINSERT_LINE\u001b[MDELETE_LINE",
+      "\u001b[?2004h",
+      "\u001b[200~PASTED_PAYLOAD\u001b[201~",
+      "\u001b[?2004l",
+      "CSI_PHASE2_DONE"
+    ]
+  }
+]

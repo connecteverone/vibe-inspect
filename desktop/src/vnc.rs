@@ -1,24 +1,23 @@
 use axum::extract::ws::{Message, WebSocket};
-use enigo::{Enigo, KeyboardControllable, Key, MouseButton, MouseControllable};
+use enigo::{Enigo, Key, KeyboardControllable, MouseButton, MouseControllable};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use futures_util::{SinkExt, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, WriteError};
 use rand::{distributions::Alphanumeric, Rng};
-use rfb_encodings::{PixelFormat, zrle::encode_zrle};
+use rfb_encodings::{zrle::encode_zrle, PixelFormat};
 use scrap::{Capturer, Display, Frame, TraitCapturer, TraitPixelBuffer};
 use std::collections::HashMap;
+use std::env;
 use std::io::{ErrorKind, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::env;
 use tokio::sync::mpsc::error::TrySendError;
 
 #[cfg(target_os = "macos")]
 use crate::cursor_macos::{capture_cursor, cursor_changed, SystemCursor};
-
 
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 const VNC_NAME: &str = "Vibe Inspect Agent";
@@ -56,9 +55,7 @@ static LAST_TIMING_LOG: AtomicU64 = AtomicU64::new(0);
 
 fn capture_debug_enabled() -> bool {
     matches!(
-        env::var("VNC_CAPTURE_DEBUG")
-            .ok()
-            .as_deref(),
+        env::var("VNC_CAPTURE_DEBUG").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
     )
 }
@@ -68,9 +65,7 @@ fn vnc_debug_enabled() -> bool {
         return true;
     }
     matches!(
-        env::var("VNC_DEBUG")
-            .ok()
-            .as_deref(),
+        env::var("VNC_DEBUG").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
     )
 }
@@ -80,9 +75,7 @@ fn cursor_trace_enabled() -> bool {
         return true;
     }
     matches!(
-        env::var("VNC_CURSOR_TRACE")
-            .ok()
-            .as_deref(),
+        env::var("VNC_CURSOR_TRACE").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
     )
 }
@@ -104,9 +97,7 @@ fn quic_trace_enabled() -> bool {
         return true;
     }
     matches!(
-        env::var("VNC_QUIC_TRACE")
-            .ok()
-            .as_deref(),
+        env::var("VNC_QUIC_TRACE").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
     )
 }
@@ -125,13 +116,11 @@ fn quic_log_throttled(message: &str) {
 }
 
 fn timing_trace_interval_ms() -> Option<u64> {
-    *TIMING_TRACE_INTERVAL_MS.get_or_init(|| {
-        match env::var("VNC_TIMING_TRACE").ok().as_deref() {
-            Some("1") | Some("true") | Some("TRUE") => Some(0),
-            Some("0") | Some("false") | Some("FALSE") => None,
-            Some(value) => value.parse::<u64>().ok(),
-            None => None,
-        }
+    *TIMING_TRACE_INTERVAL_MS.get_or_init(|| match env::var("VNC_TIMING_TRACE").ok().as_deref() {
+        Some("1") | Some("true") | Some("TRUE") => Some(0),
+        Some("0") | Some("false") | Some("FALSE") => None,
+        Some(value) => value.parse::<u64>().ok(),
+        None => None,
     })
 }
 
@@ -360,7 +349,6 @@ struct Rect {
     height: u16,
 }
 
-
 pub struct VncManager {
     sessions: HashMap<String, VncSession>,
     guards: HashMap<String, Arc<AtomicU64>>,
@@ -394,14 +382,9 @@ impl VncManager {
             input_scale_x,
             input_scale_y,
         ) = resolve_input_dimensions(screen_width, screen_height, Some(display_index));
-        let (target_width, target_height) = resolve_target_dimensions(
-            screen_width,
-            screen_height,
-            width,
-            height,
-        );
-        let high_perf_interval_ms =
-            resolve_high_perf_interval_ms(high_perf_interval_ms);
+        let (target_width, target_height) =
+            resolve_target_dimensions(screen_width, screen_height, width, height);
+        let high_perf_interval_ms = resolve_high_perf_interval_ms(high_perf_interval_ms);
         let token = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(24)
@@ -457,9 +440,13 @@ impl VncManager {
     }
 
     fn get_session(&self, session_id: &str, token: &str) -> Option<VncSession> {
-        self.sessions
-            .get(session_id)
-            .and_then(|session| if session.token == token { Some(session.clone()) } else { None })
+        self.sessions.get(session_id).and_then(|session| {
+            if session.token == token {
+                Some(session.clone())
+            } else {
+                None
+            }
+        })
     }
 
     pub(crate) fn session_exists(&self, session_id: &str, token: &str) -> bool {
@@ -482,8 +469,7 @@ fn preflight_capture_access() -> Result<(), String> {
 }
 
 pub fn list_displays() -> Result<Vec<VncDisplayInfo>, String> {
-    let displays = Display::all()
-        .map_err(|error| format!("Unable to list displays: {error}"))?;
+    let displays = Display::all().map_err(|error| format!("Unable to list displays: {error}"))?;
     let mut result = Vec::with_capacity(displays.len());
     for (index, display) in displays.into_iter().enumerate() {
         result.push(VncDisplayInfo {
@@ -498,16 +484,16 @@ pub fn list_displays() -> Result<Vec<VncDisplayInfo>, String> {
 
 fn resolve_display(display_index: Option<usize>) -> Result<(Display, usize), String> {
     if let Some(index) = display_index {
-        let mut displays = Display::all()
-            .map_err(|error| format!("Unable to list displays: {error}"))?;
+        let mut displays =
+            Display::all().map_err(|error| format!("Unable to list displays: {error}"))?;
         if index >= displays.len() {
             return Err(format!("Display index {index} is out of range."));
         }
         let display = displays.swap_remove(index);
         return Ok((display, index));
     }
-    let display = Display::primary()
-        .map_err(|error| format!("Unable to access primary display: {error}"))?;
+    let display =
+        Display::primary().map_err(|error| format!("Unable to access primary display: {error}"))?;
     Ok((display, 0))
 }
 
@@ -555,9 +541,7 @@ pub async fn serve_vnc_socket(
 
     let Some(session) = session else {
         let mut socket = socket;
-        let _ = socket
-            .send(Message::Close(None))
-            .await;
+        let _ = socket.send(Message::Close(None)).await;
         return;
     };
 
@@ -662,8 +646,12 @@ async fn run_vnc_session(socket: WebSocket, session: VncSession) -> Result<(), S
         high_perf_enabled.clone(),
         frame_tx,
     );
-    let _input_handle =
-        spawn_input_thread(session.clone(), running.clone(), session.guard.clone(), input_rx);
+    let _input_handle = spawn_input_thread(
+        session.clone(),
+        running.clone(),
+        session.guard.clone(),
+        input_rx,
+    );
     let mut encoding_prefs = EncodingPreferences {
         encoding: ENCODING_ZLIB,
         tight_compression: 6,
@@ -883,8 +871,12 @@ async fn run_vnc_session_quic(
         high_perf_enabled.clone(),
         frame_tx,
     );
-    let _input_handle =
-        spawn_input_thread(session.clone(), running.clone(), session.guard.clone(), input_rx);
+    let _input_handle = spawn_input_thread(
+        session.clone(),
+        running.clone(),
+        session.guard.clone(),
+        input_rx,
+    );
     let mut encoding_prefs = EncodingPreferences {
         encoding: ENCODING_ZLIB,
         tight_compression: 6,
@@ -999,17 +991,12 @@ async fn run_vnc_session_quic(
             if dropped > 0 {
                 quic_log_throttled(&format!(
                     "vnc quic send: bytes={} encode_ms={} send_ms={} dropped={}",
-                    message_len,
-                    encode_ms,
-                    send_ms,
-                    dropped
+                    message_len, encode_ms, send_ms, dropped
                 ));
             } else {
                 quic_log_throttled(&format!(
                     "vnc quic send: bytes={} encode_ms={} send_ms={}",
-                    message_len,
-                    encode_ms,
-                    send_ms
+                    message_len, encode_ms, send_ms
                 ));
             }
         }
@@ -1267,10 +1254,7 @@ fn capture_frame(
                     } else {
                         capture_log_throttled(&format!(
                             "vnc capture drop: frame_len={} capture={}x{} stride={}",
-                            frame_len,
-                            capture_width,
-                            capture_height,
-                            stride
+                            frame_len, capture_width, capture_height, stride
                         ));
                         return None;
                     }
@@ -1324,7 +1308,10 @@ fn resolve_frame_intervals() -> (Duration, Duration) {
     let idle_ms = idle_env
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_IDLE_FRAME_RATE_MS);
-    (Duration::from_millis(active_ms), Duration::from_millis(idle_ms))
+    (
+        Duration::from_millis(active_ms),
+        Duration::from_millis(idle_ms),
+    )
 }
 
 fn resolve_keepalive_interval() -> Duration {
@@ -1395,8 +1382,7 @@ fn extract_frame(frame: &[u8], stride: usize, width: usize, height: usize) -> Op
             return None;
         }
         let dst_start = y * width * 4;
-        data[dst_start..dst_start + width * 4]
-            .copy_from_slice(&frame[src_start..src_end]);
+        data[dst_start..dst_start + width * 4].copy_from_slice(&frame[src_start..src_end]);
     }
     Some(data)
 }
@@ -1419,8 +1405,7 @@ fn scale_bgra(
             let src_x = x * src_width / dst_width;
             let src_index = (src_y * src_width + src_x) * 4;
             let dst_index = (y * dst_width + x) * 4;
-            output[dst_index..dst_index + 4]
-                .copy_from_slice(&source[src_index..src_index + 4]);
+            output[dst_index..dst_index + 4].copy_from_slice(&source[src_index..src_index + 4]);
         }
     }
     Some(output)
@@ -1644,8 +1629,7 @@ fn extract_rect(data: &[u8], full_width: usize, rect: Rect) -> Vec<u8> {
     let src_stride = full_width * bytes_per_pixel;
     let dst_stride = rect_width * bytes_per_pixel;
     for row in 0..rect_height {
-        let src_start =
-            (rect.y as usize + row) * src_stride + rect.x as usize * bytes_per_pixel;
+        let src_start = (rect.y as usize + row) * src_stride + rect.x as usize * bytes_per_pixel;
         let dst_start = row * dst_stride;
         output[dst_start..dst_start + dst_stride]
             .copy_from_slice(&data[src_start..src_start + dst_stride]);
@@ -1698,12 +1682,7 @@ fn bgra_to_rgb(data: &[u8]) -> Vec<u8> {
     rgb
 }
 
-fn encode_jpeg_rgb(
-    rgb: &[u8],
-    width: u16,
-    height: u16,
-    quality: u8,
-) -> Result<Vec<u8>, String> {
+fn encode_jpeg_rgb(rgb: &[u8], width: u16, height: u16, quality: u8) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
     let mapped_quality = (10 + (quality.min(9) as u16) * 9).min(100) as u8;
     let encoder = jpeg_encoder::Encoder::new(&mut output, mapped_quality);
@@ -1791,12 +1770,7 @@ fn row_signature(data: &[u8], width: usize, y: usize) -> u64 {
             i * (width - 1) / (sample_count - 1)
         };
         let idx = base + x * 4;
-        let pixel = u32::from_le_bytes([
-            data[idx],
-            data[idx + 1],
-            data[idx + 2],
-            data[idx + 3],
-        ]);
+        let pixel = u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]);
         hash ^= pixel as u64;
         hash = hash.wrapping_mul(1099511628211);
     }
@@ -1876,8 +1850,7 @@ fn parse_encoding_preferences(encodings: &[i32]) -> EncodingPreferences {
             tight_compression = (*encoding - ENCODING_COMPRESS_LEVEL_BASE) as u8;
             continue;
         }
-        if *encoding >= ENCODING_QUALITY_LEVEL_BASE
-            && *encoding <= ENCODING_QUALITY_LEVEL_BASE + 9
+        if *encoding >= ENCODING_QUALITY_LEVEL_BASE && *encoding <= ENCODING_QUALITY_LEVEL_BASE + 9
         {
             tight_quality = Some((*encoding - ENCODING_QUALITY_LEVEL_BASE) as u8);
         }
@@ -1897,7 +1870,9 @@ fn parse_encoding_preferences(encodings: &[i32]) -> EncodingPreferences {
 }
 
 fn parse_data_saver(encodings: &[i32]) -> bool {
-    encodings.iter().any(|encoding| *encoding == ENCODING_DATA_SAVER)
+    encodings
+        .iter()
+        .any(|encoding| *encoding == ENCODING_DATA_SAVER)
 }
 
 fn parse_high_perf(encodings: &[i32]) -> bool {
@@ -1970,14 +1945,8 @@ fn build_framebuffer_update(
                     ENCODING_ZRLE => {
                         let compression = if is_large { FAST_ZRLE_COMPRESSION } else { 6 };
                         let pf = zrle_pixel_format();
-                        let encoded = encode_zrle(
-                            data,
-                            rect.width,
-                            rect.height,
-                            &pf,
-                            compression,
-                        )
-                        .map_err(|error| format!("Failed to encode ZRLE: {error}"))?;
+                        let encoded = encode_zrle(data, rect.width, rect.height, &pf, compression)
+                            .map_err(|error| format!("Failed to encode ZRLE: {error}"))?;
                         buffer.extend_from_slice(&encoded);
                     }
                     ENCODING_TIGHT => {
@@ -2091,7 +2060,14 @@ fn resolve_input_dimensions(
         let height = ((input_height as f64) / scale_env_y).round().max(1.0) as u32;
         return (width, height, origin_x, origin_y, scale_x, scale_y);
     }
-    (input_width, input_height, origin_x, origin_y, scale_x, scale_y)
+    (
+        input_width,
+        input_height,
+        origin_x,
+        origin_y,
+        scale_x,
+        scale_y,
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -2327,9 +2303,7 @@ fn spawn_capture_thread(
         let mut send_backoff = Duration::from_millis(0);
         let mut frame_id: u64 = 0;
         loop {
-            if !running.load(Ordering::SeqCst)
-                || guard.load(Ordering::SeqCst) != generation
-            {
+            if !running.load(Ordering::SeqCst) || guard.load(Ordering::SeqCst) != generation {
                 break;
             }
             if !ready.load(Ordering::SeqCst) {
@@ -2341,8 +2315,7 @@ fn spawn_capture_thread(
                 send_backoff = Duration::from_millis(0);
                 continue;
             }
-            let input_age = current_millis()
-                .saturating_sub(last_input_at.load(Ordering::Relaxed));
+            let input_age = current_millis().saturating_sub(last_input_at.load(Ordering::Relaxed));
             let high_perf = high_perf_enabled.load(Ordering::Relaxed);
             let frame_interval = if high_perf {
                 high_perf_interval.min(active_interval)
@@ -2530,9 +2503,7 @@ fn spawn_input_thread(
     thread::spawn(move || {
         let mut enigo = Enigo::new();
         let mut last_buttons = 0u8;
-        while running.load(Ordering::SeqCst)
-            && guard.load(Ordering::SeqCst) == session.generation
-        {
+        while running.load(Ordering::SeqCst) && guard.load(Ordering::SeqCst) == session.generation {
             match receiver.recv_timeout(Duration::from_millis(120)) {
                 Ok(InputEvent::Pointer { mask, x, y }) => {
                     handle_pointer_event(&mut enigo, &session, &mut last_buttons, mask, x, y);
@@ -2549,8 +2520,12 @@ fn spawn_input_thread(
 
 #[derive(Debug)]
 enum ClientMessage {
-    SetPixelFormat { format: PixelFormatSpec },
-    SetEncodings { encodings: Vec<i32> },
+    SetPixelFormat {
+        format: PixelFormatSpec,
+    },
+    SetEncodings {
+        encodings: Vec<i32>,
+    },
     FramebufferUpdateRequest {
         incremental: bool,
         x: u16,
@@ -2558,8 +2533,15 @@ enum ClientMessage {
         width: u16,
         height: u16,
     },
-    KeyEvent { down: bool, keysym: u32 },
-    PointerEvent { mask: u8, x: u16, y: u16 },
+    KeyEvent {
+        down: bool,
+        keysym: u32,
+    },
+    PointerEvent {
+        mask: u8,
+        x: u16,
+        y: u16,
+    },
     ClientCutText,
 }
 
@@ -2719,7 +2701,6 @@ fn handle_pointer_event(
 
     *last_buttons = mask;
 }
-
 
 fn handle_button(
     enigo: &mut Enigo,

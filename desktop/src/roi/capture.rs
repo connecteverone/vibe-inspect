@@ -31,11 +31,8 @@ impl RoiCapturer {
         };
         let capturer = Capturer::new(display)
             .map_err(|error| format!("Unable to capture display: {error}"))?;
-        let (capture_width, capture_height) = resolve_capture_dimensions(
-            display_index.unwrap_or(0),
-            fallback_width,
-            fallback_height,
-        );
+        let (capture_width, capture_height) =
+            resolve_capture_dimensions(display_index.unwrap_or(0), fallback_width, fallback_height);
         Ok(Self {
             capturer,
             capture_width: capture_width as usize,
@@ -93,7 +90,11 @@ impl RoiCapturer {
                         return None;
                     }
                     let data = extract_frame(frame_bytes, stride, width, height)?;
-                    Some(RoiFrame { data, width, height })
+                    Some(RoiFrame {
+                        data,
+                        width,
+                        height,
+                    })
                 }
                 Frame::Texture(_) => None,
             },
@@ -107,15 +108,14 @@ static CAPTURE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn resolve_display(display_index: Option<usize>) -> Result<Display, String> {
     if let Some(index) = display_index {
-        let mut displays = Display::all()
-            .map_err(|error| format!("Unable to list displays: {error}"))?;
+        let mut displays =
+            Display::all().map_err(|error| format!("Unable to list displays: {error}"))?;
         if index >= displays.len() {
             return Err(format!("Display index {index} is out of range."));
         }
         return Ok(displays.swap_remove(index));
     }
-    Display::primary()
-        .map_err(|error| format!("Unable to access primary display: {error}"))
+    Display::primary().map_err(|error| format!("Unable to access primary display: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -192,8 +192,7 @@ fn extract_frame(frame: &[u8], stride: usize, width: usize, height: usize) -> Op
             return None;
         }
         let dst_start = y * width * 4;
-        data[dst_start..dst_start + width * 4]
-            .copy_from_slice(&frame[src_start..src_end]);
+        data[dst_start..dst_start + width * 4].copy_from_slice(&frame[src_start..src_end]);
     }
     Some(data)
 }

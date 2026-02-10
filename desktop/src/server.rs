@@ -13,22 +13,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::auth::{
+    ensure_auth_not_blocked, ensure_client_allowed, record_auth_failure, record_auth_success,
+    record_client_activity, track_client_connection, validate_auth_token, validate_ws_ticket,
+    AuthError,
+};
 use crate::command::{AgentCommandRequest, AgentCommandResponse, AgentCommandStatus};
 use crate::pairing::{
-    confirm_pairing_with_state, current_local_ips, current_local_urls, current_wifi_ssid,
-    PairingError, PairingState,
+    build_transport_endpoints, confirm_pairing_with_state, current_local_ips, current_local_urls,
+    current_wifi_ssid, PairingError, PairingState,
 };
+use crate::quic::{start_quic_server, QuicServerConfig, QuicServerHandle};
+use crate::remote_engine::rustdesk::RustDeskBackend;
+use crate::remote_engine::service::RemoteSessionService;
+use crate::remote_engine::{RemoteManager, RemoteStartRequest};
+use crate::roi::{RoiErrorCode, RoiManager, RoiSessionRequest};
 use crate::terminal::serve_terminal_socket;
 use crate::vnc::{serve_vnc_socket, VncManager};
-use crate::auth::{
-    ensure_auth_not_blocked, ensure_client_allowed, record_client_activity,
-    track_client_connection, validate_auth_token, AuthError,
-};
-use crate::roi::{RoiErrorCode, RoiManager, RoiSessionRequest};
-use crate::remote_engine::{RemoteManager, RemoteStartRequest};
-use crate::remote_engine::service::RemoteSessionService;
-use crate::remote_engine::rustdesk::RustDeskBackend;
-use crate::quic::{start_quic_server, QuicServerConfig, QuicServerHandle};
 
 pub struct LocalServerHandle {
     pub port: u16,
@@ -143,8 +144,8 @@ pub fn start_local_server(
                 )
                 .with_state(server_state);
 
-            let listener = tokio::net::TcpListener::from_std(listener)
-                .expect("local server listener");
+            let listener =
+                tokio::net::TcpListener::from_std(listener).expect("local server listener");
             let server = axum::serve(listener, app).with_graceful_shutdown(async {
                 let _ = shutdown_rx.await;
             });
@@ -199,32 +200,40 @@ async fn handle_command(
     };
 
     if request.command == "identity" {
-                let identity = match state.pairing.lock() {
-                    Ok(pairing_guard) => {
-                        let local_urls = current_local_urls(&pairing_guard);
-                        let local_ips = current_local_ips();
-                        let wifi_ssid = current_wifi_ssid();
-                        let frp_url = pairing_guard.frp_url();
-                        let roi_quic_port = state
-                            .roi
-                            .lock()
-                            .map(|guard| guard.quic_port())
-                            .unwrap_or_else(|poison| poison.into_inner().quic_port());
-                        let remote_caps = state.remote.capabilities();
-                        json!({
-                            "type": "identity",
-                            "device_id": pairing_guard.device_id(),
-                            "host_name": pairing_guard.host_name(),
-                            "auth_token": pairing_guard.auth_token(),
-                            "wifi_ssid": wifi_ssid,
-                            "local_ips": local_ips,
-                            "local_urls": local_urls,
-                            "frp_url": frp_url,
-                            "roi_quic_port": roi_quic_port,
-                            "listen_port": pairing_guard.listen_port(),
-                            "remote_capabilities": remote_caps,
-                        })
-                    }
+        let identity = match state.pairing.lock() {
+            Ok(pairing_guard) => {
+                let local_urls = current_local_urls(&pairing_guard);
+                let local_ips = current_local_ips();
+                let wifi_ssid = current_wifi_ssid();
+                let frp_url = pairing_guard.frp_url();
+                let tunnel_url = pairing_guard.tunnel_url();
+                let transports = build_transport_endpoints(
+                    &local_urls,
+                    frp_url.as_deref(),
+                    tunnel_url.as_deref(),
+                );
+                let roi_quic_port = state
+                    .roi
+                    .lock()
+                    .map(|guard| guard.quic_port())
+                    .unwrap_or_else(|poison| poison.into_inner().quic_port());
+                let remote_caps = state.remote.capabilities();
+                json!({
+                    "type": "identity",
+                    "device_id": pairing_guard.device_id(),
+                    "host_name": pairing_guard.host_name(),
+                    "auth_token": pairing_guard.auth_token(),
+                    "wifi_ssid": wifi_ssid,
+                    "local_ips": local_ips,
+                    "local_urls": local_urls,
+                    "frp_url": frp_url,
+                    "transports": transports,
+                    "tunnel_url": tunnel_url,
+                    "roi_quic_port": roi_quic_port,
+                    "listen_port": pairing_guard.listen_port(),
+                    "remote_capabilities": remote_caps,
+                })
+            }
             Err(_) => json!({
                 "type": "identity",
                 "device_id": "",
@@ -234,6 +243,8 @@ async fn handle_command(
                 "local_ips": [],
                 "local_urls": [],
                 "frp_url": null,
+                "transports": [],
+                "tunnel_url": null,
             }),
         };
         let response = AgentCommandResponse {
@@ -241,6 +252,91 @@ async fn handle_command(
             status: AgentCommandStatus::Ok,
             payload: Some(identity),
             error: None,
+        };
+        return (StatusCode::OK, Json(json!(response)));
+    }
+
+    if request.command == "ws_ticket" {
+        let payload = request.payload.clone().unwrap_or_else(|| json!({}));
+        let ticket_request = match serde_json::from_value::<WsTicketCommandPayload>(payload) {
+            Ok(value) => value,
+            Err(error) => {
+                let response = AgentCommandResponse {
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Error,
+                    payload: None,
+                    error: Some(crate::command::AgentCommandError {
+                        code: "invalid_payload".to_string(),
+                        message: format!("Invalid payload for ws_ticket command: {error}"),
+                        details: Some(json!({ "command": "ws_ticket" })),
+                    }),
+                };
+                return (StatusCode::BAD_REQUEST, Json(json!(response)));
+            }
+        };
+        let scope = ticket_request
+            .scope
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("terminal_ws")
+            .to_string();
+        let requested_session = ticket_request
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
+        if matches!(scope.as_str(), "terminal_ws" | "vnc_ws") && requested_session.is_none() {
+            let response = AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: "invalid_payload".to_string(),
+                    message: "session_id is required for session websocket scope.".to_string(),
+                    details: Some(json!({ "command": "ws_ticket", "scope": scope })),
+                }),
+            };
+            return (StatusCode::BAD_REQUEST, Json(json!(response)));
+        }
+
+        let issue_result = match state.pairing.lock() {
+            Ok(mut pairing_guard) => pairing_guard.issue_ws_ticket(
+                scope.as_str(),
+                requested_session.as_deref(),
+                client_id.as_deref(),
+            ),
+            Err(_) => Err(crate::pairing::PairingError::new(
+                "state_locked",
+                "Pairing state unavailable.",
+            )),
+        };
+
+        let response = match issue_result {
+            Ok((token, expires_at)) => AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Ok,
+                payload: Some(json!({
+                    "type": "ws_ticket",
+                    "scope": scope,
+                    "session_id": requested_session,
+                    "token": token,
+                    "expires_at": expires_at,
+                })),
+                error: None,
+            },
+            Err(error) => AgentCommandResponse {
+                request_id: request.request_id.clone(),
+                status: AgentCommandStatus::Error,
+                payload: None,
+                error: Some(crate::command::AgentCommandError {
+                    code: error.code,
+                    message: error.message,
+                    details: Some(json!({ "command": "ws_ticket" })),
+                }),
+            },
         };
         return (StatusCode::OK, Json(json!(response)));
     }
@@ -272,6 +368,13 @@ struct RemoteCommandPayload {
     width: Option<u32>,
     height: Option<u32>,
     display_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct WsTicketCommandPayload {
+    scope: Option<String>,
+    session_id: Option<String>,
 }
 
 fn handle_remote_command(
@@ -320,17 +423,21 @@ fn handle_remote_command(
                     .lock()
                     .map(|guard| guard.quic_port())
                     .unwrap_or_else(|poison| poison.into_inner().quic_port());
-                info.quic_port = if quic_port == 0 { None } else { Some(quic_port) };
+                info.quic_port = if quic_port == 0 {
+                    None
+                } else {
+                    Some(quic_port)
+                };
                 AgentCommandResponse {
-                request_id: request.request_id.clone(),
-                status: AgentCommandStatus::Ok,
-                payload: Some(json!({
-                    "type": "remote",
-                    "status": "started",
-                    "session": info,
-                })),
-                error: None,
-            }
+                    request_id: request.request_id.clone(),
+                    status: AgentCommandStatus::Ok,
+                    payload: Some(json!({
+                        "type": "remote",
+                        "status": "started",
+                        "session": info,
+                    })),
+                    error: None,
+                }
             }
             Err(error) => AgentCommandResponse {
                 request_id: request.request_id.clone(),
@@ -508,7 +615,11 @@ fn handle_vnc_command(
                 .lock()
                 .map(|guard| guard.quic_port())
                 .unwrap_or_else(|poison| poison.into_inner().quic_port());
-            if port == 0 { fallback_quic } else { port }
+            if port == 0 {
+                fallback_quic
+            } else {
+                port
+            }
         };
         match manager.start_session(
             session_id.clone(),
@@ -607,11 +718,11 @@ fn handle_roi_command(
                 request_id: request.request_id.clone(),
                 status: AgentCommandStatus::Error,
                 payload: None,
-                    error: Some(crate::command::AgentCommandError {
-                        code: RoiErrorCode::MissingPayload.as_str().to_string(),
-                        message: "Missing payload for roi command.".to_string(),
-                        details: Some(json!({ "command": "roi" })),
-                    }),
+                error: Some(crate::command::AgentCommandError {
+                    code: RoiErrorCode::MissingPayload.as_str().to_string(),
+                    message: "Missing payload for roi command.".to_string(),
+                    details: Some(json!({ "command": "roi" })),
+                }),
             };
         }
     };
@@ -739,9 +850,7 @@ fn handle_roi_command(
         manager.stop_session(&session_id);
         eprintln!(
             "ROI stop: session_id={} client_id={:?} client_name={:?}",
-            session_id,
-            client_id,
-            client_name
+            session_id, client_id, client_name
         );
         return AgentCommandResponse {
             request_id: request.request_id.clone(),
@@ -770,7 +879,9 @@ fn handle_roi_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use axum::body::to_bytes;
+    use axum::http::HeaderValue;
+    use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
@@ -865,14 +976,296 @@ mod tests {
 
         server.stop();
     }
+
+    fn build_test_server_state() -> LocalServerState {
+        let pairing = Arc::new(Mutex::new(PairingState::default()));
+        let vnc = Arc::new(Mutex::new(VncManager::new()));
+        let roi = Arc::new(Mutex::new(RoiManager::new(4242)));
+        let remote_manager = Arc::new(Mutex::new(RemoteManager::new()));
+        let remote = Arc::new(RemoteSessionService::new(remote_manager));
+        LocalServerState {
+            pairing,
+            vnc,
+            roi,
+            remote,
+        }
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response bytes");
+        serde_json::from_slice::<Value>(&bytes).expect("response json")
+    }
+
+    #[test]
+    fn pairing_confirm_protocol_1_1_requires_nonce() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let request = json!({
+                "protocol_version": "1.1",
+                "token": "ABC123",
+                "secret": "SECRET77"
+            });
+            let response = handle_pairing_confirm(
+                State(build_test_server_state()),
+                axum::body::Bytes::from(request.to_string()),
+            )
+            .await
+            .into_response();
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let payload = response_json(response).await;
+            assert_eq!(payload["error"]["code"], "missing_nonce");
+        });
+    }
+
+    #[test]
+    fn pairing_confirm_without_protocol_does_not_require_nonce() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let request = json!({
+                "token": "ABC123",
+                "secret": "SECRET77"
+            });
+            let response = handle_pairing_confirm(
+                State(build_test_server_state()),
+                axum::body::Bytes::from(request.to_string()),
+            )
+            .await
+            .into_response();
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let payload = response_json(response).await;
+            assert_eq!(payload["error"]["code"], "missing_token");
+        });
+    }
+
+    #[test]
+    fn resolve_ws_auth_context_prefers_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-agent-token", HeaderValue::from_static("header-token"));
+        headers.insert("x-client-id", HeaderValue::from_static("header-client"));
+        headers.insert("x-client-name", HeaderValue::from_static("Header Client"));
+
+        let mut params = HashMap::new();
+        params.insert("auth_token".to_string(), "query-token".to_string());
+        params.insert("client_id".to_string(), "query-client".to_string());
+        params.insert("client_name".to_string(), "Query Client".to_string());
+
+        params.insert("ws_ticket".to_string(), "query-ticket".to_string());
+
+        let context = resolve_ws_auth_context(&headers, &params);
+        assert_eq!(context.auth_token, "header-token");
+        assert_eq!(context.ws_ticket.as_deref(), Some("query-ticket"));
+        assert_eq!(context.client_id.as_deref(), Some("query-client"));
+        assert_eq!(context.client_name.as_deref(), Some("Query Client"));
+    }
+
+    #[test]
+    fn resolve_ws_auth_context_falls_back_to_query() {
+        let headers = HeaderMap::new();
+        let mut params = HashMap::new();
+        params.insert("auth_token".to_string(), "query-token".to_string());
+        params.insert("client_id".to_string(), "query-client".to_string());
+        params.insert("client_name".to_string(), "Query Client".to_string());
+
+        params.insert("ws_ticket".to_string(), "query-ticket".to_string());
+
+        let context = resolve_ws_auth_context(&headers, &params);
+        assert_eq!(context.auth_token, "query-token");
+        assert_eq!(context.ws_ticket.as_deref(), Some("query-ticket"));
+        assert_eq!(context.client_id.as_deref(), Some("query-client"));
+        assert_eq!(context.client_name.as_deref(), Some("Query Client"));
+    }
+
+    #[test]
+    fn resolve_ws_auth_context_prefers_ws_ticket_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ws-ticket", HeaderValue::from_static("header-ticket"));
+
+        let mut params = HashMap::new();
+        params.insert("ws_ticket".to_string(), "query-ticket".to_string());
+
+        let context = resolve_ws_auth_context(&headers, &params);
+        assert_eq!(context.ws_ticket.as_deref(), Some("header-ticket"));
+    }
+
+    #[test]
+    fn validate_ws_credentials_accepts_valid_ticket_without_auth_token() {
+        let state = Arc::new(Mutex::new(PairingState::default()));
+        let ticket = {
+            let mut guard = state.lock().expect("pairing state lock");
+            let (token, _) = guard
+                .issue_ws_ticket("terminal_ws", Some("session-1"), Some("client-1"))
+                .expect("issue ticket");
+            token
+        };
+        let auth = WsAuthContext {
+            auth_token: String::new(),
+            ws_ticket: Some(ticket),
+            client_id: Some("client-1".to_string()),
+            client_name: None,
+        };
+
+        let result = validate_ws_credentials(&state, &auth, "terminal_ws", Some("session-1"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_ws_credentials_rejects_replayed_ticket() {
+        let state = Arc::new(Mutex::new(PairingState::default()));
+        let ticket = {
+            let mut guard = state.lock().expect("pairing state lock");
+            let (token, _) = guard
+                .issue_ws_ticket("terminal_ws", Some("session-2"), Some("client-2"))
+                .expect("issue ticket");
+            token
+        };
+        let auth = WsAuthContext {
+            auth_token: String::new(),
+            ws_ticket: Some(ticket.clone()),
+            client_id: Some("client-2".to_string()),
+            client_name: None,
+        };
+
+        let first = validate_ws_credentials(&state, &auth, "terminal_ws", Some("session-2"));
+        assert!(first.is_ok());
+
+        let replay = WsAuthContext {
+            auth_token: String::new(),
+            ws_ticket: Some(ticket),
+            client_id: Some("client-2".to_string()),
+            client_name: None,
+        };
+        let second = validate_ws_credentials(&state, &replay, "terminal_ws", Some("session-2"))
+            .expect_err("replay should fail");
+        assert_eq!(second.code, "unauthorized");
+    }
+
+    #[test]
+    fn validate_ws_credentials_prefers_auth_token_over_ws_ticket() {
+        let state = Arc::new(Mutex::new(PairingState::default()));
+        let ticket = {
+            let mut guard = state.lock().expect("pairing state lock");
+            let (token, _) = guard
+                .issue_ws_ticket("terminal_ws", Some("session-3"), Some("client-3"))
+                .expect("issue ticket");
+            token
+        };
+        let auth = WsAuthContext {
+            auth_token: "invalid-static-token".to_string(),
+            ws_ticket: Some(ticket),
+            client_id: Some("client-3".to_string()),
+            client_name: None,
+        };
+
+        let error = validate_ws_credentials(&state, &auth, "terminal_ws", Some("session-3"))
+            .expect_err("invalid long token should fail");
+        assert_eq!(error.code, "unauthorized");
+    }
+
+    #[test]
+    fn ws_ticket_command_requires_session_for_terminal_scope() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let state = build_test_server_state();
+            let token = {
+                let guard = state.pairing.lock().expect("pairing state lock");
+                guard.auth_token().to_string()
+            };
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "x-agent-token",
+                HeaderValue::from_str(token.as_str()).expect("token header"),
+            );
+
+            let request = json!({
+                "request_id": "ws-ticket-1",
+                "command": "ws_ticket",
+                "payload": {
+                    "scope": "terminal_ws"
+                }
+            });
+
+            let response = handle_command(
+                State(state),
+                headers,
+                axum::body::Bytes::from(request.to_string()),
+            )
+            .await
+            .into_response();
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let payload = response_json(response).await;
+            assert_eq!(payload["status"], "error");
+            assert_eq!(payload["error"]["code"], "invalid_payload");
+        });
+    }
+
+    #[test]
+    fn ws_ticket_command_returns_token_for_terminal_scope() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async {
+            let state = build_test_server_state();
+            let token = {
+                let guard = state.pairing.lock().expect("pairing state lock");
+                guard.auth_token().to_string()
+            };
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "x-agent-token",
+                HeaderValue::from_str(token.as_str()).expect("token header"),
+            );
+            headers.insert("x-client-id", HeaderValue::from_static("client-ws-1"));
+
+            let request = json!({
+                "request_id": "ws-ticket-2",
+                "command": "ws_ticket",
+                "payload": {
+                    "scope": "terminal_ws",
+                    "session_id": "terminal-session-1"
+                }
+            });
+
+            let response = handle_command(
+                State(state),
+                headers,
+                axum::body::Bytes::from(request.to_string()),
+            )
+            .await
+            .into_response();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = response_json(response).await;
+            assert_eq!(payload["status"], "ok");
+            assert_eq!(payload["payload"]["type"], "ws_ticket");
+            assert_eq!(payload["payload"]["scope"], "terminal_ws");
+            assert_eq!(payload["payload"]["session_id"], "terminal-session-1");
+            let token_value = payload["payload"]["token"].as_str().unwrap_or_default();
+            assert!(!token_value.is_empty());
+        });
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct PairingConfirmRequest {
+    protocol_version: Option<String>,
     token: String,
     secret: String,
+    nonce: Option<String>,
     client_id: Option<String>,
     client_name: Option<String>,
+}
+
+fn is_supported_pairing_protocol(version: &str) -> bool {
+    matches!(version, "1.0" | "1.1")
+}
+
+fn protocol_requires_nonce(version: &str) -> bool {
+    matches!(version, "1.1")
 }
 
 async fn handle_pairing_confirm(
@@ -894,6 +1287,49 @@ async fn handle_pairing_confirm(
         }
     };
 
+    let client_id_for_guard = confirm_request.client_id.clone();
+    if let Err(error) = ensure_auth_not_blocked(&state.pairing, client_id_for_guard.as_deref()) {
+        return auth_error_response(error);
+    }
+
+    let requested_protocol = confirm_request
+        .protocol_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if let Some(protocol_version) = requested_protocol {
+        if !is_supported_pairing_protocol(protocol_version) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "unsupported_protocol",
+                        "message": "Pairing protocol version is not supported."
+                    }
+                })),
+            );
+        }
+        if protocol_requires_nonce(protocol_version)
+            && confirm_request
+                .nonce
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "missing_nonce",
+                        "message": "Pairing nonce is required for this protocol version."
+                    }
+                })),
+            );
+        }
+    }
+
     if let Err(error) = ensure_client_allowed(&state.pairing, &confirm_request.client_id) {
         return auth_error_response(error);
     }
@@ -902,15 +1338,32 @@ async fn handle_pairing_confirm(
         &state.pairing,
         &confirm_request.token,
         &confirm_request.secret,
+        confirm_request.nonce.as_deref(),
         None,
         confirm_request.client_id.clone(),
         confirm_request.client_name.clone(),
     ) {
-        Ok(response) => (StatusCode::OK, Json(json!(response))),
-        Err(error) => (
-            StatusCode::BAD_REQUEST,
-            Json(build_pairing_error(error)),
-        ),
+        Ok(response) => {
+            if let Some(id) = confirm_request.client_id.as_deref() {
+                record_auth_success(&state.pairing, Some(id));
+            } else {
+                record_auth_success(&state.pairing, None);
+            }
+            (StatusCode::OK, Json(json!(response)))
+        }
+        Err(error) => {
+            if matches!(
+                error.code.as_str(),
+                "token_mismatch" | "secret_mismatch" | "nonce_mismatch"
+            ) {
+                let retry_after =
+                    record_auth_failure(&state.pairing, confirm_request.client_id.as_deref());
+                if retry_after.is_some() {
+                    return auth_error_response(AuthError::rate_limited(retry_after));
+                }
+            }
+            (StatusCode::BAD_REQUEST, Json(build_pairing_error(error)))
+        }
     }
 }
 
@@ -949,23 +1402,32 @@ async fn handle_vnc_ws(
     State(state): State<LocalServerState>,
     Path(session_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let token = params.get("token").cloned().unwrap_or_default();
-    let auth_token = params.get("auth_token").cloned().unwrap_or_default();
-    let client_id = params.get("client_id").cloned();
-    let client_name = params.get("client_name").cloned();
-    if let Err(error) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+    let token = ws_query_value(&params, "token").unwrap_or_default();
+    let auth_context = resolve_ws_auth_context(&headers, &params);
+    if let Err(error) = ensure_auth_not_blocked(&state.pairing, auth_context.client_id.as_deref()) {
         return auth_error_response(error).into_response();
     }
-    if let Err(error) = validate_auth_token(&state.pairing, &auth_token, client_id.as_deref()) {
+    if let Err(error) = validate_ws_credentials(
+        &state.pairing,
+        &auth_context,
+        "vnc_ws",
+        Some(session_id.as_str()),
+    ) {
         return auth_error_response(error).into_response();
     }
-    if let Err(error) = ensure_client_allowed(&state.pairing, &client_id) {
+    if let Err(error) = ensure_client_allowed(&state.pairing, &auth_context.client_id) {
         return auth_error_response(error).into_response();
     }
-    let guard_id = client_id.clone();
-    record_client_activity(&state.pairing, client_id, client_name, None);
+    let guard_id = auth_context.client_id.clone();
+    record_client_activity(
+        &state.pairing,
+        auth_context.client_id,
+        auth_context.client_name,
+        None,
+    );
     let guard = track_client_connection(&state.pairing, guard_id);
     let manager = state.vnc.clone();
     ws.on_upgrade(move |socket| async move {
@@ -978,22 +1440,31 @@ async fn handle_terminal_ws(
     State(state): State<LocalServerState>,
     Path(session_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let auth_token = params.get("auth_token").cloned().unwrap_or_default();
-    let client_id = params.get("client_id").cloned();
-    let client_name = params.get("client_name").cloned();
-    if let Err(error) = ensure_auth_not_blocked(&state.pairing, client_id.as_deref()) {
+    let auth_context = resolve_ws_auth_context(&headers, &params);
+    if let Err(error) = ensure_auth_not_blocked(&state.pairing, auth_context.client_id.as_deref()) {
         return auth_error_response(error).into_response();
     }
-    if let Err(error) = validate_auth_token(&state.pairing, &auth_token, client_id.as_deref()) {
+    if let Err(error) = validate_ws_credentials(
+        &state.pairing,
+        &auth_context,
+        "terminal_ws",
+        Some(session_id.as_str()),
+    ) {
         return auth_error_response(error).into_response();
     }
-    if let Err(error) = ensure_client_allowed(&state.pairing, &client_id) {
+    if let Err(error) = ensure_client_allowed(&state.pairing, &auth_context.client_id) {
         return auth_error_response(error).into_response();
     }
-    let guard_id = client_id.clone();
-    record_client_activity(&state.pairing, client_id, client_name, None);
+    let guard_id = auth_context.client_id.clone();
+    record_client_activity(
+        &state.pairing,
+        auth_context.client_id,
+        auth_context.client_name,
+        None,
+    );
     let guard = track_client_connection(&state.pairing, guard_id);
     ws.on_upgrade(move |socket| async move {
         let _guard = guard;
@@ -1056,4 +1527,66 @@ fn extract_client_headers(headers: &HeaderMap) -> (Option<String>, Option<String
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     (client_id, client_name, source)
+}
+
+fn ws_query_value(params: &HashMap<String, String>, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Debug, Clone)]
+struct WsAuthContext {
+    auth_token: String,
+    ws_ticket: Option<String>,
+    client_id: Option<String>,
+    client_name: Option<String>,
+}
+
+fn resolve_ws_auth_context(headers: &HeaderMap, params: &HashMap<String, String>) -> WsAuthContext {
+    let (header_client_id, header_client_name, _) = extract_client_headers(headers);
+    let query_token = ws_query_value(params, "auth_token").unwrap_or_default();
+    let header_token = extract_auth_token(headers).unwrap_or_default();
+    let auth_token = if !header_token.is_empty() {
+        header_token
+    } else {
+        query_token
+    };
+
+    let header_ticket = headers
+        .get("x-ws-ticket")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let ws_ticket = header_ticket.or_else(|| ws_query_value(params, "ws_ticket"));
+
+    let client_id = ws_query_value(params, "client_id").or(header_client_id);
+    let client_name = ws_query_value(params, "client_name").or(header_client_name);
+
+    WsAuthContext {
+        auth_token,
+        ws_ticket,
+        client_id,
+        client_name,
+    }
+}
+
+fn validate_ws_credentials(
+    state: &Arc<Mutex<PairingState>>,
+    auth: &WsAuthContext,
+    scope: &str,
+    session_id: Option<&str>,
+) -> Result<(), AuthError> {
+    if !auth.auth_token.trim().is_empty() {
+        return validate_auth_token(state, &auth.auth_token, auth.client_id.as_deref());
+    }
+    if let Some(ticket) = auth.ws_ticket.as_deref() {
+        return validate_ws_ticket(state, ticket, auth.client_id.as_deref(), scope, session_id);
+    }
+    Err(AuthError::new(
+        "unauthorized",
+        "Missing authentication credential.",
+    ))
 }
