@@ -45,11 +45,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         // Fallback to auth token query path for compatibility.
       }
     }
-    final uri = _terminalWsUri(
-      baseUrl,
-      active.session.id,
-      wsTicket: wsTicket,
-    );
+    final uri = _terminalWsUri(baseUrl, active.session.id, wsTicket: wsTicket);
     if (uri == null) {
       _startPolling();
       return;
@@ -767,10 +763,12 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
                       itemBuilder: (context, index) {
                         final session = _sessions[index];
                         final status = session.session.status.toLowerCase();
-                        final canClose =
+                        final canDisconnect =
                             status != 'closed' &&
                             status != 'killed' &&
-                            status != 'exited';
+                            status != 'exited' &&
+                            status != 'disconnected' &&
+                            status != 'error';
                         return _TerminalSessionRow(
                           session: session,
                           isActive: session.session.id == _activeSessionId,
@@ -778,9 +776,16 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
                             Navigator.of(sheetContext).pop();
                             _setActiveSession(session.session.id);
                           },
-                          onClose: canClose
-                              ? () => _closeSession(session.session.id)
+                          onClose: canDisconnect
+                              ? () {
+                                  Navigator.of(sheetContext).pop();
+                                  unawaited(_closeSession(session.session.id));
+                                }
                               : null,
+                          onDelete: () {
+                            Navigator.of(sheetContext).pop();
+                            unawaited(_deleteSession(session.session.id));
+                          },
                         );
                       },
                     ),
@@ -883,6 +888,157 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       return;
     }
     await _renameSession(active);
+  }
+
+  Future<void> _deleteActiveSession() async {
+    final active = _activeSession;
+    if (active == null) {
+      _setTerminalStatusMessage('Select a session to delete.', isError: true);
+      return;
+    }
+    await _deleteSession(active.session.id);
+  }
+
+  Future<void> _deleteSession(String sessionId) async {
+    final view = _sessionById(sessionId);
+    if (view == null) {
+      return;
+    }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final status = view.session.status.toLowerCase();
+        final isRunning = status == 'running' || status == 'connected';
+        final title = isRunning
+            ? 'Delete running session?'
+            : 'Delete terminal session?';
+        final message = isRunning
+            ? 'This will stop the running session and delete its saved history from mobile and desktop.'
+            : 'This will delete this session and its saved history.';
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) {
+      return;
+    }
+
+    final agentClient = _agentClient;
+    if (agentClient != null) {
+      try {
+        await agentClient.sendTerminalAction(
+          action: 'delete',
+          sessionId: sessionId,
+        );
+      } on AgentCommandFailure catch (error) {
+        if ((error.code ?? '').toLowerCase() != 'session_not_found') {
+          final presentation = _presentAgentFailure(
+            error,
+            fallbackMessage: 'Failed to delete session.',
+          );
+          _logErrorDetails('terminal_delete', presentation);
+          _showSessionLabelError(_formatErrorMessage(presentation));
+          return;
+        }
+      } catch (error) {
+        final presentation = _presentUnexpectedFailure(
+          error,
+          fallbackMessage: 'Failed to delete session.',
+        );
+        _logErrorDetails('terminal_delete', presentation);
+        _showSessionLabelError(_formatErrorMessage(presentation));
+        return;
+      }
+    }
+
+    final removed = await _removeSessionFromWorkspace(sessionId);
+    if (removed) {
+      _setTerminalStatusMessage('Session deleted.');
+    }
+  }
+
+  Future<bool> _removeSessionFromWorkspace(String sessionId) async {
+    final activeBefore = _activeSessionId;
+    final wasActive = activeBefore == sessionId;
+    final remaining = _sessions
+        .where((entry) => entry.session.id != sessionId)
+        .toList();
+    String? nextActiveId = activeBefore;
+    if (remaining.isEmpty) {
+      nextActiveId = null;
+    } else if (wasActive ||
+        activeBefore == null ||
+        !remaining.any((entry) => entry.session.id == activeBefore)) {
+      nextActiveId = remaining.first.session.id;
+    }
+
+    try {
+      await widget.storage.deleteToolSession(sessionId);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to delete terminal session: ${error.toString()}',
+            ),
+          ),
+        );
+      }
+      return false;
+    }
+
+    if (sessionId == _terminalChannelSessionId) {
+      _disconnectTerminalStream();
+    }
+    _commandBuffers.remove(sessionId);
+    _terminalSizes.remove(sessionId);
+    _terminalPersistedAt.remove(sessionId);
+    _terminalGapWarned.remove(sessionId);
+    _terminalTruncateWarned.remove(sessionId);
+
+    if (!mounted) {
+      return false;
+    }
+
+    _updateState(() {
+      final nextTerminals = Map<String, Terminal>.from(_terminals);
+      nextTerminals.remove(sessionId);
+      _terminals = nextTerminals;
+      _sessions = remaining;
+      _activeSessionId = nextActiveId;
+      _clearTerminalSearchHighlights(clearQuery: true);
+      _statusIsError = false;
+    });
+
+    if (nextActiveId == null) {
+      _disconnectTerminalStream();
+      _pollTimer?.cancel();
+      _terminalReconnectTimer?.cancel();
+      _terminalReconnectTimer = null;
+      return true;
+    }
+
+    if (wasActive) {
+      _setActiveSession(nextActiveId);
+    } else {
+      _startPolling();
+      if (_activeSessionId == nextActiveId) {
+        unawaited(_connectTerminalStream());
+      }
+    }
+    return true;
   }
 
   Future<void> _renameSession(TerminalSessionView view) async {

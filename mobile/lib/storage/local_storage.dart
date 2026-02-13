@@ -12,6 +12,7 @@ abstract class StorageRepository {
   Future<void> insertToolSession(ToolSession session);
   Future<void> insertTimelineEvent(TimelineEvent event);
   Future<void> deleteConnection(String connectionId);
+  Future<void> deleteToolSession(String sessionId);
   Future<void> deleteToolSessionsByAgent(String agentId);
   Future<void> insertAgentLog(AgentLogEntry entry);
   Future<List<AgentLogEntry>> fetchAgentLogs(
@@ -56,7 +57,9 @@ class LocalStorageInitializer extends StorageInitializer {
           await _createConnectionsTable(db);
         }
         if (oldVersion < 3) {
-          await db.execute('ALTER TABLE tool_sessions ADD COLUMN agent_id TEXT');
+          await db.execute(
+            'ALTER TABLE tool_sessions ADD COLUMN agent_id TEXT',
+          );
           if (oldVersion >= 2) {
             await db.execute(
               'ALTER TABLE connections ADD COLUMN agent_url TEXT',
@@ -64,23 +67,15 @@ class LocalStorageInitializer extends StorageInitializer {
           }
         }
         if (oldVersion < 4) {
-          await db.execute(
-            'ALTER TABLE connections ADD COLUMN device_id TEXT',
-          );
+          await db.execute('ALTER TABLE connections ADD COLUMN device_id TEXT');
         }
         if (oldVersion < 5) {
-          await db.execute(
-            'ALTER TABLE connections ADD COLUMN wifi_ssid TEXT',
-          );
-          await db.execute(
-            'ALTER TABLE connections ADD COLUMN local_ips TEXT',
-          );
+          await db.execute('ALTER TABLE connections ADD COLUMN wifi_ssid TEXT');
+          await db.execute('ALTER TABLE connections ADD COLUMN local_ips TEXT');
           await db.execute(
             'ALTER TABLE connections ADD COLUMN local_urls TEXT',
           );
-          await db.execute(
-            'ALTER TABLE connections ADD COLUMN frp_url TEXT',
-          );
+          await db.execute('ALTER TABLE connections ADD COLUMN frp_url TEXT');
         }
         if (oldVersion < 6) {
           await db.execute(
@@ -88,9 +83,7 @@ class LocalStorageInitializer extends StorageInitializer {
           );
         }
         if (oldVersion < 7) {
-          await db.execute(
-            'ALTER TABLE connections ADD COLUMN host_name TEXT',
-          );
+          await db.execute('ALTER TABLE connections ADD COLUMN host_name TEXT');
         }
         if (oldVersion < 8) {
           await _createAgentLogsTable(db);
@@ -266,6 +259,15 @@ class LocalStorage implements StorageRepository {
   }
 
   @override
+  Future<void> deleteToolSession(String sessionId) async {
+    await _database.delete(
+      'tool_sessions',
+      where: 'id = ?',
+      whereArgs: [sessionId],
+    );
+  }
+
+  @override
   Future<void> deleteToolSessionsByAgent(String agentId) async {
     await _database.transaction((txn) async {
       await txn.delete(
@@ -351,11 +353,7 @@ class LocalStorage implements StorageRepository {
         continue;
       }
       final size = (row['size_bytes'] as int?) ?? 0;
-      await _database.delete(
-        'agent_logs',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await _database.delete('agent_logs', where: 'id = ?', whereArgs: [id]);
       remaining -= size;
     }
   }
@@ -405,6 +403,12 @@ class MemoryStorage implements StorageRepository {
   }
 
   @override
+  Future<void> deleteToolSession(String sessionId) async {
+    _sessions.removeWhere((session) => session.id == sessionId);
+    _events.removeWhere((event) => event.sessionId == sessionId);
+  }
+
+  @override
   Future<void> deleteToolSessionsByAgent(String agentId) async {
     final removedSessionIds = _sessions
         .where((session) => session.agentId == agentId)
@@ -414,9 +418,7 @@ class MemoryStorage implements StorageRepository {
     if (removedSessionIds.isEmpty) {
       return;
     }
-    _events.removeWhere(
-      (event) => removedSessionIds.contains(event.sessionId),
-    );
+    _events.removeWhere((event) => removedSessionIds.contains(event.sessionId));
   }
 
   @override
@@ -430,9 +432,7 @@ class MemoryStorage implements StorageRepository {
     String agentId, {
     int limit = 2000,
   }) async {
-    final items = _agentLogs
-        .where((entry) => entry.agentId == agentId)
-        .toList()
+    final items = _agentLogs.where((entry) => entry.agentId == agentId).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     if (items.length > limit) {
       return items.sublist(items.length - limit);
@@ -461,9 +461,8 @@ class MemoryStorage implements StorageRepository {
   }
 
   void _trimAgentLogs(String agentId) {
-    final items =
-        _agentLogs.where((entry) => entry.agentId == agentId).toList()
-          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final items = _agentLogs.where((entry) => entry.agentId == agentId).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     var total = 0;
     for (final entry in items) {
       total += entry.sizeBytes;
@@ -895,8 +894,9 @@ class ConnectionRecord {
     if (roiQuicPortRaw != null && roiQuicPortRaw is! num) {
       throw const FormatException('Connection roiQuicPort must be a number.');
     }
-    final roiQuicPort =
-        roiQuicPortRaw != null ? (roiQuicPortRaw as num).toInt() : null;
+    final roiQuicPort = roiQuicPortRaw != null
+        ? (roiQuicPortRaw as num).toInt()
+        : null;
     final wifiSsid = json['wifiSsid'];
     if (wifiSsid != null && wifiSsid is! String) {
       throw const FormatException('Connection wifiSsid must be a string.');
@@ -966,7 +966,9 @@ class ExportBundle {
       'version': version,
       'deviceName': deviceName,
       'exportedAt': exportedAt.toIso8601String(),
-      'connections': connections.map((connection) => connection.toJson()).toList(),
+      'connections': connections
+          .map((connection) => connection.toJson())
+          .toList(),
       'toolSessions': toolSessions.map((session) => session.toJson()).toList(),
       'timelineEvents': timelineEvents.map((event) => event.toJson()).toList(),
     };

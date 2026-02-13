@@ -41,25 +41,31 @@ class _TerminalSessionRow extends StatelessWidget {
     required this.isActive,
     required this.onSelect,
     this.onClose,
+    this.onDelete,
   });
 
   final TerminalSessionView session;
   final bool isActive;
   final VoidCallback onSelect;
   final VoidCallback? onClose;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final statusStyle = _terminalStatusStyle(session.session.status);
-    final background = isActive ? const Color(0xFFE0F2FE) : const Color(0xFFF8FAFC);
-    final borderColor =
-        isActive ? const Color(0xFF93C5FD) : const Color(0xFFE2E8F0);
+    final background = isActive
+        ? const Color(0xFFE0F2FE)
+        : const Color(0xFFF8FAFC);
+    final borderColor = isActive
+        ? const Color(0xFF93C5FD)
+        : const Color(0xFFE2E8F0);
     final statusLabel = session.session.status.toUpperCase();
     final rawReason = session.lastEvent?.payload['error_message']?.toString();
     final reason = rawReason?.trim() ?? '';
     final status = session.session.status.toLowerCase();
-    final showReason = reason.isNotEmpty &&
+    final showReason =
+        reason.isNotEmpty &&
         (status == 'closed' ||
             status == 'killed' ||
             status == 'exited' ||
@@ -83,11 +89,7 @@ class _TerminalSessionRow extends StatelessWidget {
               const CircleAvatar(
                 radius: 16,
                 backgroundColor: Color(0xFFDBEAFE),
-                child: Icon(
-                  Icons.terminal,
-                  size: 18,
-                  color: Color(0xFF1D4ED8),
-                ),
+                child: Icon(Icons.terminal, size: 18, color: Color(0xFF1D4ED8)),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -125,8 +127,10 @@ class _TerminalSessionRow extends StatelessWidget {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: statusStyle.background,
                   borderRadius: BorderRadius.circular(999),
@@ -139,12 +143,24 @@ class _TerminalSessionRow extends StatelessWidget {
                   ),
                 ),
               ),
-              if (onClose != null) ...[
+              if (onClose != null || onDelete != null) ...[
                 const SizedBox(width: 8),
-                IconButton(
-                  onPressed: onClose,
-                  icon: const Icon(Icons.stop_circle_outlined),
-                  tooltip: 'Disconnect',
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onClose != null)
+                      IconButton(
+                        onPressed: onClose,
+                        icon: const Icon(Icons.stop_circle_outlined),
+                        tooltip: 'Disconnect',
+                      ),
+                    if (onDelete != null)
+                      IconButton(
+                        onPressed: onDelete,
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Delete session',
+                      ),
+                  ],
                 ),
               ],
             ],
@@ -173,11 +189,7 @@ class _TerminalReconnectCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.wifi_off,
-            color: Color(0xFFBE123C),
-            size: 28,
-          ),
+          const Icon(Icons.wifi_off, color: Color(0xFFBE123C), size: 28),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -222,33 +234,18 @@ class _TerminalStatusStyle {
 _TerminalStatusStyle _terminalStatusStyle(String status) {
   switch (status.toLowerCase()) {
     case 'running':
-      return const _TerminalStatusStyle(
-        Color(0xFFDBEAFE),
-        Color(0xFF1D4ED8),
-      );
+      return const _TerminalStatusStyle(Color(0xFFDBEAFE), Color(0xFF1D4ED8));
     case 'exited':
     case 'complete':
-      return const _TerminalStatusStyle(
-        Color(0xFFDCFCE7),
-        Color(0xFF166534),
-      );
+      return const _TerminalStatusStyle(Color(0xFFDCFCE7), Color(0xFF166534));
     case 'error':
     case 'disconnected':
-      return const _TerminalStatusStyle(
-        Color(0xFFFEE2E2),
-        Color(0xFFB91C1C),
-      );
+      return const _TerminalStatusStyle(Color(0xFFFEE2E2), Color(0xFFB91C1C));
     case 'killed':
     case 'closed':
-      return const _TerminalStatusStyle(
-        Color(0xFFE2E8F0),
-        Color(0xFF475569),
-      );
+      return const _TerminalStatusStyle(Color(0xFFE2E8F0), Color(0xFF475569));
     default:
-      return const _TerminalStatusStyle(
-        Color(0xFFFEF3C7),
-        Color(0xFF92400E),
-      );
+      return const _TerminalStatusStyle(Color(0xFFFEF3C7), Color(0xFF92400E));
   }
 }
 
@@ -300,10 +297,7 @@ class AiInsightScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _KeyValueRow(
-                    label: 'Status',
-                    value: status.toUpperCase(),
-                  ),
+                  _KeyValueRow(label: 'Status', value: status.toUpperCase()),
                   _KeyValueRow(
                     label: 'Created',
                     value: _formatTimestamp(session.createdAt),

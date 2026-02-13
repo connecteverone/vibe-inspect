@@ -204,9 +204,9 @@
           const openBtn = createActionButton(
             isActive ? "Viewing" : isRunning ? "Open" : "View log",
             isActive ? "secondary mini" : "primary mini",
-            () => {
+            async () => {
               if (!isActive) {
-                openTerminalSession(session);
+                await openTerminalSession(session);
               }
             }
           );

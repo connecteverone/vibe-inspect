@@ -623,6 +623,11 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                       icon: const Icon(Icons.edit_outlined),
                     ),
                     IconButton(
+                      tooltip: 'Delete session',
+                      onPressed: active == null ? null : _deleteActiveSession,
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                    IconButton(
                       tooltip: 'Switch session',
                       onPressed: _sessions.isEmpty
                           ? null

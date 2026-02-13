@@ -122,14 +122,19 @@
       const TERMINAL_IME_ENTER_GRACE_MS = 120;
       const STATUS_OPERATION_HOLD_MS = 2600;
       const ACTION_CONFIRM_WINDOW_MS = 4200;
-      const ANSI_REGEX =
-        /[\u001B\u009B][[\\]()#;?]*(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\u0007|(?:\d{1,4}(?:;\d{0,4})*)?[\\dA-PRZcf-ntqry=><~])/g;
+      const TERMINAL_ACTION_TIMEOUT_MS = 12000;
+      const ANSI_CSI_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+      const ANSI_OSC_REGEX = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+      const ANSI_8BIT_CSI_REGEX = /\u009B[0-?]*[ -/]*[@-~]/g;
       const TERMINAL_CONTROL_REGEX = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
       function sanitizeTerminalText(text) {
         if (!text) return "";
         const value = String(text);
-        const stripped = value.replace(ANSI_REGEX, "");
+        const stripped = value
+          .replace(ANSI_OSC_REGEX, "")
+          .replace(ANSI_CSI_REGEX, "")
+          .replace(ANSI_8BIT_CSI_REGEX, "");
         const normalized = stripped.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
         return normalized.replace(TERMINAL_CONTROL_REGEX, "");
       }
@@ -798,6 +803,26 @@
         return `req-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
       }
 
+      function withTimeout(promise, timeoutMs, code, message) {
+        let timer = null;
+        return new Promise((resolve, reject) => {
+          timer = window.setTimeout(() => {
+            const error = new Error(message || "Operation timed out.");
+            error.code = code || "timeout";
+            reject(error);
+          }, timeoutMs);
+          Promise.resolve(promise)
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+              if (timer) {
+                window.clearTimeout(timer);
+                timer = null;
+              }
+            });
+        });
+      }
+
       async function applyPairingAction(commandName, payload, message) {
         const invokeFn = ensureInvoke();
         if (!invokeFn) return;
@@ -827,7 +852,12 @@
           },
         };
         try {
-          const response = await invokeFn("handle_agent_command", { request });
+          const response = await withTimeout(
+            invokeFn("handle_agent_command", { request }),
+            TERMINAL_ACTION_TIMEOUT_MS,
+            "terminal_action_timeout",
+            `Terminal action timed out: ${action}`
+          );
           if (response?.status === "error") {
             const info = normalizeError(response?.error);
             const resolved = resolveFriendlyMessage(info, "Terminal action failed.");
@@ -860,6 +890,12 @@
           }
           return response?.payload || null;
         } catch (error) {
+          if (error?.code === "terminal_action_timeout") {
+            const message = `Terminal ${action} request timed out. Please retry.`;
+            setOperationStatus(message, "error", 3600);
+            setTerminalDetailStatus(message, "error");
+            return null;
+          }
           const resolved = setStatusFromError("Terminal action failed.", error, "terminal_action", {
             requestId: request.request_id,
             command: "terminal",
@@ -1274,7 +1310,7 @@
         setTerminalInputEnabled(false);
         setTerminalStopEnabled(false);
         renderTerminalHeader();
-        setTerminalDetailStatus("");
+        setTerminalDetailStatus("Loading session log…", "notice");
         renderTerminalOutput();
         if (terminalColsInput && !terminalColsInput.value) {
           terminalColsInput.value = String(DEFAULT_TERMINAL_COLS);
