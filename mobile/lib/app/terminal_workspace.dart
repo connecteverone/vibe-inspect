@@ -56,6 +56,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   final ScrollController _terminalScrollController = ScrollController();
   Map<String, Terminal> _terminals = {};
   final Map<String, List<int>> _commandBuffers = {};
+  final Map<String, TerminalOutputSanitizer> _terminalOutputSanitizers = {};
   String? _statusMessage;
   bool _statusIsError = false;
   bool _isLoading = true;
@@ -86,6 +87,9 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   bool _shiftLocked = false;
   bool _showFnRow = false;
   int _secondaryKeyPage = 0;
+  bool _showTerminalDock = false;
+  final GlobalKey _terminalDockKey = GlobalKey();
+  double _terminalDockHeight = 0;
   bool _showKeyBar = true;
   bool _showNavOnly = false;
   bool _mouseInputEnabled = false;
@@ -138,16 +142,33 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (_isLoading) {
-      return const _TimelineDetailScaffold(
-        title: 'Terminal',
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_loadError != null) {
-      return _TimelineDetailScaffold(
-        title: 'Terminal',
-        body: Center(child: _InlineStatus(message: _loadError!, isError: true)),
+    final topInset = MediaQuery.of(context).padding.top;
+    if (_isLoading || _loadError != null) {
+      return Scaffold(
+        body: Stack(
+          children: [
+            const Positioned.fill(child: _PairingBackground()),
+            Center(
+              child: _isLoading
+                  ? const CircularProgressIndicator()
+                  : _InlineStatus(message: _loadError!, isError: true),
+            ),
+            Positioned(
+              top: topInset + 8,
+              left: 8,
+              child: IconButton(
+                tooltip: 'Back',
+                onPressed: () => Navigator.of(context).maybePop(),
+                style: IconButton.styleFrom(
+                  foregroundColor: const Color(0xFFCBD5F5),
+                  backgroundColor: const Color(0xCC0F172A),
+                  side: const BorderSide(color: Color(0x66547569)),
+                ),
+                icon: const Icon(Icons.arrow_back, size: 18),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -155,7 +176,6 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final status = active?.session.status.toLowerCase() ?? 'idle';
     final isDisconnected = status == 'disconnected' || status == 'error';
     final isEnded = _isTerminalClosed(status);
-    final statusStyle = _terminalStatusStyle(status);
     final terminal = active == null ? null : _terminals[active.session.id];
     final terminalThemes = _terminalThemeOptions();
     final resolvedThemeIndex = _terminalThemeIndex
@@ -167,55 +187,28 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     final isLightTerminal =
         ThemeData.estimateBrightnessForColor(terminalBackground) ==
         Brightness.light;
-    final terminalBorderColor = isLightTerminal
-        ? const Color(0xFFE2E8F0)
-        : const Color(0xFF1E293B);
     final terminalOverlayBackground = isLightTerminal
         ? const Color(0xFFE2E8F0)
         : const Color(0xFF0F172A);
     final terminalOverlayForeground = isLightTerminal
         ? const Color(0xFF0F172A)
         : const Color(0xFFE2E8F0);
+    final mediaQuery = MediaQuery.of(context);
+    final topPadding = mediaQuery.padding.top;
+    final isSystemKeyboardVisible = mediaQuery.viewInsets.bottom > 0;
     final terminalStyle = TerminalStyle.fromTextStyle(
       GoogleFonts.jetBrainsMono(
         fontSize: _terminalFontSize,
         height: 1.4,
       ).copyWith(fontFamilyFallback: _terminalFontFallback),
     );
-    final sessionLabel = active?.session.label ?? 'No session selected';
-    final sessionStatus = active == null
-        ? 'IDLE'
-        : active.session.status.toUpperCase();
-    final connectionLabel = active == null
-        ? 'Create a session to start.'
-        : _terminalChannelReady
-        ? 'Live stream'
-        : 'Polling updates';
     final resolvedStatusMessage =
         _statusMessage ?? _sessionStatusReason(active);
     final resolvedStatusIsError = _statusMessage != null
         ? _statusIsError
         : resolvedStatusMessage != null;
-    final showEmptyHint = _sessions.isEmpty && _remoteFetchError == null;
-    final headerStyle = theme.textTheme.bodyMedium?.copyWith(
-      fontWeight: FontWeight.w700,
-      color: const Color(0xFF0F172A),
-    );
     const dockBackground = Color(0xFF0B1220);
     final keyRowPrimary = [
-      _TerminalKeySpec(
-        label: 'Esc',
-        onTap: () => _sendTerminalKey(TerminalKey.escape),
-        isEmphasis: true,
-      ),
-      _TerminalKeySpec(
-        label: 'Tab',
-        onTap: () => _sendTerminalKey(TerminalKey.tab),
-      ),
-      _TerminalKeySpec(
-        label: 'S-Tab',
-        onTap: () => _sendTerminalKey(TerminalKey.backtab),
-      ),
       _TerminalKeySpec(
         label: 'Ctrl',
         onTap: _toggleCtrlModifier,
@@ -240,9 +233,27 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         isLocked: _shiftLocked,
       ),
       _TerminalKeySpec(
-        label: _showFnRow ? 'Fn On' : 'Fn',
-        onTap: _toggleFnRow,
-        isActive: _showFnRow,
+        label: 'Enter',
+        onTap: () => _sendTerminalKey(TerminalKey.enter),
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Bksp',
+        onTap: () => _sendTerminalKey(TerminalKey.backspace),
+        isRepeatable: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Esc',
+        onTap: () => _sendTerminalKey(TerminalKey.escape),
+        isEmphasis: true,
+      ),
+      _TerminalKeySpec(
+        label: 'Tab',
+        onTap: () => _sendTerminalKey(TerminalKey.tab),
+      ),
+      _TerminalKeySpec(
+        label: 'S-Tab',
+        onTap: () => _sendTerminalKey(TerminalKey.backtab),
       ),
       _TerminalKeySpec(
         label: '←',
@@ -264,18 +275,13 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         onTap: () => _sendTerminalKey(TerminalKey.arrowRight),
         isRepeatable: true,
       ),
+      _TerminalKeySpec(
+        label: _showFnRow ? 'Fn On' : 'Fn',
+        onTap: _toggleFnRow,
+        isActive: _showFnRow,
+      ),
     ];
     final keyRowSecondaryBase = [
-      _TerminalKeySpec(
-        label: 'Bksp',
-        onTap: () => _sendTerminalKey(TerminalKey.backspace),
-        isRepeatable: true,
-      ),
-      _TerminalKeySpec(
-        label: 'Enter',
-        onTap: () => _sendTerminalKey(TerminalKey.enter),
-        isEmphasis: true,
-      ),
       _TerminalKeySpec(
         label: 'PgUp',
         onTap: () => _sendTerminalKey(TerminalKey.pageUp),
@@ -513,7 +519,16 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
                     : (_secondaryKeyPage == 1 && allowPaging
                           ? advancedKeys
                           : baseKeys)));
-    final toolActions = [
+    final commonActions = [
+      _TerminalToolAction(
+        label: isSystemKeyboardVisible ? 'Hide KB' : 'Show KB',
+        icon: isSystemKeyboardVisible
+            ? Icons.keyboard_hide_outlined
+            : Icons.keyboard_outlined,
+        onTap: () =>
+            _toggleTerminalKeyboard(isVisible: isSystemKeyboardVisible),
+        isActive: isSystemKeyboardVisible,
+      ),
       _TerminalToolAction(
         label: 'Paste',
         icon: Icons.content_paste,
@@ -529,12 +544,49 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         icon: Icons.search,
         onTap: () => unawaited(_showTerminalSearchSheet()),
       ),
-      _TerminalToolAction(
-        label: _showNavOnly ? 'Nav On' : 'Nav',
-        icon: Icons.navigation,
-        onTap: _toggleNavOnly,
-        isActive: _showNavOnly,
-      ),
+      if (!_isTerminalAtBottom)
+        _TerminalToolAction(
+          label: 'Bottom',
+          icon: Icons.vertical_align_bottom,
+          onTap: _jumpToTerminalBottom,
+        ),
+      if (_hasActiveModifiers)
+        _TerminalToolAction(
+          label: 'Mods Off',
+          icon: Icons.backspace_outlined,
+          onTap: _clearModifiers,
+          isActive: true,
+        ),
+    ];
+    final sessionActions = [
+      if (isDisconnected)
+        _TerminalToolAction(
+          label: 'Reconnect',
+          icon: Icons.wifi_protected_setup,
+          onTap: _attemptReconnect,
+          isActive: true,
+        ),
+      _TerminalToolAction(label: 'New', icon: Icons.add, onTap: _createSession),
+      if (_sessions.isNotEmpty)
+        _TerminalToolAction(
+          label: 'Sessions',
+          icon: Icons.layers_outlined,
+          onTap: _openSessionPicker,
+        ),
+      if (active != null)
+        _TerminalToolAction(
+          label: 'Rename',
+          icon: Icons.edit_outlined,
+          onTap: _renameActiveSession,
+        ),
+      if (active != null)
+        _TerminalToolAction(
+          label: 'Delete',
+          icon: Icons.delete_outline,
+          onTap: _deleteActiveSession,
+        ),
+    ];
+    final editActions = [
       _TerminalToolAction(
         label: 'Select',
         icon: Icons.select_all,
@@ -555,19 +607,14 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         icon: Icons.restart_alt,
         onTap: _resetTerminal,
       ),
-      if (!_isTerminalAtBottom)
-        _TerminalToolAction(
-          label: 'Bottom',
-          icon: Icons.vertical_align_bottom,
-          onTap: _jumpToTerminalBottom,
-        ),
-      if (_hasActiveModifiers)
-        _TerminalToolAction(
-          label: 'Mods Off',
-          icon: Icons.backspace_outlined,
-          onTap: _clearModifiers,
-          isActive: true,
-        ),
+    ];
+    final modeActions = [
+      _TerminalToolAction(
+        label: _showNavOnly ? 'Nav On' : 'Nav',
+        icon: Icons.navigation,
+        onTap: _toggleNavOnly,
+        isActive: _showNavOnly,
+      ),
       _TerminalToolAction(
         label: _selectionMode == SelectionMode.block ? 'Block' : 'Line',
         icon: Icons.text_fields,
@@ -599,289 +646,351 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
         onTap: () => unawaited(_showTerminalThemeSheet()),
       ),
     ];
-    return _TimelineDetailScaffold(
-      title: 'Terminal',
-      body: Column(
+    Widget buildOverlayIconButton({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback? onPressed,
+      bool isActive = false,
+    }) {
+      final foreground = onPressed == null
+          ? const Color(0xFF64748B)
+          : (isActive ? const Color(0xFFE2E8F0) : const Color(0xFFCBD5F5));
+      final background = onPressed == null
+          ? const Color(0x660F172A)
+          : (isActive ? const Color(0xE61E293B) : const Color(0xCC0F172A));
+      final border = onPressed == null
+          ? const Color(0x33475569)
+          : (isActive ? const Color(0xFF38BDF8) : const Color(0x66547569));
+      return IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          foregroundColor: foreground,
+          backgroundColor: background,
+          disabledForegroundColor: const Color(0xFF64748B),
+          disabledBackgroundColor: const Color(0x660F172A),
+          side: BorderSide(color: border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        icon: Icon(icon, size: 18),
+      );
+    }
+
+    Widget buildDockSectionTitle(String title) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            title,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: const Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildDockActionRow(List<_TerminalToolAction> actions) {
+      if (actions.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: actions
+              .map(
+                (action) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _TerminalToolButton(action: action),
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
+
+    final fallbackDockHeight = _showKeyBar ? 260.0 : 168.0;
+    final dockInsetForTerminal = _showTerminalDock
+        ? (_terminalDockHeight > 0 ? _terminalDockHeight : fallbackDockHeight)
+        : 0.0;
+
+    if (_showTerminalDock) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        final context = _terminalDockKey.currentContext;
+        final renderObject = context?.findRenderObject();
+        if (renderObject is! RenderBox) {
+          return;
+        }
+        final measuredHeight = renderObject.size.height;
+        if ((measuredHeight - _terminalDockHeight).abs() < 1) {
+          return;
+        }
+        _updateState(() {
+          _terminalDockHeight = measuredHeight;
+        });
+      });
+    }
+
+    return Scaffold(
+      body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        sessionLabel,
-                        style: headerStyle,
-                        overflow: TextOverflow.ellipsis,
+          Positioned.fill(
+            child: AnimatedPadding(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: dockInsetForTerminal),
+              child: Container(
+                color: terminalBackground,
+                child: terminal == null
+                    ? Center(
+                        child: Text(
+                          _remoteFetchError ?? 'Create a session to start.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: terminalForeground.withAlpha(210),
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : TerminalView(
+                        terminal,
+                        controller: _terminalController,
+                        focusNode: _terminalFocusNode,
+                        scrollController: _terminalScrollController,
+                        autofocus: true,
+                        theme: terminalTheme,
+                        textStyle: terminalStyle,
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+                        backgroundOpacity: 0,
+                        cursorType: TerminalCursorType.block,
+                        keyboardType: TextInputType.text,
+                        keyboardAppearance: isLightTerminal
+                            ? Brightness.light
+                            : Brightness.dark,
+                        deleteDetection: true,
+                        onKeyEvent: _handleTerminalViewKeyEvent,
+                        hardwareKeyboardOnly: _hardwareKeyboardOnly,
+                        readOnly: active == null || isEnded || isDisconnected,
+                      ),
+              ),
+            ),
+          ),
+          if (terminal != null && !_isTerminalAtBottom)
+            Positioned(
+              right: 12,
+              bottom: dockInsetForTerminal > 0 ? dockInsetForTerminal + 12 : 20,
+              child: InkWell(
+                onTap: _jumpToTerminalBottom,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: terminalOverlayBackground,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: terminalOverlayForeground.withAlpha(
+                        isLightTerminal ? 40 : 70,
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Rename session',
-                      onPressed: active == null ? null : _renameActiveSession,
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
-                    IconButton(
-                      tooltip: 'Delete session',
-                      onPressed: active == null ? null : _deleteActiveSession,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                    IconButton(
-                      tooltip: 'Switch session',
-                      onPressed: _sessions.isEmpty
-                          ? null
-                          : () => _openSessionPicker(),
-                      icon: const Icon(Icons.layers_outlined),
-                    ),
-                    IconButton(
-                      tooltip: 'New session',
-                      onPressed: _createSession,
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
+                  ),
                   child: Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusStyle.background,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          sessionStatus,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: statusStyle.foreground,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.4,
-                          ),
-                        ),
+                      Icon(
+                        Icons.vertical_align_bottom,
+                        size: 14,
+                        color: terminalOverlayForeground,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Text(
-                        connectionLabel,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF64748B),
-                          fontWeight: FontWeight.w600,
+                        'Bottom',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: terminalOverlayForeground,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (_terminalSearchQuery.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE2E8F0),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            'Search: "$_terminalSearchQuery"',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: const Color(0xFF334155),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
-                if (_remoteFetchError != null) ...[
-                  const SizedBox(height: 8),
-                  _InlineStatus(message: _remoteFetchError!, isError: true),
-                ] else if (showEmptyHint) ...[
-                  const SizedBox(height: 8),
-                  const _InlineStatus(message: 'No terminal sessions yet.'),
-                ],
-                if (resolvedStatusMessage case final statusMessage?) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    statusMessage,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: resolvedStatusIsError
-                          ? const Color(0xFFB91C1C)
-                          : const Color(0xFF16A34A),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-                if (isDisconnected) ...[
-                  const SizedBox(height: 6),
-                  _TerminalReconnectCard(onReconnect: _attemptReconnect),
-                ],
+              ),
+            ),
+          Positioned(
+            top: topPadding + 8,
+            left: 8,
+            child: buildOverlayIconButton(
+              icon: Icons.arrow_back,
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+          Positioned(
+            top: topPadding + 8,
+            right: 8,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                buildOverlayIconButton(
+                  icon: Icons.layers_outlined,
+                  tooltip: 'Switch session',
+                  onPressed: _sessions.isEmpty ? null : _openSessionPicker,
+                ),
+                const SizedBox(width: 8),
+                buildOverlayIconButton(
+                  icon: Icons.add,
+                  tooltip: 'New session',
+                  onPressed: _createSession,
+                ),
+                const SizedBox(width: 8),
+                buildOverlayIconButton(
+                  icon: _showTerminalDock ? Icons.tune : Icons.tune_outlined,
+                  tooltip: _showTerminalDock
+                      ? 'Hide terminal controls'
+                      : 'Show terminal controls',
+                  onPressed: _toggleTerminalDock,
+                  isActive: _showTerminalDock,
+                ),
               ],
             ),
           ),
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: terminalBackground,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: terminalBorderColor),
+          if (resolvedStatusMessage case final statusMessage?)
+            Positioned(
+              top: topPadding + 64,
+              left: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: resolvedStatusIsError
+                      ? const Color(0xCC7F1D1D)
+                      : const Color(0xCC14532D),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  statusMessage,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFFF8FAFC),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: terminal == null
-                          ? Center(
-                              child: Text(
-                                'Create a session to start.',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: terminalForeground.withAlpha(180),
-                                ),
-                              ),
-                            )
-                          : TerminalView(
-                              terminal,
-                              controller: _terminalController,
-                              focusNode: _terminalFocusNode,
-                              scrollController: _terminalScrollController,
-                              autofocus: true,
-                              theme: terminalTheme,
-                              textStyle: terminalStyle,
-                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
-                              backgroundOpacity: 0,
-                              cursorType: TerminalCursorType.block,
-                              keyboardType: TextInputType.text,
-                              keyboardAppearance: isLightTerminal
-                                  ? Brightness.light
-                                  : Brightness.dark,
-                              deleteDetection: true,
-                              onKeyEvent: _handleTerminalViewKeyEvent,
-                              hardwareKeyboardOnly: _hardwareKeyboardOnly,
-                              readOnly:
-                                  active == null || isEnded || isDisconnected,
+            ),
+          if (isDisconnected)
+            Positioned(
+              top: topPadding + (resolvedStatusMessage == null ? 64 : 112),
+              left: 12,
+              right: 12,
+              child: _TerminalReconnectCard(onReconnect: _attemptReconnect),
+            ),
+          if (_showTerminalDock)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Container(
+                  key: _terminalDockKey,
+                  padding: EdgeInsets.fromLTRB(10, 6, 10, _showKeyBar ? 10 : 6),
+                  decoration: const BoxDecoration(
+                    color: dockBackground,
+                    border: Border(top: BorderSide(color: Color(0xFF1E293B))),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Terminal Controls',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: const Color(0xFFE2E8F0),
+                              fontWeight: FontWeight.w700,
                             ),
-                    ),
-                    if (terminal != null && !_isTerminalAtBottom)
-                      Positioned(
-                        right: 12,
-                        bottom: 12,
-                        child: InkWell(
-                          onTap: _jumpToTerminalBottom,
-                          borderRadius: BorderRadius.circular(999),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: _showKeyBar
+                                ? 'Hide advanced controls'
+                                : 'Show advanced controls',
+                            onPressed: _toggleKeyBar,
+                            icon: Icon(
+                              _showKeyBar
+                                  ? Icons.unfold_less
+                                  : Icons.unfold_more,
+                              color: const Color(0xFFE2E8F0),
                             ),
-                            decoration: BoxDecoration(
-                              color: terminalOverlayBackground,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: terminalOverlayForeground.withAlpha(
-                                  isLightTerminal ? 40 : 70,
-                                ),
-                              ),
+                          ),
+                          IconButton(
+                            tooltip: 'Hide terminal controls',
+                            onPressed: _toggleTerminalDock,
+                            icon: const Icon(
+                              Icons.close,
+                              color: Color(0xFFE2E8F0),
                             ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.vertical_align_bottom,
-                                  size: 14,
-                                  color: terminalOverlayForeground,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Bottom',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: terminalOverlayForeground,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      buildDockSectionTitle('Common Keys'),
+                      _buildKeyRow(keyRowPrimary),
+                      const SizedBox(height: 8),
+                      buildDockSectionTitle('Common Actions'),
+                      buildDockActionRow(commonActions),
+                      AnimatedCrossFade(
+                        duration: const Duration(milliseconds: 200),
+                        crossFadeState: _showKeyBar
+                            ? CrossFadeState.showSecond
+                            : CrossFadeState.showFirst,
+                        firstChild: const SizedBox.shrink(),
+                        secondChild: Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Column(
+                            children: [
+                              if (sessionActions.isNotEmpty) ...[
+                                buildDockSectionTitle('Session'),
+                                buildDockActionRow(sessionActions),
+                                const SizedBox(height: 8),
                               ],
-                            ),
+                              buildDockSectionTitle('Editing'),
+                              buildDockActionRow(editActions),
+                              const SizedBox(height: 8),
+                              buildDockSectionTitle('Input & Display'),
+                              buildDockActionRow(modeActions),
+                              if (!_showNavOnly) ...[
+                                const SizedBox(height: 6),
+                                buildDockSectionTitle('Advanced Keys'),
+                                _buildKeyRow(keyRowSecondary),
+                                if (isWideLayout && !_showFnRow) ...[
+                                  const SizedBox(height: 6),
+                                  _buildKeyRow(keyRowSecondaryAdvanced),
+                                  if (_secondaryKeyPage == 2) ...[
+                                    const SizedBox(height: 6),
+                                    _buildKeyRow(keyRowSecondarySymbols),
+                                  ],
+                                ],
+                              ],
+                            ],
                           ),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Container(
-            padding: EdgeInsets.fromLTRB(10, 6, 10, _showKeyBar ? 10 : 6),
-            decoration: const BoxDecoration(
-              color: dockBackground,
-              border: Border(top: BorderSide(color: Color(0xFF1E293B))),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const Spacer(),
-                    IconButton(
-                      tooltip: _showKeyBar ? 'Hide keys' : 'Show keys',
-                      onPressed: () {
-                        setState(() {
-                          _showKeyBar = !_showKeyBar;
-                        });
-                      },
-                      icon: Icon(
-                        _showKeyBar
-                            ? Icons.keyboard_hide_outlined
-                            : Icons.keyboard_outlined,
-                        color: const Color(0xFFE2E8F0),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: toolActions
-                        .map(
-                          (action) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: _TerminalToolButton(action: action),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-                AnimatedCrossFade(
-                  duration: const Duration(milliseconds: 200),
-                  crossFadeState: _showKeyBar
-                      ? CrossFadeState.showSecond
-                      : CrossFadeState.showFirst,
-                  firstChild: const SizedBox.shrink(),
-                  secondChild: Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Column(
-                      children: [
-                        _buildKeyRow(keyRowPrimary),
-                        if (!_showNavOnly) ...[
-                          const SizedBox(height: 6),
-                          _buildKeyRow(keyRowSecondary),
-                          if (isWideLayout && !_showFnRow) ...[
-                            const SizedBox(height: 6),
-                            _buildKeyRow(keyRowSecondaryAdvanced),
-                            if (_secondaryKeyPage == 2) ...[
-                              const SizedBox(height: 6),
-                              _buildKeyRow(keyRowSecondarySymbols),
-                            ],
-                          ],
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );

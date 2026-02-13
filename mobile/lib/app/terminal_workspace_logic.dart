@@ -333,6 +333,40 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     _focusTerminal();
   }
 
+  void _toggleTerminalDock() {
+    _updateState(() {
+      _showTerminalDock = !_showTerminalDock;
+      if (!_showTerminalDock) {
+        _terminalDockHeight = 0;
+      }
+    });
+    if (_showTerminalDock) {
+      _focusTerminal();
+    }
+  }
+
+  void _toggleKeyBar() {
+    _updateState(() {
+      _showKeyBar = !_showKeyBar;
+    });
+    _focusTerminal();
+  }
+
+  void _toggleTerminalKeyboard({required bool isVisible}) {
+    if (isVisible) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+      return;
+    }
+    if (_hardwareKeyboardOnly) {
+      _updateState(() {
+        _hardwareKeyboardOnly = false;
+      });
+    }
+    _focusTerminal();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.show'));
+  }
+
   void _clearModifiers() {
     _updateState(() {
       _ctrlModifier = false;

@@ -342,9 +342,10 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         if (widget.initialEvent?.sessionId == session.id) {
           event = widget.initialEvent;
         }
-        final output = event == null
+        final parsedOutput = event == null
             ? <TerminalOutputEntry>[]
             : _parseOutputEntries(event.payload, event.createdAt);
+        final output = _sanitizeTerminalEntries(session.id, parsedOutput);
         final lastCommand = event?.payload['command']?.toString();
         final nextSeq = event == null ? 0 : _parseNextSeq(event.payload);
         final notificationSeq = event == null
@@ -613,18 +614,33 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       if (!ready) {
         return;
       }
+      if (force) {
+        final snapshotPayload = await agentClient.sendTerminalAction(
+          action: 'status',
+          sessionId: active.session.id,
+          notifySince: active.notificationSeq,
+        );
+        await _applyTerminalPayload(
+          sessionId: active.session.id,
+          payload: snapshotPayload,
+          event: active.lastEvent,
+          command: active.lastCommand,
+          preferSnapshot: true,
+        );
+      }
+      final latest = _sessionById(active.session.id) ?? active;
       final payload = await agentClient.sendTerminalAction(
         action: 'poll',
-        sessionId: active.session.id,
-        since: _terminalSince(active.nextSeq),
+        sessionId: latest.session.id,
+        since: _terminalSince(latest.nextSeq),
         limit: _maxOutputEntries,
-        notifySince: active.notificationSeq,
+        notifySince: latest.notificationSeq,
       );
       await _applyTerminalPayload(
-        sessionId: active.session.id,
+        sessionId: latest.session.id,
         payload: payload,
-        event: active.lastEvent,
-        command: active.lastCommand,
+        event: latest.lastEvent,
+        command: latest.lastCommand,
       );
     } on AgentCommandFailure catch (error) {
       final presentation = _presentAgentFailure(
@@ -1003,6 +1019,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       _disconnectTerminalStream();
     }
     _commandBuffers.remove(sessionId);
+    _terminalOutputSanitizers.remove(sessionId);
     _terminalSizes.remove(sessionId);
     _terminalPersistedAt.remove(sessionId);
     _terminalGapWarned.remove(sessionId);
@@ -1747,6 +1764,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     required Map<String, dynamic> payload,
     TimelineEvent? event,
     String? command,
+    bool preferSnapshot = false,
   }) async {
     final view = _sessionById(sessionId);
     if (view == null) {
@@ -1776,6 +1794,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         (truncated && view.nextSeq <= 1) ||
         (view.nextSeq <= 1 && firstSeq != null && firstSeq > 1);
     final shouldReset = action == 'start' || nextSeq < view.nextSeq || hasGap;
+    if (shouldReset) {
+      _terminalOutputSanitizers[sessionId]?.reset();
+    }
     final parsedExitCode = _parseExitCode(payload);
     final exitCode =
         parsedExitCode ??
@@ -1789,9 +1810,13 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       DateTime.now(),
       minSeq: shouldReset ? 0 : lastDelivered,
     );
+    final sanitizedOutputEntries = _sanitizeTerminalEntries(
+      sessionId,
+      outputEntries,
+    );
     final mergedOutput = shouldReset
-        ? outputEntries
-        : _mergeOutputEntries(view.output, outputEntries);
+        ? sanitizedOutputEntries
+        : _mergeOutputEntries(view.output, sanitizedOutputEntries);
     final updatedSession = _sessionWithStatus(
       view.session,
       status,
@@ -1827,8 +1852,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       }
     }
     await _persistSession(updatedSession);
-    final shouldApplySnapshot =
-        snapshot != null && (shouldReset || action == 'status');
+    final shouldApplySnapshot = snapshot != null
+        ? (preferSnapshot || shouldReset || action == 'status')
+        : false;
     if (shouldApplySnapshot) {
       _resetTerminalSession(sessionId);
       _writeTerminalSnapshot(sessionId, snapshot);
@@ -1836,7 +1862,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       if (shouldReset) {
         _resetTerminalSession(sessionId);
       }
-      _appendTerminalOutput(sessionId, outputEntries);
+      _appendTerminalOutput(sessionId, sanitizedOutputEntries);
     }
 
     final resolvedCommand =
@@ -1910,6 +1936,38 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     terminal.write(buffer.toString());
   }
 
+  TerminalOutputSanitizer _terminalOutputSanitizer(String sessionId) {
+    return _terminalOutputSanitizers.putIfAbsent(
+      sessionId,
+      () => TerminalOutputSanitizer(),
+    );
+  }
+
+  List<TerminalOutputEntry> _sanitizeTerminalEntries(
+    String sessionId,
+    List<TerminalOutputEntry> entries,
+  ) {
+    if (entries.isEmpty) {
+      return entries;
+    }
+    final sanitizer = _terminalOutputSanitizer(sessionId);
+    final sanitized = <TerminalOutputEntry>[];
+    for (final entry in entries) {
+      final text = sanitizer.sanitize(entry.text);
+      if (text.isEmpty) {
+        continue;
+      }
+      sanitized.add(
+        TerminalOutputEntry(
+          stream: entry.stream,
+          text: text,
+          timestamp: entry.timestamp,
+        ),
+      );
+    }
+    return sanitized;
+  }
+
   void _writeTerminalSnapshot(String sessionId, String? snapshot) {
     if (snapshot == null || snapshot.isEmpty) {
       return;
@@ -1918,7 +1976,11 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (terminal == null) {
       return;
     }
-    terminal.write(snapshot);
+    final sanitized = _terminalOutputSanitizer(sessionId).sanitize(snapshot);
+    if (sanitized.isEmpty) {
+      return;
+    }
+    terminal.write(sanitized);
   }
 
   bool _shouldPersistTerminalEvent(String sessionId, String status) {
@@ -2032,6 +2094,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
     if (terminal == null) {
       return;
     }
+    _terminalOutputSanitizers[sessionId]?.reset();
     terminal.write('\x1bc');
   }
 

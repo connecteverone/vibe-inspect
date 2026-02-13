@@ -17,6 +17,7 @@ import 'package:mobile/roi/roi_models.dart';
 import 'package:mobile/roi/roi_quic_client.dart';
 import 'package:mobile/roi/roi_renderer.dart';
 import 'package:mobile/app/terminal_input_policy.dart';
+import 'package:mobile/app/terminal_output_sanitizer.dart';
 import 'package:mobile/remote/media_protocol.dart';
 import 'package:mobile/remote/cursor_motion_filter.dart';
 import 'package:mobile/remote/remote_quic_client.dart';

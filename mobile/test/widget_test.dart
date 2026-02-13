@@ -453,8 +453,8 @@ void main() {
     await tester.tap(terminalSessionFinder);
     await tester.pumpAndSettle();
 
-    expect(find.text('Terminal'), findsOneWidget);
-    expect(find.text('Build logs'), findsWidgets);
+    expect(find.byTooltip('Back'), findsOneWidget);
+    expect(find.byTooltip('Show terminal controls'), findsOneWidget);
     expect(find.byType(TerminalView), findsOneWidget);
   });
 
