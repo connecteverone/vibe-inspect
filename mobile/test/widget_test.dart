@@ -83,7 +83,7 @@ void main() {
     expect(find.text('ABC123'), findsOneWidget);
   });
 
-  testWidgets('Expired token shows retry prompt', (tester) async {
+  testWidgets('Expired token shows distinct recovery actions', (tester) async {
     await tester.pumpWidget(
       const VibeInspectApp(
         storageInitializer: MemoryStorageInitializer(),
@@ -113,6 +113,26 @@ void main() {
 
     expect(find.textContaining('Token expired'), findsOneWidget);
     expect(find.byKey(const Key('retryButton')), findsOneWidget);
+    expect(
+      find.widgetWithText(OutlinedButton, 'Scan new token'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('retryPairingButton')), findsOneWidget);
+    expect(find.text('Retry current token'), findsOneWidget);
+    expect(find.text('Retry pairing'), findsNothing);
+
+    await tester.ensureVisible(find.byKey(const Key('retryPairingButton')));
+    await tester.tap(find.byKey(const Key('retryPairingButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('qrPayloadField')), findsNothing);
+    expect(find.textContaining('Token expired'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('retryButton')));
+    await tester.tap(find.byKey(const Key('retryButton')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('qrPayloadField')), findsOneWidget);
   });
 
   testWidgets('Unsupported protocol token is blocked before pairing request', (
@@ -199,7 +219,7 @@ void main() {
     await tester.tap(find.byKey(const Key('applyQrButton')));
     await tester.pumpAndSettle();
 
-    final useButton = find.widgetWithText(OutlinedButton, 'Use').first;
+    final useButton = find.widgetWithText(OutlinedButton, 'Use endpoint').first;
     await tester.tap(useButton);
     await tester.pumpAndSettle();
 

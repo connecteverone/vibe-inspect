@@ -47,6 +47,16 @@ class _PairingScreenState extends State<PairingScreen> {
   String? _importStatus;
   bool _importStatusIsError = false;
   static const String _clientIdStorageKey = 'mobile_client_id';
+  static const String _expiredTokenMessage =
+      'Token expired. Scan a new token to continue.';
+  static const String _scanQrTokenButtonLabel = 'Scan QR token';
+  static const String _connectFixedTokenButtonLabel = 'Connect via fixed token';
+  static const String _useEndpointButtonLabel = 'Use endpoint';
+  static const String _scanNewTokenButtonLabel = 'Scan new token';
+  static const String _retryCurrentTokenButtonLabel = 'Retry current token';
+  static const String _clearSelectedEndpointButtonLabel =
+      'Clear selected endpoint';
+  static const String _rescanQrTokenButtonLabel = 'Rescan QR token';
 
   @override
   void initState() {
@@ -140,7 +150,7 @@ class _PairingScreenState extends State<PairingScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Connect with fixed token'),
+          title: const Text('Connect via fixed token'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -286,7 +296,7 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
       if (parsed != null && parsed.isExpired) {
-        _scanError = 'Token expired. Request a new token and retry.';
+        _scanError = _expiredTokenMessage;
       } else if (parsed != null && !parsed.isProtocolSupported) {
         _scanError = _unsupportedProtocolMessage(parsed);
       }
@@ -373,7 +383,7 @@ class _PairingScreenState extends State<PairingScreen> {
     }
     if (payload.isExpired) {
       setState(() {
-        _scanError = 'Token expired. Request a new token and retry.';
+        _scanError = _expiredTokenMessage;
       });
       if (widget.enableConnectivityRefresh) {
         await _refreshAgentConnectivity();
@@ -410,7 +420,7 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingPoller?.cancel();
       if (mounted) {
         setState(() {
-          _pairingStatus = 'Token expired. Request a new token and retry.';
+          _pairingStatus = _expiredTokenMessage;
           _pairingStatusIsError = true;
         });
       }
@@ -1048,6 +1058,11 @@ class _PairingScreenState extends State<PairingScreen> {
       _pairingAgentUrl = null;
       _pairingUsesTunnel = null;
     });
+  }
+
+  Future<void> _resetAndScanNewToken() async {
+    _resetPairing();
+    await _scanQrPayload();
   }
 
   Future<void> _recordPairingEvent(
@@ -2035,13 +2050,13 @@ class _PairingScreenState extends State<PairingScreen> {
                           key: const Key('scanQrButton'),
                           onPressed: _scanQrPayload,
                           icon: const Icon(Icons.qr_code_2),
-                          label: const Text('Scan QR token'),
+                          label: const Text(_scanQrTokenButtonLabel),
                         ),
                         const SizedBox(height: 8),
                         OutlinedButton.icon(
                           onPressed: _connectWithFixedToken,
                           icon: const Icon(Icons.vpn_key),
-                          label: const Text('Use fixed token'),
+                          label: const Text(_connectFixedTokenButtonLabel),
                         ),
                         const SizedBox(height: 16),
                         if (_payload == null)
@@ -2082,7 +2097,9 @@ class _PairingScreenState extends State<PairingScreen> {
                                       OutlinedButton(
                                         onPressed: () =>
                                             _selectManualAgentUrl(url),
-                                        child: const Text('Use'),
+                                        child: const Text(
+                                          _useEndpointButtonLabel,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -2124,8 +2141,8 @@ class _PairingScreenState extends State<PairingScreen> {
                           const SizedBox(height: 12),
                           OutlinedButton(
                             key: const Key('retryButton'),
-                            onPressed: _resetPairing,
-                            child: const Text('Retry pairing'),
+                            onPressed: _resetAndScanNewToken,
+                            child: const Text(_scanNewTokenButtonLabel),
                           ),
                         ],
                         const SizedBox(height: 12),
@@ -2189,7 +2206,9 @@ class _PairingScreenState extends State<PairingScreen> {
                             alignment: Alignment.centerLeft,
                             child: TextButton(
                               onPressed: _clearManualAgentUrl,
-                              child: const Text('Clear manual endpoint'),
+                              child: const Text(
+                                _clearSelectedEndpointButtonLabel,
+                              ),
                             ),
                           ),
                         ],
@@ -2217,7 +2236,7 @@ class _PairingScreenState extends State<PairingScreen> {
                               key: const Key('regenerateQrButton'),
                               onPressed: _scanQrPayload,
                               icon: const Icon(Icons.qr_code_2),
-                              label: const Text('重新生成二维码'),
+                              label: const Text(_rescanQrTokenButtonLabel),
                             ),
                           ),
                         ],
@@ -2248,7 +2267,7 @@ class _PairingScreenState extends State<PairingScreen> {
                           key: const Key('retryPairingButton'),
                           onPressed: _payload == null ? null : _retryPairing,
                           icon: const Icon(Icons.refresh),
-                          label: const Text('Retry pairing'),
+                          label: const Text(_retryCurrentTokenButtonLabel),
                         ),
                       ],
                     ),
