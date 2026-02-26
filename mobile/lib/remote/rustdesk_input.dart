@@ -125,11 +125,29 @@ class RustdeskInputController extends ChangeNotifier {
   }
 
   void inputKey(String name) {
+    inputKeyWithModifiers(name);
+  }
+
+  void inputKeyWithModifiers(
+    String name, {
+    bool alt = false,
+    bool ctrl = false,
+    bool shift = false,
+    bool command = false,
+  }) {
     final sessionId = _sessionId;
     if (sessionId == null) {
       return;
     }
-    _bridge.sessionInputKey(sessionId, name: name, press: true);
+    _bridge.sessionInputKey(
+      sessionId,
+      name: name,
+      press: true,
+      alt: alt,
+      ctrl: ctrl,
+      shift: shift,
+      command: command,
+    );
   }
 
   void inputString(String value) {

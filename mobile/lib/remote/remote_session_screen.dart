@@ -5,7 +5,6 @@ const double _rustdeskZoomMax = 3.0;
 const double _rustdeskZoomDefault = 1.0;
 const double _rustdeskZoomBarWidth = 48;
 const double _rustdeskTrackpadHeightPortrait = 180;
-const double _rustdeskTrackpadMinHeight = 120;
 const double _rustdeskMouseButtonHeight = 48;
 const double _rustdeskControlGap = 12;
 const double _rustdeskButtonGap = 8;
@@ -14,6 +13,9 @@ const double _rustdeskPortraitControlsHeight =
     _rustdeskMouseButtonHeight +
     _rustdeskButtonGap;
 const double _rustdeskZoomSnapRange = 0.05;
+const double _rustdeskKeyboardPanelMinHeight = 220;
+const double _rustdeskKeyboardPanelMaxHeight = 340;
+const double _rustdeskKeyboardPanelHeightFactor = 0.34;
 
 class RemoteSessionScreen extends StatefulWidget {
   const RemoteSessionScreen({
@@ -416,6 +418,8 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
   bool? _hostNaturalScroll;
+  bool _showPortraitKeyboardPanel = false;
+  late final TextEditingController _keyboardTextController;
 
   @override
   void initState() {
@@ -428,6 +432,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     );
     _inputController = RustdeskInputController(bridge: RustdeskBridge.instance);
     _inputController.setTrackpadScrollBehavior(const TrackpadScrollBehavior());
+    _keyboardTextController = TextEditingController();
     _controller.addListener(_handleControllerUpdate);
     _bootstrap();
   }
@@ -565,6 +570,24 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     _updateZoomValue(_rustdeskZoomDefault);
   }
 
+  void _togglePortraitKeyboardPanel() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _showPortraitKeyboardPanel = !_showPortraitKeyboardPanel;
+    });
+  }
+
+  void _hidePortraitKeyboardPanel() {
+    if (!_showPortraitKeyboardPanel || !mounted) {
+      return;
+    }
+    setState(() {
+      _showPortraitKeyboardPanel = false;
+    });
+  }
+
   @override
   void dispose() {
     if (_isFullscreen) {
@@ -572,6 +595,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     }
     _inputController.leftUp();
     _inputController.rightUp();
+    _keyboardTextController.dispose();
     _controller.removeListener(_handleControllerUpdate);
     _controller.dispose();
     super.dispose();
@@ -878,23 +902,53 @@ extension on _RemoteSessionScreenState {
             ? display.width / display.height
             : (16 / 9);
         final desiredHeight = maxWidth / aspect;
-        final controlsMinHeight =
-            _rustdeskTrackpadMinHeight +
-            _rustdeskMouseButtonHeight +
-            _rustdeskButtonGap;
+        final mediaQuery = MediaQuery.of(context);
+        final supportsInlineKeyboard =
+            mediaQuery.orientation == Orientation.portrait;
+        final adaptiveInlineKeyboardHeight =
+            (mediaQuery.size.height * _rustdeskKeyboardPanelHeightFactor)
+                .clamp(
+                  _rustdeskKeyboardPanelMinHeight,
+                  _rustdeskKeyboardPanelMaxHeight,
+                )
+                .toDouble();
+        final baseInlineKeyboardHeight =
+            supportsInlineKeyboard && _showPortraitKeyboardPanel
+            ? adaptiveInlineKeyboardHeight
+            : 0.0;
+        final inlineKeyboardHeight = fullscreen
+            ? math.min(
+                baseInlineKeyboardHeight,
+                math.max(0.0, constraints.maxHeight - _rustdeskControlGap),
+              )
+            : baseInlineKeyboardHeight;
+        final showInlineKeyboard = inlineKeyboardHeight > 0;
+        final inlineKeyboardGap = showInlineKeyboard
+            ? _rustdeskControlGap
+            : 0.0;
         final rawMaxHeight = fullscreen
-            ? (constraints.maxHeight - controlsMinHeight - _rustdeskControlGap)
+            ? constraints.maxHeight -
+                  _rustdeskControlGap -
+                  inlineKeyboardGap -
+                  inlineKeyboardHeight
             : desiredHeight;
         final maxHeight = fullscreen
-            ? math.max(160.0, rawMaxHeight)
+            ? math.max(0.0, rawMaxHeight)
             : rawMaxHeight;
+        final minRemoteHeight = fullscreen
+            ? math.min(160.0, maxHeight)
+            : desiredHeight;
         final remoteHeight = fullscreen
-            ? desiredHeight.clamp(160.0, maxHeight).toDouble()
+            ? desiredHeight.clamp(minRemoteHeight, maxHeight).toDouble()
             : desiredHeight;
         final controlsHeight = fullscreen
             ? math.max(
-                controlsMinHeight,
-                constraints.maxHeight - remoteHeight - _rustdeskControlGap,
+                0.0,
+                constraints.maxHeight -
+                    remoteHeight -
+                    _rustdeskControlGap -
+                    inlineKeyboardGap -
+                    inlineKeyboardHeight,
               )
             : _rustdeskPortraitControlsHeight;
         return Column(
@@ -919,9 +973,13 @@ extension on _RemoteSessionScreenState {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       RustdeskIconButton(
-                        icon: Icons.keyboard,
+                        icon: _showPortraitKeyboardPanel
+                            ? Icons.keyboard_hide
+                            : Icons.keyboard,
                         onPressed: _showKeyboardPanel,
-                        tooltip: 'Keyboard input',
+                        tooltip: _showPortraitKeyboardPanel
+                            ? 'Hide keyboard input'
+                            : 'Keyboard input',
                         glassStyle: fullscreen,
                         darkBackground: _overlayOnDarkBackground,
                       ),
@@ -942,6 +1000,18 @@ extension on _RemoteSessionScreenState {
                 ),
               ],
             ),
+            if (showInlineKeyboard) ...[
+              const SizedBox(height: _rustdeskControlGap),
+              SizedBox(
+                height: inlineKeyboardHeight,
+                child: RustdeskKeyboardPanel(
+                  input: _inputController,
+                  controller: _keyboardTextController,
+                  closeLabel: 'Hide',
+                  onClose: _hidePortraitKeyboardPanel,
+                ),
+              ),
+            ],
             const SizedBox(height: _rustdeskControlGap),
             _buildPortraitControls(
               glassStyle: false,
@@ -960,7 +1030,7 @@ extension on _RemoteSessionScreenState {
     required double controlsHeight,
   }) {
     final trackpadHeight = math.max(
-      _rustdeskTrackpadMinHeight,
+      0.0,
       controlsHeight - _rustdeskMouseButtonHeight - _rustdeskButtonGap,
     );
     return Row(
@@ -1048,6 +1118,11 @@ extension on _RemoteSessionScreenState {
   }
 
   void _showKeyboardPanel() {
+    final orientation = MediaQuery.of(context).orientation;
+    if (orientation == Orientation.portrait) {
+      _togglePortraitKeyboardPanel();
+      return;
+    }
     showRustdeskKeyboardSheet(context, _inputController);
   }
 }
