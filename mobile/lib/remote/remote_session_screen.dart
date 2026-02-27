@@ -418,7 +418,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
   bool? _hostNaturalScroll;
-  bool _showPortraitKeyboardPanel = false;
+  bool _showKeyboardPanel = false;
   late final TextEditingController _keyboardTextController;
 
   @override
@@ -570,21 +570,21 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
     _updateZoomValue(_rustdeskZoomDefault);
   }
 
-  void _togglePortraitKeyboardPanel() {
+  void _toggleKeyboardPanel() {
     if (!mounted) {
       return;
     }
     setState(() {
-      _showPortraitKeyboardPanel = !_showPortraitKeyboardPanel;
+      _showKeyboardPanel = !_showKeyboardPanel;
     });
   }
 
-  void _hidePortraitKeyboardPanel() {
-    if (!_showPortraitKeyboardPanel || !mounted) {
+  void _hideKeyboardPanel() {
+    if (!_showKeyboardPanel || !mounted) {
       return;
     }
     setState(() {
-      _showPortraitKeyboardPanel = false;
+      _showKeyboardPanel = false;
     });
   }
 
@@ -780,8 +780,30 @@ extension on _RemoteSessionScreenState {
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final leftPaneWidth = constraints.maxWidth * 0.5;
-                    final rightPaneWidth = constraints.maxWidth - leftPaneWidth;
+                    const minControlsWidth = 320.0;
+                    final maxKeyboardWidth = math.max(
+                      0.0,
+                      constraints.maxWidth -
+                          minControlsWidth -
+                          _rustdeskControlGap,
+                    );
+                    final preferredKeyboardWidth = math.min(
+                      360.0,
+                      constraints.maxWidth * 0.38,
+                    );
+                    final keyboardPanelWidth = _showKeyboardPanel
+                        ? preferredKeyboardWidth
+                              .clamp(0.0, maxKeyboardWidth)
+                              .toDouble()
+                        : 0.0;
+                    final hasDockedKeyboard = keyboardPanelWidth > 0;
+                    final controlsWidth =
+                        constraints.maxWidth -
+                        (hasDockedKeyboard
+                            ? keyboardPanelWidth + _rustdeskControlGap
+                            : 0.0);
+                    final leftPaneWidth = controlsWidth * 0.5;
+                    final rightPaneWidth = controlsWidth - leftPaneWidth;
                     final buttonLeftInset =
                         _rustdeskZoomBarWidth + _rustdeskControlGap;
                     return Stack(
@@ -789,83 +811,126 @@ extension on _RemoteSessionScreenState {
                         Row(
                           children: [
                             SizedBox(
-                              width: leftPaneWidth,
-                              child: Stack(
+                              width: controlsWidth,
+                              child: Row(
                                 children: [
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: SizedBox(
-                                      width: _rustdeskZoomBarWidth,
-                                      height: constraints.maxHeight,
-                                      child: RustdeskZoomBar(
-                                        value: _zoomValue,
-                                        min: _rustdeskZoomMin,
-                                        max: _rustdeskZoomMax,
-                                        enabled: true,
-                                        glassStyle: true,
-                                        darkBackground:
-                                            _overlayOnDarkBackground,
-                                        onValueChanged: _updateZoomValue,
-                                        onValueCommitted: _commitZoomValue,
-                                        onReset: _resetZoom,
-                                      ),
-                                    ),
-                                  ),
-                                  Positioned(
-                                    left: buttonLeftInset,
-                                    right: _rustdeskControlGap,
-                                    bottom: 0,
-                                    child: Row(
+                                  SizedBox(
+                                    width: leftPaneWidth,
+                                    child: Stack(
                                       children: [
-                                        Expanded(
-                                          child: RustdeskMouseButton(
-                                            label: 'Left click',
-                                            onDown: _inputController.leftDown,
-                                            onUp: _inputController.leftUp,
-                                            glassStyle: true,
-                                            darkBackground:
-                                                _overlayOnDarkBackground,
+                                        Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: SizedBox(
+                                            width: _rustdeskZoomBarWidth,
+                                            height: constraints.maxHeight,
+                                            child: RustdeskZoomBar(
+                                              value: _zoomValue,
+                                              min: _rustdeskZoomMin,
+                                              max: _rustdeskZoomMax,
+                                              enabled: true,
+                                              glassStyle: true,
+                                              darkBackground:
+                                                  _overlayOnDarkBackground,
+                                              onValueChanged: _updateZoomValue,
+                                              onValueCommitted:
+                                                  _commitZoomValue,
+                                              onReset: _resetZoom,
+                                            ),
                                           ),
                                         ),
-                                        const SizedBox(
-                                          width: _rustdeskButtonGap,
-                                        ),
-                                        Expanded(
-                                          child: RustdeskMouseButton(
-                                            label: 'Right click',
-                                            onDown: _inputController.rightDown,
-                                            onUp: _inputController.rightUp,
-                                            glassStyle: true,
-                                            darkBackground:
-                                                _overlayOnDarkBackground,
+                                        Positioned(
+                                          left: buttonLeftInset,
+                                          right: _rustdeskControlGap,
+                                          bottom: 0,
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: RustdeskMouseButton(
+                                                  label: 'Left click',
+                                                  onDown:
+                                                      _inputController.leftDown,
+                                                  onUp: _inputController.leftUp,
+                                                  glassStyle: true,
+                                                  darkBackground:
+                                                      _overlayOnDarkBackground,
+                                                ),
+                                              ),
+                                              const SizedBox(
+                                                width: _rustdeskButtonGap,
+                                              ),
+                                              Expanded(
+                                                child: RustdeskMouseButton(
+                                                  label: 'Right click',
+                                                  onDown: _inputController
+                                                      .rightDown,
+                                                  onUp:
+                                                      _inputController.rightUp,
+                                                  glassStyle: true,
+                                                  darkBackground:
+                                                      _overlayOnDarkBackground,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
+                                  SizedBox(
+                                    width: rightPaneWidth,
+                                    child: RustdeskTrackpadSurface(
+                                      input: _inputController,
+                                      height: constraints.maxHeight,
+                                      glassStyle: true,
+                                      darkBackground: _overlayOnDarkBackground,
+                                      showLabel: false,
+                                      onInteractionChanged:
+                                          _handleTrackpadInteractionChanged,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
-                            SizedBox(
-                              width: rightPaneWidth,
-                              child: RustdeskTrackpadSurface(
-                                input: _inputController,
+                            if (hasDockedKeyboard)
+                              const SizedBox(width: _rustdeskControlGap),
+                            if (hasDockedKeyboard)
+                              SizedBox(
+                                width: keyboardPanelWidth,
                                 height: constraints.maxHeight,
-                                glassStyle: true,
-                                darkBackground: _overlayOnDarkBackground,
-                                showLabel: false,
-                                onInteractionChanged:
-                                    _handleTrackpadInteractionChanged,
+                                child: RustdeskKeyboardPanel(
+                                  input: _inputController,
+                                  controller: _keyboardTextController,
+                                  closeLabel: 'Hide',
+                                  onClose: _hideKeyboardPanel,
+                                ),
                               ),
-                            ),
                           ],
                         ),
                         Align(
                           alignment: Alignment.topRight,
-                          child: RustdeskMoreMenuButton(
-                            onKeyboard: _showKeyboardPanel,
-                            onExitFullscreen: _toggleFullscreen,
-                            darkBackground: _overlayOnDarkBackground,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              RustdeskIconButton(
+                                icon: _showKeyboardPanel
+                                    ? Icons.keyboard_hide
+                                    : Icons.keyboard,
+                                onPressed: _toggleKeyboardPanel,
+                                tooltip: _showKeyboardPanel
+                                    ? 'Hide keyboard input'
+                                    : 'Keyboard input',
+                                glassStyle: true,
+                                darkBackground: _overlayOnDarkBackground,
+                              ),
+                              const SizedBox(width: 8),
+                              RustdeskMoreMenuButton(
+                                onKeyboard: _toggleKeyboardPanel,
+                                showKeyboardAction: !hasDockedKeyboard,
+                                keyboardVisible: _showKeyboardPanel,
+                                onExitFullscreen: _toggleFullscreen,
+                                darkBackground: _overlayOnDarkBackground,
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -903,8 +968,6 @@ extension on _RemoteSessionScreenState {
             : (16 / 9);
         final desiredHeight = maxWidth / aspect;
         final mediaQuery = MediaQuery.of(context);
-        final supportsInlineKeyboard =
-            mediaQuery.orientation == Orientation.portrait;
         final adaptiveInlineKeyboardHeight =
             (mediaQuery.size.height * _rustdeskKeyboardPanelHeightFactor)
                 .clamp(
@@ -912,8 +975,7 @@ extension on _RemoteSessionScreenState {
                   _rustdeskKeyboardPanelMaxHeight,
                 )
                 .toDouble();
-        final baseInlineKeyboardHeight =
-            supportsInlineKeyboard && _showPortraitKeyboardPanel
+        final baseInlineKeyboardHeight = _showKeyboardPanel
             ? adaptiveInlineKeyboardHeight
             : 0.0;
         final inlineKeyboardHeight = fullscreen
@@ -973,11 +1035,11 @@ extension on _RemoteSessionScreenState {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       RustdeskIconButton(
-                        icon: _showPortraitKeyboardPanel
+                        icon: _showKeyboardPanel
                             ? Icons.keyboard_hide
                             : Icons.keyboard,
-                        onPressed: _showKeyboardPanel,
-                        tooltip: _showPortraitKeyboardPanel
+                        onPressed: _toggleKeyboardPanel,
+                        tooltip: _showKeyboardPanel
                             ? 'Hide keyboard input'
                             : 'Keyboard input',
                         glassStyle: fullscreen,
@@ -1000,18 +1062,30 @@ extension on _RemoteSessionScreenState {
                 ),
               ],
             ),
-            if (showInlineKeyboard) ...[
-              const SizedBox(height: _rustdeskControlGap),
-              SizedBox(
-                height: inlineKeyboardHeight,
-                child: RustdeskKeyboardPanel(
-                  input: _inputController,
-                  controller: _keyboardTextController,
-                  closeLabel: 'Hide',
-                  onClose: _hidePortraitKeyboardPanel,
-                ),
-              ),
-            ],
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: showInlineKeyboard
+                  ? Column(
+                      key: const ValueKey('rustdesk-inline-keyboard-visible'),
+                      children: [
+                        const SizedBox(height: _rustdeskControlGap),
+                        SizedBox(
+                          height: inlineKeyboardHeight,
+                          child: RustdeskKeyboardPanel(
+                            input: _inputController,
+                            controller: _keyboardTextController,
+                            closeLabel: 'Hide',
+                            onClose: _hideKeyboardPanel,
+                          ),
+                        ),
+                      ],
+                    )
+                  : const SizedBox(
+                      key: ValueKey('rustdesk-inline-keyboard-hidden'),
+                    ),
+            ),
             const SizedBox(height: _rustdeskControlGap),
             _buildPortraitControls(
               glassStyle: false,
@@ -1115,15 +1189,6 @@ extension on _RemoteSessionScreenState {
       backgroundColor: backgroundColor,
       onDisplaySize: _handleDisplaySize,
     );
-  }
-
-  void _showKeyboardPanel() {
-    final orientation = MediaQuery.of(context).orientation;
-    if (orientation == Orientation.portrait) {
-      _togglePortraitKeyboardPanel();
-      return;
-    }
-    showRustdeskKeyboardSheet(context, _inputController);
   }
 }
 

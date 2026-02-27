@@ -159,12 +159,16 @@ class RustdeskIconButton extends StatelessWidget {
 class RustdeskMoreMenuButton extends StatelessWidget {
   const RustdeskMoreMenuButton({
     super.key,
-    required this.onKeyboard,
+    this.onKeyboard,
+    this.showKeyboardAction = true,
+    this.keyboardVisible = false,
     required this.onExitFullscreen,
     this.darkBackground = true,
   });
 
-  final VoidCallback onKeyboard;
+  final VoidCallback? onKeyboard;
+  final bool showKeyboardAction;
+  final bool keyboardVisible;
   final VoidCallback onExitFullscreen;
   final bool darkBackground;
 
@@ -175,32 +179,34 @@ class RustdeskMoreMenuButton extends StatelessWidget {
       darkBackground: darkBackground,
       enabled: true,
     );
+    final items = <PopupMenuEntry<_RustdeskMoreAction>>[
+      if (showKeyboardAction && onKeyboard != null)
+        PopupMenuItem(
+          value: _RustdeskMoreAction.keyboard,
+          child: _RustdeskMoreMenuItem(
+            icon: keyboardVisible ? Icons.keyboard_hide : Icons.keyboard,
+            label: keyboardVisible ? 'Hide keyboard input' : 'Keyboard input',
+            color: palette.menuForeground,
+          ),
+        ),
+      PopupMenuItem(
+        value: _RustdeskMoreAction.exitFullscreen,
+        child: _RustdeskMoreMenuItem(
+          icon: Icons.fullscreen_exit,
+          label: 'Exit fullscreen mode',
+          color: palette.menuForeground,
+        ),
+      ),
+    ];
     return PopupMenuButton<_RustdeskMoreAction>(
       tooltip: 'More controls',
       color: palette.menuBackground,
       icon: Icon(Icons.more_horiz, color: palette.menuForeground),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: _RustdeskMoreAction.keyboard,
-          child: _RustdeskMoreMenuItem(
-            icon: Icons.keyboard,
-            label: 'Keyboard input',
-            color: palette.menuForeground,
-          ),
-        ),
-        PopupMenuItem(
-          value: _RustdeskMoreAction.exitFullscreen,
-          child: _RustdeskMoreMenuItem(
-            icon: Icons.fullscreen_exit,
-            label: 'Exit fullscreen mode',
-            color: palette.menuForeground,
-          ),
-        ),
-      ],
+      itemBuilder: (context) => items,
       onSelected: (value) {
         switch (value) {
           case _RustdeskMoreAction.keyboard:
-            onKeyboard();
+            onKeyboard?.call();
             break;
           case _RustdeskMoreAction.exitFullscreen:
             onExitFullscreen();
@@ -230,11 +236,15 @@ class _RustdeskMoreMenuItem extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: color),
         const SizedBox(width: 8),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: color,
-            fontWeight: FontWeight.w600,
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
