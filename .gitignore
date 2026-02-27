@@ -1,0 +1,43 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local automation artifacts
+.ralph/
+
+# Logs and temp
+*.log
+*.tmp
+
+# Secrets / credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.p8
+*.mobileprovision
+*.jks
+
+# Firebase / mobile secrets (allow only examples)
+**/GoogleService-Info.plist
+!**/GoogleService-Info.example.plist
+**/google-services.json
+!**/google-services.example.json
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub/
+mobile/.pub-cache/
+mobile/build/
+
+# Rust / desktop
+desktop/target/
+
+# Frontend
+**/node_modules/
