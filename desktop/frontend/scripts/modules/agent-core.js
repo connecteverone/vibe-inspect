@@ -7,6 +7,9 @@
       const shellEl = document.querySelector(".shell");
       const bridgeAlertEl = document.getElementById("bridgeAlert");
       const locationAlertEl = document.getElementById("locationAlert");
+      const requestLocationPermissionBtn = document.getElementById(
+        "requestLocationPermission"
+      );
       const openLocationSettingsBtn = document.getElementById(
         "openLocationSettings"
       );
@@ -41,6 +44,7 @@
       const pairedDevicesEl = document.getElementById("pairedDevices");
       const activeDevicesEl = document.getElementById("activeDevices");
       const terminalSessionsEl = document.getElementById("terminalSessions");
+      const refreshTerminalSessionsBtn = document.getElementById("refreshTerminalSessions");
       const terminalDetailTitleEl = document.getElementById("terminalDetailTitle");
       const terminalDetailMetaEl = document.getElementById("terminalDetailMeta");
       const terminalDetailStatusEl = document.getElementById("terminalDetailStatus");
@@ -52,6 +56,7 @@
       const terminalInputEl = document.getElementById("terminalInput");
       const terminalSendBtn = document.getElementById("terminalSend");
       const terminalStopBtn = document.getElementById("terminalStop");
+      const terminalDeleteBtn = document.getElementById("terminalDelete");
       const terminalEnterSendsEl = document.getElementById("terminalEnterSends");
       const terminalAutoScrollEl = document.getElementById("terminalAutoScroll");
       const terminalNoWrapEl = document.getElementById("terminalNoWrap");
@@ -86,6 +91,13 @@
       const saveListenPortBtn = document.getElementById("saveListenPort");
       const roiQuicPortInput = document.getElementById("roiQuicPortInput");
       const saveRoiQuicPortBtn = document.getElementById("saveRoiQuicPort");
+      const imageUploadDropzoneEl = document.getElementById("imageUploadDropzone");
+      const imageUploadInputEl = document.getElementById("imageUploadInput");
+      const imageUploadBrowseBtn = document.getElementById("imageUploadBrowse");
+      const imageUploadClearBtn = document.getElementById("imageUploadClear");
+      const imageUploadMetaEl = document.getElementById("imageUploadMeta");
+      const imageUploadErrorEl = document.getElementById("imageUploadError");
+      const imageUploadListEl = document.getElementById("imageUploadList");
 
       const viewTabs = document.querySelectorAll(".view-tabs .tab");
       const overviewView = document.getElementById("overviewView");
@@ -96,7 +108,7 @@
       let bridgeAvailable = false;
       let authTokenRaw = null;
       let authTokenVisible = false;
-      let locationSettingsOpened = false;
+      let locationPermissionState = null;
       let bundleIdValue = null;
       let activeTerminalSessionId = null;
       let terminalSessionInfo = null;
@@ -105,6 +117,7 @@
       let terminalPollTimer = null;
       let terminalPollInFlight = false;
       let terminalSessionsById = {};
+      const terminalAdvancedExpanded = new Set();
       let terminalAutoScroll = true;
       let terminalNoWrap = false;
       let terminalImeComposing = false;
@@ -127,6 +140,24 @@
       const ANSI_OSC_REGEX = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
       const ANSI_8BIT_CSI_REGEX = /\u009B[0-?]*[ -/]*[@-~]/g;
       const TERMINAL_CONTROL_REGEX = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+      const IMAGE_UPLOAD_MAX_FILES = 8;
+      const IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+      const IMAGE_UPLOAD_ALLOWED_MIME = new Set([
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+      ]);
+      const IMAGE_UPLOAD_ALLOWED_EXTENSIONS = new Set([
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "gif",
+      ]);
+      const imageUploads = [];
+      let imageUploadDragDepth = 0;
+      let imageUploadSeq = 0;
 
       function sanitizeTerminalText(text) {
         if (!text) return "";
@@ -203,6 +234,221 @@
         }
         return btoa(binary);
       }
+
+      function formatUploadSize(bytes) {
+        const value = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+        if (value < 1024) return `${value} B`;
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+        return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+      }
+
+      function extractFileExtension(fileName) {
+        if (typeof fileName !== "string") return "";
+        const normalized = fileName.trim().toLowerCase();
+        if (!normalized.includes(".")) return "";
+        const extension = normalized.split(".").pop();
+        return extension || "";
+      }
+
+      function normalizeUploadName(rawName) {
+        if (typeof rawName !== "string") return "image";
+        const trimmed = rawName.trim();
+        return trimmed || "image";
+      }
+
+      function isAcceptedImageFile(file) {
+        const mime = typeof file?.type === "string" ? file.type.trim().toLowerCase() : "";
+        if (mime && IMAGE_UPLOAD_ALLOWED_MIME.has(mime)) {
+          return true;
+        }
+        const extension = extractFileExtension(file?.name);
+        return IMAGE_UPLOAD_ALLOWED_EXTENSIONS.has(extension);
+      }
+
+      function validateImageFile(file) {
+        if (!(file instanceof File)) {
+          return "Unsupported file payload.";
+        }
+        if (!isAcceptedImageFile(file)) {
+          return "Only PNG, JPEG, WEBP, or GIF files are allowed.";
+        }
+        if (!Number.isFinite(file.size) || file.size <= 0) {
+          return "File is empty.";
+        }
+        if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
+          return `Each file must be ${formatUploadSize(IMAGE_UPLOAD_MAX_BYTES)} or smaller.`;
+        }
+        return null;
+      }
+
+      function getImageUploadSignature(file) {
+        const name = normalizeUploadName(file?.name).toLowerCase();
+        const size = Number.isFinite(file?.size) ? file.size : 0;
+        const modified = Number.isFinite(file?.lastModified) ? file.lastModified : 0;
+        return `${name}|${size}|${modified}`;
+      }
+
+      function hasFilesInDataTransfer(dataTransfer) {
+        const types = Array.from(dataTransfer?.types || []);
+        return types.includes("Files");
+      }
+
+      function setImageUploadDragActive(active) {
+        if (!imageUploadDropzoneEl) return;
+        imageUploadDropzoneEl.classList.toggle("drag-active", !!active);
+      }
+
+      function resetImageUploadDragState() {
+        imageUploadDragDepth = 0;
+        setImageUploadDragActive(false);
+      }
+
+      function setImageUploadError(message) {
+        if (!imageUploadErrorEl) return;
+        const text = typeof message === "string" ? message.trim() : "";
+        if (text) {
+          imageUploadErrorEl.textContent = text;
+          imageUploadErrorEl.classList.remove("hidden");
+        } else {
+          imageUploadErrorEl.textContent = "";
+          imageUploadErrorEl.classList.add("hidden");
+        }
+      }
+
+      function releaseImageUploadRecord(record) {
+        if (!record?.previewUrl) return;
+        if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(record.previewUrl);
+        }
+      }
+
+      function syncImageUploadInteractivity() {
+        const atCapacity = imageUploads.length >= IMAGE_UPLOAD_MAX_FILES;
+        const canInteract = bridgeAvailable && !atCapacity;
+
+        if (imageUploadInputEl) {
+          imageUploadInputEl.disabled = !canInteract;
+        }
+
+        if (imageUploadBrowseBtn) {
+          imageUploadBrowseBtn.disabled = !canInteract;
+          imageUploadBrowseBtn.classList.toggle("button-disabled", !canInteract);
+        }
+
+        if (imageUploadClearBtn) {
+          const disableClear = !bridgeAvailable || imageUploads.length === 0;
+          imageUploadClearBtn.disabled = disableClear;
+          imageUploadClearBtn.classList.toggle("button-disabled", disableClear);
+        }
+
+        if (imageUploadDropzoneEl) {
+          imageUploadDropzoneEl.classList.toggle("disabled", !canInteract);
+          imageUploadDropzoneEl.setAttribute("aria-disabled", String(!canInteract));
+        }
+
+        if (imageUploadMetaEl) {
+          imageUploadMetaEl.textContent = `${imageUploads.length} / ${IMAGE_UPLOAD_MAX_FILES} selected`;
+        }
+
+        if (!canInteract) {
+          setImageUploadDragActive(false);
+        }
+      }
+
+      function notifyImageUploadStateChanged() {
+        syncImageUploadInteractivity();
+        if (typeof renderImageUploadState === "function") {
+          renderImageUploadState();
+        }
+      }
+
+      function addImageUploadFiles(rawFiles) {
+        const files = Array.from(rawFiles || []).filter(Boolean);
+        if (files.length === 0) {
+          return;
+        }
+
+        const slotsLeft = Math.max(0, IMAGE_UPLOAD_MAX_FILES - imageUploads.length);
+        if (slotsLeft <= 0) {
+          setImageUploadError(`You can upload up to ${IMAGE_UPLOAD_MAX_FILES} images at once.`);
+          notifyImageUploadStateChanged();
+          return;
+        }
+
+        const existingSignatures = new Set(imageUploads.map((item) => item.signature));
+        const pendingSignatures = new Set();
+        const accepted = [];
+        const issues = [];
+
+        for (const file of files) {
+          if (accepted.length >= slotsLeft) {
+            issues.push(`Only ${slotsLeft} more image${slotsLeft === 1 ? "" : "s"} can be added.`);
+            break;
+          }
+
+          const validationError = validateImageFile(file);
+          if (validationError) {
+            issues.push(`${normalizeUploadName(file?.name)}: ${validationError}`);
+            continue;
+          }
+
+          const signature = getImageUploadSignature(file);
+          if (existingSignatures.has(signature) || pendingSignatures.has(signature)) {
+            issues.push(`${normalizeUploadName(file.name)} is already selected.`);
+            continue;
+          }
+          pendingSignatures.add(signature);
+
+          const previewUrl =
+            typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+              ? URL.createObjectURL(file)
+              : "";
+          accepted.push({
+            id: `upload-${Date.now()}-${++imageUploadSeq}`,
+            name: normalizeUploadName(file.name),
+            size: Number.isFinite(file.size) ? file.size : 0,
+            type: typeof file.type === "string" ? file.type : "",
+            signature,
+            previewUrl,
+            addedAt: Date.now(),
+          });
+        }
+
+        if (accepted.length > 0) {
+          imageUploads.push(...accepted);
+          setImageUploadError(issues.length > 0 ? issues[0] : null);
+        } else {
+          setImageUploadError(issues[0] || "No valid images were selected.");
+        }
+
+        notifyImageUploadStateChanged();
+      }
+
+      function removeImageUploadById(uploadId) {
+        if (!uploadId) return;
+        const index = imageUploads.findIndex((item) => item.id === uploadId);
+        if (index < 0) return;
+        const [removed] = imageUploads.splice(index, 1);
+        releaseImageUploadRecord(removed);
+        if (imageUploads.length === 0) {
+          setImageUploadError(null);
+        }
+        notifyImageUploadStateChanged();
+      }
+
+      function clearImageUploads() {
+        imageUploads.splice(0).forEach((record) => {
+          releaseImageUploadRecord(record);
+        });
+        setImageUploadError(null);
+        notifyImageUploadStateChanged();
+      }
+
+      window.addEventListener("beforeunload", () => {
+        imageUploads.forEach((record) => {
+          releaseImageUploadRecord(record);
+        });
+      });
 
       function ensureInvoke() {
         if (!invoke) {
@@ -451,14 +697,19 @@
           saveFrpUrlBtn,
           saveListenPortBtn,
           saveRoiQuicPortBtn,
+          requestLocationPermissionBtn,
           openLocationSettingsBtn,
+          refreshTerminalSessionsBtn,
           terminalSendBtn,
           terminalStopBtn,
+          terminalDeleteBtn,
           terminalRestartNowBtn,
           terminalRestartLaterBtn,
           topRestartTerminalBtn,
           terminalFitBtn,
           terminalResizeBtn,
+          imageUploadBrowseBtn,
+          imageUploadClearBtn,
         ];
         controls.forEach((btn) => {
           if (!btn) return;
@@ -476,11 +727,13 @@
           terminalInputEl,
           terminalColsInput,
           terminalRowsInput,
+          imageUploadInputEl,
         ];
         inputs.forEach((input) => {
           if (!input) return;
           input.disabled = !enabled;
         });
+        syncImageUploadInteractivity();
       }
 
       function setBridgeState(available) {
@@ -499,6 +752,9 @@
           );
         }
         setControlsEnabled(available);
+        setTerminalStopEnabled(
+          available && isTerminalRunningStatus(terminalSessionInfo?.status)
+        );
         syncTerminalRestartPromptVisibility();
       }
 
@@ -652,66 +908,92 @@
 
       function renderLocationPermission(permission) {
         if (!locationAlertEl) return;
+        locationPermissionState =
+          typeof permission === "string" && permission.trim().length
+            ? permission.trim().toLowerCase()
+            : null;
         if (locationPermissionEl) {
-          locationPermissionEl.textContent = permission
-            ? formatLocationPermission(permission)
+          locationPermissionEl.textContent = locationPermissionState
+            ? formatLocationPermission(locationPermissionState)
             : "--";
         }
-        if (!permission || permission === "authorized") {
+        const authorized =
+          !locationPermissionState ||
+          locationPermissionState === "authorized" ||
+          locationPermissionState === "granted";
+        if (authorized) {
           locationAlertEl.classList.add("hidden");
+          requestLocationPermissionBtn?.classList.add("hidden");
+          openLocationSettingsBtn?.classList.add("hidden");
           return;
         }
+
         locationAlertEl.classList.remove("hidden");
         const metaEl = locationAlertEl.querySelector(".meta");
         if (metaEl) {
-          if (permission === "disabled") {
-            metaEl.textContent = "定位服务已关闭，请先开启系统定位服务。";
-          } else if (permission === "restricted") {
-            metaEl.textContent = "定位服务受限，请检查系统限制或家长控制。";
-          } else if (permission === "not_determined") {
+          if (locationPermissionState === "disabled") {
+            metaEl.textContent = "Location services are disabled. Enable location services first.";
+          } else if (locationPermissionState === "restricted") {
+            metaEl.textContent = "Location services are restricted. Check system restrictions or parental controls.";
+          } else if (locationPermissionState === "not_determined") {
             if (!bundleIdValue) {
               metaEl.textContent =
-                "当前不是从 .app 启动，系统不会弹窗。请用 .app 启动。";
+                "The app was not launched from the .app bundle, so macOS will not show the permission prompt.";
             } else {
-              metaEl.textContent = "需要你在弹窗中允许定位权限。";
+              metaEl.textContent = "Click Request permission, then allow location access in the system prompt.";
             }
-          } else if (permission === "denied") {
+          } else if (locationPermissionState === "denied") {
             metaEl.textContent =
-              "请在系统设置中允许 Vibe Inspect Agent 使用定位服务。";
+              "Click Open settings, then allow location access for Vibe Inspect Agent.";
           } else {
-            metaEl.textContent = "请检查定位权限设置。";
+            metaEl.textContent = "Check your location permission settings.";
           }
         }
-        if (permission === "not_determined" && bundleIdValue) {
-          const invokeFn = ensureInvoke();
-          invokeFn?.("request_location_permission").catch(() => {});
+
+        const shouldShowRequest = locationPermissionState === "not_determined";
+        const shouldShowSettings =
+          locationPermissionState === "denied" ||
+          locationPermissionState === "restricted" ||
+          locationPermissionState === "disabled";
+
+        if (requestLocationPermissionBtn) {
+          requestLocationPermissionBtn.classList.toggle("hidden", !shouldShowRequest);
+          const requestDisabled = !shouldShowRequest || !bundleIdValue || !bridgeAvailable;
+          requestLocationPermissionBtn.disabled = requestDisabled;
+          requestLocationPermissionBtn.classList.toggle("button-disabled", requestDisabled);
+          requestLocationPermissionBtn.title =
+            shouldShowRequest && !bundleIdValue
+              ? "Not launched from .app bundle, so permission prompt is unavailable."
+              : "";
         }
-        if (
-          (permission === "denied" ||
-            permission === "restricted" ||
-            permission === "disabled") &&
-          !locationSettingsOpened
-        ) {
-          locationSettingsOpened = true;
-          const invokeFn = ensureInvoke();
-          invokeFn?.("open_location_settings").catch(() => {});
+
+        if (openLocationSettingsBtn) {
+          openLocationSettingsBtn.classList.toggle(
+            "hidden",
+            !(shouldShowSettings || !shouldShowRequest)
+          );
+          const settingsDisabled = !bridgeAvailable;
+          openLocationSettingsBtn.disabled = settingsDisabled;
+          openLocationSettingsBtn.classList.toggle("button-disabled", settingsDisabled);
+          openLocationSettingsBtn.title = "";
         }
       }
 
       function formatLocationPermission(permission) {
         switch (permission) {
           case "authorized":
-            return "已授权";
+          case "granted":
+            return "Authorized";
           case "not_determined":
-            return "未请求";
+            return "Not requested";
           case "denied":
-            return "已拒绝";
+            return "Denied";
           case "restricted":
-            return "受限";
+            return "Restricted";
           case "disabled":
-            return "系统关闭";
+            return "Disabled";
           default:
-            return permission || "未知";
+            return permission || "Unknown";
         }
       }
 
@@ -725,9 +1007,9 @@
         }
         if (locationUsageKeyEl) {
           if (data?.location_usage_key === true) {
-            locationUsageKeyEl.textContent = "已配置";
+            locationUsageKeyEl.textContent = "Configured";
           } else if (data?.location_usage_key === false) {
-            locationUsageKeyEl.textContent = "缺失";
+            locationUsageKeyEl.textContent = "Missing";
           } else {
             locationUsageKeyEl.textContent = "--";
           }
@@ -1098,47 +1380,70 @@
       }
 
       function setTerminalInputEnabled(enabled) {
-        if (terminalInputEl) terminalInputEl.disabled = !enabled;
+        const writerEnabled = !!enabled;
+        if (terminalInputEl) terminalInputEl.disabled = !writerEnabled;
         if (terminalSendBtn) {
-          terminalSendBtn.disabled = !enabled;
-          terminalSendBtn.classList.toggle("button-disabled", !enabled);
+          terminalSendBtn.disabled = !writerEnabled;
+          terminalSendBtn.classList.toggle("button-disabled", !writerEnabled);
         }
-        if (terminalColsInput) terminalColsInput.disabled = !enabled;
-        if (terminalRowsInput) terminalRowsInput.disabled = !enabled;
+        if (terminalColsInput) terminalColsInput.disabled = !writerEnabled;
+        if (terminalRowsInput) terminalRowsInput.disabled = !writerEnabled;
         if (terminalFitBtn) {
-          terminalFitBtn.disabled = !enabled;
-          terminalFitBtn.classList.toggle("button-disabled", !enabled);
+          terminalFitBtn.disabled = !writerEnabled;
+          terminalFitBtn.classList.toggle("button-disabled", !writerEnabled);
         }
         if (terminalResizeBtn) {
-          terminalResizeBtn.disabled = !enabled;
-          terminalResizeBtn.classList.toggle("button-disabled", !enabled);
+          terminalResizeBtn.disabled = !writerEnabled;
+          terminalResizeBtn.classList.toggle("button-disabled", !writerEnabled);
         }
+        if (terminalEnterSendsEl) terminalEnterSendsEl.disabled = !writerEnabled;
+
         if (terminalCopyOutputBtn) {
-          terminalCopyOutputBtn.disabled = !enabled;
-          terminalCopyOutputBtn.classList.toggle("button-disabled", !enabled);
+          terminalCopyOutputBtn.disabled = false;
+          terminalCopyOutputBtn.classList.remove("button-disabled");
         }
         if (terminalClearOutputBtn) {
-          terminalClearOutputBtn.disabled = !enabled;
-          terminalClearOutputBtn.classList.toggle("button-disabled", !enabled);
+          terminalClearOutputBtn.disabled = false;
+          terminalClearOutputBtn.classList.remove("button-disabled");
         }
-        if (terminalEnterSendsEl) terminalEnterSendsEl.disabled = !enabled;
-        if (terminalAutoScrollEl) terminalAutoScrollEl.disabled = !enabled;
-        if (terminalNoWrapEl) terminalNoWrapEl.disabled = !enabled;
+        if (terminalAutoScrollEl) terminalAutoScrollEl.disabled = false;
+        if (terminalNoWrapEl) terminalNoWrapEl.disabled = false;
       }
 
       function setTerminalStopEnabled(enabled) {
         if (!terminalStopBtn) return;
+
+        const syncDeleteButton = (show, title = "") => {
+          if (!terminalDeleteBtn) return;
+          terminalDeleteBtn.classList.toggle("hidden", !show);
+          terminalDeleteBtn.disabled = !show;
+          terminalDeleteBtn.classList.toggle("button-disabled", !show);
+          terminalDeleteBtn.title = title;
+        };
+
         if (!bridgeAvailable) {
           terminalStopBtn.disabled = true;
           terminalStopBtn.classList.add("button-disabled");
           terminalStopBtn.title = "Terminal controls are unavailable while desktop bridge is disconnected.";
+          syncDeleteButton(false, "Terminal controls are unavailable while desktop bridge is disconnected.");
           return;
         }
-        const running = isTerminalRunningStatus(terminalSessionInfo?.status);
+        const status = normalizeTerminalStatus(terminalSessionInfo?.status);
+        const running = isTerminalRunningStatus(status);
         const hasSession = !!activeTerminalSessionId;
-        const shouldEnable = !!enabled && hasSession && running;
+        const activeSession = hasSession
+          ? terminalSessionsById[activeTerminalSessionId]
+          : null;
+        const shouldEnable = !!enabled && !!activeSession && running;
         terminalStopBtn.disabled = !shouldEnable;
         terminalStopBtn.classList.toggle("button-disabled", !shouldEnable);
+
+        const canDeleteSession = !!activeSession && status !== "unknown" && !running;
+        syncDeleteButton(
+          canDeleteSession,
+          canDeleteSession ? "" : "Select an ended terminal session first."
+        );
+
         if (shouldEnable) {
           terminalStopBtn.title = "";
           return;
@@ -1147,7 +1452,10 @@
           terminalStopBtn.title = "Select a running terminal session first.";
           return;
         }
-        const status = normalizeTerminalStatus(terminalSessionInfo?.status);
+        if (!activeSession) {
+          terminalStopBtn.title = "Session no longer exists. Refresh sessions.";
+          return;
+        }
         terminalStopBtn.title =
           status !== "unknown" && status !== "running"
             ? `Session ${status} is already ended.`

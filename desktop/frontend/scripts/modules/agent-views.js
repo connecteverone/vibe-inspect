@@ -137,6 +137,7 @@
         terminalSessionsEl.innerHTML = "";
         terminalSessionsById = {};
         if (!sessions || sessions.length === 0) {
+          terminalAdvancedExpanded.clear();
           const item = document.createElement("div");
           item.className = "device-item";
           item.textContent = "No terminal sessions.";
@@ -144,6 +145,19 @@
           syncActiveTerminalSession();
           return;
         }
+
+        const validSessionIds = new Set();
+        sessions.forEach((session) => {
+          if (session?.id) {
+            validSessionIds.add(session.id);
+          }
+        });
+        Array.from(terminalAdvancedExpanded).forEach((sessionId) => {
+          if (!validSessionIds.has(sessionId)) {
+            terminalAdvancedExpanded.delete(sessionId);
+          }
+        });
+
         sessions.forEach((session) => {
           terminalSessionsById[session.id] = session;
           const statusText =
@@ -198,8 +212,14 @@
             item.appendChild(preview);
           }
 
-          const actions = document.createElement("div");
-          actions.className = "device-actions";
+          const primaryActions = document.createElement("div");
+          primaryActions.className = "device-actions terminal-main-actions";
+          const advancedActions = document.createElement("div");
+          const isAdvancedExpanded = terminalAdvancedExpanded.has(session.id);
+          advancedActions.className =
+            `device-actions terminal-advanced-actions${isAdvancedExpanded ? "" : " hidden"}`;
+          let hasAdvancedActions = false;
+
           const isActive = session.id === activeTerminalSessionId;
           const openBtn = createActionButton(
             isActive ? "Viewing" : isRunning ? "Open" : "View log",
@@ -236,8 +256,8 @@
             }
           });
 
-          actions.appendChild(openBtn);
-          actions.appendChild(renameBtn);
+          primaryActions.appendChild(openBtn);
+          primaryActions.appendChild(renameBtn);
 
           if (isRunning) {
             const keepaliveBtn = createActionButton("Keep alive", "secondary mini", async () => {
@@ -295,11 +315,20 @@
               setOperationStatus("Terminal session disconnected.", "notice");
             });
 
-            actions.appendChild(keepaliveBtn);
-            actions.appendChild(pollBtn);
-            actions.appendChild(stopBtn);
+            advancedActions.appendChild(keepaliveBtn);
+            advancedActions.appendChild(pollBtn);
+            advancedActions.appendChild(stopBtn);
+            hasAdvancedActions = true;
           } else {
             const deleteBtn = createActionButton("Delete", "danger mini", async () => {
+              if (
+                !requireActionConfirmation(
+                  `delete_terminal_${session.id}`,
+                  "Click Delete again within 4s to remove this terminal session."
+                )
+              ) {
+                return;
+              }
               const payload = await sendTerminalAction("delete", session.id);
               if (!payload) {
                 setOperationStatus("Failed to delete terminal session.", "error");
@@ -311,10 +340,35 @@
               await refreshStatus();
               setOperationStatus("Terminal session deleted.", "notice");
             });
-            actions.appendChild(deleteBtn);
+            advancedActions.appendChild(deleteBtn);
+            hasAdvancedActions = true;
           }
 
-          item.appendChild(actions);
+          if (hasAdvancedActions) {
+            const toggleBtn = document.createElement("button");
+            toggleBtn.type = "button";
+            toggleBtn.className = "secondary mini";
+            toggleBtn.textContent = isAdvancedExpanded ? "Less" : "More";
+            toggleBtn.setAttribute("aria-expanded", String(isAdvancedExpanded));
+            toggleBtn.addEventListener("click", () => {
+              const expanded = !advancedActions.classList.contains("hidden");
+              advancedActions.classList.toggle("hidden", expanded);
+              const nextExpanded = !expanded;
+              if (nextExpanded) {
+                terminalAdvancedExpanded.add(session.id);
+              } else {
+                terminalAdvancedExpanded.delete(session.id);
+              }
+              toggleBtn.textContent = nextExpanded ? "Less" : "More";
+              toggleBtn.setAttribute("aria-expanded", String(nextExpanded));
+            });
+            primaryActions.appendChild(toggleBtn);
+          }
+
+          item.appendChild(primaryActions);
+          if (hasAdvancedActions) {
+            item.appendChild(advancedActions);
+          }
           terminalSessionsEl.appendChild(item);
         });
         syncActiveTerminalSession();
@@ -428,6 +482,41 @@
         setOperationStatus("Terminal session disconnected.", "notice");
       }
 
+      async function deleteActiveTerminalSession() {
+        const sessionId = activeTerminalSessionId;
+        if (!sessionId) {
+          setTerminalDetailStatus("Select a session to delete.", "error");
+          setOperationStatus("Select a terminal session first.", "error");
+          return;
+        }
+
+        const status = normalizeTerminalStatus(terminalSessionInfo?.status);
+        if (isTerminalRunningStatus(status)) {
+          setTerminalDetailStatus("Disconnect the running session before deleting it.", "notice");
+          return;
+        }
+
+        if (
+          !requireActionConfirmation(
+            `delete_terminal_active_${sessionId}`,
+            "Click Delete again within 4s to remove this terminal session."
+          )
+        ) {
+          return;
+        }
+
+        setTerminalDetailStatus("Deleting terminal session…", "notice");
+        const payload = await sendTerminalAction("delete", sessionId);
+        if (!payload) {
+          setTerminalDetailStatus("Failed to delete terminal session.", "error");
+          return;
+        }
+
+        resetTerminalDetail();
+        await refreshStatus();
+        setOperationStatus("Terminal session deleted.", "notice");
+      }
+
       async function fitTerminalToPanel() {
         const grid = computeTerminalGrid();
         if (terminalColsInput) terminalColsInput.value = String(grid.cols);
@@ -523,6 +612,66 @@
           }
           item.appendChild(actions);
           tokenListEl.appendChild(item);
+        });
+      }
+
+      function renderImageUploadState() {
+        if (!imageUploadListEl) return;
+        imageUploadListEl.innerHTML = "";
+
+        if (!imageUploads || imageUploads.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "device-item";
+          empty.textContent = "No images selected.";
+          imageUploadListEl.appendChild(empty);
+          return;
+        }
+
+        imageUploads.forEach((record) => {
+          const item = document.createElement("div");
+          item.className = "upload-item";
+
+          const thumb = document.createElement("div");
+          thumb.className = "upload-thumb";
+          if (record.previewUrl) {
+            const img = document.createElement("img");
+            img.src = record.previewUrl;
+            img.alt = record.name || "Uploaded image";
+            img.loading = "lazy";
+            thumb.appendChild(img);
+          } else {
+            thumb.classList.add("placeholder");
+            thumb.textContent = "Image";
+          }
+
+          const meta = document.createElement("div");
+          meta.className = "upload-item-meta";
+          const name = document.createElement("div");
+          name.className = "upload-item-name";
+          name.textContent = record.name || "image";
+          name.title = name.textContent;
+
+          const detail = document.createElement("div");
+          detail.className = "upload-item-detail";
+          const mime = record.type && record.type.trim().length ? record.type : "image";
+          detail.textContent = `${formatUploadSize(record.size)} · ${mime}`;
+
+          meta.appendChild(name);
+          meta.appendChild(detail);
+
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "danger mini";
+          removeBtn.textContent = "Remove";
+          removeBtn.addEventListener("click", () => {
+            removeImageUploadById(record.id);
+          });
+
+          item.appendChild(thumb);
+          item.appendChild(meta);
+          item.appendChild(removeBtn);
+
+          imageUploadListEl.appendChild(item);
         });
       }
 

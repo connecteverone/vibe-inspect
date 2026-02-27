@@ -1,10 +1,27 @@
+      let refreshStatusRequestSeq = 0;
+      let refreshStatusAppliedSeq = 0;
+      let refreshStatusActiveCount = 0;
+
       async function refreshStatus(options = {}) {
         const silent = options.silent === true;
+        const skipIfBusy = options.skipIfBusy !== false;
         const invokeFn = ensureInvoke();
-        if (!invokeFn) return;
+        if (!invokeFn) return false;
+
+        if (silent && skipIfBusy && refreshStatusActiveCount > 0) {
+          return false;
+        }
+
+        const requestSeq = ++refreshStatusRequestSeq;
+        refreshStatusActiveCount += 1;
         try {
           const status = await invokeFn("get_pairing_status");
+          if (requestSeq < refreshStatusAppliedSeq) {
+            return false;
+          }
+          refreshStatusAppliedSeq = requestSeq;
           renderStatus(status);
+          return true;
         } catch (error) {
           if (silent) {
             const info = normalizeError(error);
@@ -12,6 +29,9 @@
           } else {
             setStatusFromError("Failed to refresh desktop status.", error, "refresh_status");
           }
+          return false;
+        } finally {
+          refreshStatusActiveCount = Math.max(0, refreshStatusActiveCount - 1);
         }
       }
 
@@ -155,6 +175,26 @@
       }
 
       function bindSettingsActions() {
+        if (requestLocationPermissionBtn) {
+          requestLocationPermissionBtn.addEventListener("click", async () => {
+            const invokeFn = ensureInvoke();
+            if (!invokeFn) return;
+            await runButtonAction(
+              requestLocationPermissionBtn,
+              async () => {
+                await invokeFn("request_location_permission");
+                await refreshStatus({ silent: true });
+                setOperationStatus("Location permission request sent.", "notice");
+              },
+              {
+                busyLabel: "Requesting…",
+                errorMessage: "Failed to request location permission.",
+                errorContext: "request_location_permission",
+              }
+            );
+          });
+        }
+
         if (openLocationSettingsBtn) {
           openLocationSettingsBtn.addEventListener("click", async () => {
             const invokeFn = ensureInvoke();
@@ -163,7 +203,6 @@
               openLocationSettingsBtn,
               async () => {
                 await invokeFn("open_location_settings");
-                locationSettingsOpened = true;
                 setOperationStatus("Location settings opened.", "notice");
               },
               {
@@ -263,6 +302,97 @@
         }
       }
 
+      function bindImageUploadActions() {
+        if (!imageUploadDropzoneEl || !imageUploadInputEl) {
+          return;
+        }
+
+        const openPicker = () => {
+          if (imageUploadInputEl.disabled) return;
+          imageUploadInputEl.click();
+        };
+
+        if (imageUploadBrowseBtn) {
+          imageUploadBrowseBtn.addEventListener("click", () => {
+            openPicker();
+          });
+        }
+
+        imageUploadDropzoneEl.addEventListener("click", (event) => {
+          const target = event.target;
+          if (target instanceof HTMLElement && target.closest("button")) {
+            return;
+          }
+          openPicker();
+        });
+
+        imageUploadDropzoneEl.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          openPicker();
+        });
+
+        imageUploadInputEl.addEventListener("change", () => {
+          addImageUploadFiles(imageUploadInputEl.files);
+          imageUploadInputEl.value = "";
+        });
+
+        imageUploadDropzoneEl.addEventListener("dragenter", (event) => {
+          if (!hasFilesInDataTransfer(event.dataTransfer)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          imageUploadDragDepth += 1;
+          setImageUploadDragActive(true);
+        });
+
+        imageUploadDropzoneEl.addEventListener("dragover", (event) => {
+          if (!hasFilesInDataTransfer(event.dataTransfer)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = imageUploadInputEl.disabled ? "none" : "copy";
+          }
+        });
+
+        imageUploadDropzoneEl.addEventListener("dragleave", (event) => {
+          if (!hasFilesInDataTransfer(event.dataTransfer)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          imageUploadDragDepth = Math.max(0, imageUploadDragDepth - 1);
+          if (imageUploadDragDepth === 0) {
+            setImageUploadDragActive(false);
+          }
+        });
+
+        imageUploadDropzoneEl.addEventListener("drop", (event) => {
+          if (!hasFilesInDataTransfer(event.dataTransfer)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          resetImageUploadDragState();
+          if (imageUploadInputEl.disabled) {
+            return;
+          }
+          addImageUploadFiles(event.dataTransfer.files);
+        });
+
+        if (imageUploadClearBtn) {
+          imageUploadClearBtn.addEventListener("click", () => {
+            clearImageUploads();
+            setOperationStatus("Image selection cleared.", "notice", 1800);
+          });
+        }
+      }
+
       function bindTerminalInputActions() {
         if (terminalSendBtn) {
           terminalSendBtn.addEventListener("click", sendActiveTerminalInput);
@@ -346,6 +476,21 @@
       }
 
       function bindTerminalActionButtons() {
+        if (refreshTerminalSessionsBtn) {
+          refreshTerminalSessionsBtn.addEventListener("click", () =>
+            runButtonAction(refreshTerminalSessionsBtn, async () => {
+              const ok = await refreshStatus({ silent: false, skipIfBusy: false });
+              if (ok) {
+                setOperationStatus("Terminal sessions refreshed.", "notice", 1800);
+              }
+            }, {
+              busyLabel: "Refreshing…",
+              errorMessage: "Failed to refresh terminal sessions.",
+              errorContext: "refresh_terminal_sessions",
+            })
+          );
+        }
+
         if (terminalResizeBtn) {
           terminalResizeBtn.addEventListener("click", () =>
             runButtonAction(terminalResizeBtn, sendActiveTerminalResize, {
@@ -372,6 +517,16 @@
               busyLabel: "Disconnecting…",
               errorMessage: "Failed to disconnect terminal session.",
               errorContext: "terminal_stop",
+            })
+          );
+        }
+
+        if (terminalDeleteBtn) {
+          terminalDeleteBtn.addEventListener("click", () =>
+            runButtonAction(terminalDeleteBtn, deleteActiveTerminalSession, {
+              busyLabel: "Deleting…",
+              errorMessage: "Failed to delete terminal session.",
+              errorContext: "terminal_delete",
             })
           );
         }
@@ -470,21 +625,63 @@
         }
       }
 
+      function setActiveView(view) {
+        const normalizedView = view === "settings" ? "settings" : "overview";
+        viewTabs.forEach((btn) => {
+          const isActive = btn.dataset.view === normalizedView;
+          btn.classList.toggle("active", isActive);
+          btn.setAttribute("aria-selected", String(isActive));
+          btn.tabIndex = isActive ? 0 : -1;
+        });
+
+        if (normalizedView === "settings") {
+          overviewView?.classList.add("hidden");
+          overviewView?.setAttribute("aria-hidden", "true");
+          settingsView?.classList.remove("hidden");
+          settingsView?.setAttribute("aria-hidden", "false");
+        } else {
+          settingsView?.classList.add("hidden");
+          settingsView?.setAttribute("aria-hidden", "true");
+          overviewView?.classList.remove("hidden");
+          overviewView?.setAttribute("aria-hidden", "false");
+        }
+      }
+
       function bindViewTabs() {
-        viewTabs.forEach((tab) => {
+        const tabs = Array.from(viewTabs);
+        if (tabs.length === 0) return;
+
+        const activateByIndex = (index) => {
+          const wrapped = ((index % tabs.length) + tabs.length) % tabs.length;
+          const tab = tabs[wrapped];
+          if (!tab) return;
+          setActiveView(tab.dataset.view);
+          tab.focus();
+        };
+
+        tabs.forEach((tab, index) => {
           tab.addEventListener("click", () => {
-            viewTabs.forEach((btn) => btn.classList.remove("active"));
-            tab.classList.add("active");
-            const view = tab.dataset.view;
-            if (view === "settings") {
-              overviewView?.classList.add("hidden");
-              settingsView?.classList.remove("hidden");
-            } else {
-              settingsView?.classList.add("hidden");
-              overviewView?.classList.remove("hidden");
+            setActiveView(tab.dataset.view);
+          });
+          tab.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowRight") {
+              event.preventDefault();
+              activateByIndex(index + 1);
+            } else if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              activateByIndex(index - 1);
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              activateByIndex(0);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              activateByIndex(tabs.length - 1);
             }
           });
         });
+
+        const initialTab = tabs.find((tab) => tab.classList.contains("active")) || tabs[0];
+        setActiveView(initialTab.dataset.view);
       }
 
       function startSessionExpiryTicker() {
@@ -510,6 +707,7 @@
         bindIdentityActions();
         bindTokenActions();
         bindSettingsActions();
+        bindImageUploadActions();
         bindTerminalInputActions();
         bindTerminalUtilityActions();
         bindTerminalActionButtons();
@@ -519,15 +717,10 @@
         applyTerminalOutputOptions();
         updateTerminalOutputMeta();
         updateAuthTokenDisplay();
+        renderImageUploadState();
         clearQrDisplay('Click "New handshake" to generate a 3-minute QR.');
         setBridgeState(!!invoke);
         resetTerminalDetail();
-
-        const invokeFn = ensureInvoke();
-        invokeFn?.("request_location_permission").catch((error) => {
-          const info = normalizeError(error);
-          logErrorDetails("request_location_permission", info, { silent: true });
-        });
 
         refreshStatus({ silent: true });
         startSessionExpiryTicker();

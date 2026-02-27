@@ -228,6 +228,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
   }
 
   Future<void> _loadSessions() async {
+    _remoteSessionSyncRetryTimer?.cancel();
+    _remoteSessionSyncRetryTimer = null;
     _updateState(() {
       _isLoading = true;
       _loadError = null;
@@ -317,6 +319,9 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       } else {
         remoteError =
             remoteResult.errorMessage ?? 'Unable to load terminal sessions.';
+        if (remoteResult.shouldRetry) {
+          _scheduleRemoteSessionSyncRetry();
+        }
       }
       final terminalEvents = events
           .where((event) => event.type.toLowerCase() == 'terminal')
@@ -397,6 +402,210 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         _remoteFetchError = null;
       });
     }
+  }
+
+  void _scheduleRemoteSessionSyncRetry() {
+    if (!mounted) {
+      return;
+    }
+    if (_remoteSessionSyncRetryTimer != null) {
+      return;
+    }
+    _remoteSessionSyncRetryTimer = Timer(const Duration(seconds: 3), () {
+      _remoteSessionSyncRetryTimer = null;
+      unawaited(_syncRemoteSessionIndex());
+    });
+  }
+
+  Future<bool> _syncRemoteSessionIndex() async {
+    if (_isLoading) {
+      return false;
+    }
+    final inFlight = _remoteSessionSyncInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final operation = _syncRemoteSessionIndexInternal();
+    _remoteSessionSyncInFlight = operation;
+    try {
+      return await operation;
+    } finally {
+      if (identical(_remoteSessionSyncInFlight, operation)) {
+        _remoteSessionSyncInFlight = null;
+      }
+    }
+  }
+
+  Future<bool> _syncRemoteSessionIndexInternal() async {
+    final remoteResult = await _fetchRemoteTerminalSessions();
+    if (!mounted) {
+      return false;
+    }
+    if (_isLoading) {
+      return false;
+    }
+    if (!remoteResult.isSuccess) {
+      _updateState(() {
+        _remoteFetchError =
+            remoteResult.errorMessage ?? 'Unable to load terminal sessions.';
+      });
+      if (remoteResult.shouldRetry) {
+        _scheduleRemoteSessionSyncRetry();
+      }
+      return false;
+    }
+
+    _remoteSessionSyncRetryTimer?.cancel();
+    _remoteSessionSyncRetryTimer = null;
+
+    final remoteById = <String, RemoteTerminalSession>{
+      for (final remote in remoteResult.sessions) remote.id: remote,
+    };
+    final mergedViews = <TerminalSessionView>[];
+    final mergedTerminals = Map<String, Terminal>.from(_terminals);
+    final closedReasons = <String, String>{};
+    var changed = false;
+
+    for (final view in _sessions) {
+      final remote = remoteById.remove(view.session.id);
+      if (remote == null) {
+        final status = view.session.status.toLowerCase();
+        if (_isTerminalClosed(status) || !_shouldCloseMissingRemote(status)) {
+          mergedViews.add(view);
+          continue;
+        }
+        final closedSession = _sessionWithStatus(view.session, 'closed');
+        await _persistSession(closedSession);
+        mergedViews.add(view.copyWith(session: closedSession));
+        closedReasons[closedSession.id] = _missingRemoteSessionReason;
+        changed = true;
+        continue;
+      }
+      final remoteStatus = remote.status.trim().isNotEmpty
+          ? remote.status
+          : view.session.status;
+      final remoteLabel = remote.label.trim().isNotEmpty
+          ? remote.label
+          : view.session.label;
+      if (remoteStatus != view.session.status ||
+          remoteLabel != view.session.label) {
+        final updatedSession = _sessionWithStatus(
+          view.session,
+          remoteStatus,
+          label: remoteLabel,
+        );
+        await _persistSession(updatedSession);
+        mergedViews.add(view.copyWith(session: updatedSession));
+        changed = true;
+      } else {
+        mergedViews.add(view);
+      }
+      final reason = remote.closedReason?.trim();
+      if (reason != null && reason.isNotEmpty) {
+        closedReasons[view.session.id] = reason;
+      }
+    }
+
+    for (final remote in remoteById.values) {
+      final label = remote.label.trim().isNotEmpty
+          ? remote.label
+          : 'Terminal ${_truncate(remote.id, 6)}';
+      final newSession = ToolSession(
+        id: remote.id,
+        type: 'terminal',
+        label: label,
+        status: remote.status,
+        agentId: widget.agentId,
+        createdAt: remote.createdAt,
+      );
+      await _persistSession(newSession);
+      mergedTerminals.putIfAbsent(
+        remote.id,
+        () => _buildTerminalForSession(remote.id),
+      );
+      mergedViews.add(
+        TerminalSessionView(
+          session: newSession,
+          output: const <TerminalOutputEntry>[],
+        ),
+      );
+      final reason = remote.closedReason?.trim();
+      if (reason != null && reason.isNotEmpty) {
+        closedReasons[newSession.id] = reason;
+      }
+      changed = true;
+    }
+
+    if (closedReasons.isNotEmpty) {
+      final latestEvents = <String, TimelineEvent>{
+        for (final view in mergedViews)
+          if (view.lastEvent != null) view.session.id: view.lastEvent!,
+      };
+      await _applyClosedReasons(
+        closedReasons,
+        latestEvents,
+        mergedViews.map((view) => view.session).toList(),
+      );
+      for (var index = 0; index < mergedViews.length; index += 1) {
+        final sessionId = mergedViews[index].session.id;
+        final latestEvent = latestEvents[sessionId];
+        if (latestEvent != null &&
+            latestEvent != mergedViews[index].lastEvent) {
+          mergedViews[index] = mergedViews[index].copyWith(
+            lastEvent: latestEvent,
+          );
+          changed = true;
+        }
+      }
+    }
+
+    mergedViews.sort(
+      (left, right) =>
+          right.session.createdAt.compareTo(left.session.createdAt),
+    );
+
+    var nextActiveSessionId = _activeSessionId;
+    if (nextActiveSessionId == null && mergedViews.isNotEmpty) {
+      nextActiveSessionId = mergedViews.first.session.id;
+    }
+    if (nextActiveSessionId != null &&
+        !mergedViews.any((view) => view.session.id == nextActiveSessionId)) {
+      nextActiveSessionId = mergedViews.isEmpty
+          ? null
+          : mergedViews.first.session.id;
+    }
+
+    if (_isLoading) {
+      return false;
+    }
+
+    final activeChanged = nextActiveSessionId != _activeSessionId;
+    final shouldUpdateState =
+        changed || _remoteFetchError != null || activeChanged;
+    if (!shouldUpdateState) {
+      return true;
+    }
+
+    _updateState(() {
+      _sessions = mergedViews;
+      _terminals = mergedTerminals;
+      _activeSessionId = nextActiveSessionId;
+      _remoteFetchError = null;
+    });
+
+    if (nextActiveSessionId == null) {
+      _disconnectTerminalStream();
+      _pollTimer?.cancel();
+      return true;
+    }
+
+    if (activeChanged) {
+      _setActiveSession(nextActiveSessionId);
+    } else {
+      _startPolling();
+      unawaited(_connectTerminalStream());
+    }
+    return true;
   }
 
   Future<void> _applyClosedReasons(
@@ -540,12 +749,17 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
         rows: _defaultRows,
       );
       await _applyTerminalPayload(sessionId: session.id, payload: payload);
+      unawaited(_syncRemoteSessionIndex());
       return true;
     } on AgentCommandFailure catch (error) {
       if (error.code == 'session_exists') {
         final view = _sessionById(session.id);
         if (view != null) {
-          return _attachRemoteSession(view);
+          final attached = await _attachRemoteSession(view);
+          if (attached) {
+            unawaited(_syncRemoteSessionIndex());
+          }
+          return attached;
         }
       }
       final presentation = _presentAgentFailure(
@@ -730,7 +944,8 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
   }
 
   Future<void> _openSessionPicker() async {
-    if (_sessions.isEmpty) {
+    await _syncRemoteSessionIndex();
+    if (!mounted || _sessions.isEmpty) {
       return;
     }
     await showModalBottomSheet<void>(
@@ -743,73 +958,124 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
         final maxHeight = MediaQuery.of(sheetContext).size.height * 0.7;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: maxHeight),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+        var showEndedSessions = false;
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final activeSessions = _sessions.where((session) {
+              final status = session.session.status.toLowerCase();
+              return !_isTerminalClosed(status);
+            }).toList();
+            final endedSessions = _sessions.where((session) {
+              final status = session.session.status.toLowerCase();
+              return _isTerminalClosed(status);
+            }).toList();
+            final visibleSessions = <TerminalSessionView>[
+              ...activeSessions,
+              if (showEndedSessions) ...endedSessions,
+            ];
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxHeight),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Sessions',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      Row(
+                        children: [
+                          Text(
+                            'Sessions',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: () {
+                              Navigator.of(sheetContext).pop();
+                              unawaited(_createSession());
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('New'),
+                          ),
+                        ],
                       ),
-                      const Spacer(),
-                      TextButton.icon(
-                        onPressed: () {
-                          Navigator.of(sheetContext).pop();
-                          unawaited(_createSession());
-                        },
-                        icon: const Icon(Icons.add),
-                        label: const Text('New'),
+                      if (endedSessions.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setModalState(() {
+                              showEndedSessions = !showEndedSessions;
+                            });
+                          },
+                          icon: Icon(
+                            showEndedSessions
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                          ),
+                          label: Text(
+                            showEndedSessions
+                                ? 'Hide ended sessions (${endedSessions.length})'
+                                : 'Show ended sessions (${endedSessions.length})',
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: visibleSessions.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'No active sessions.',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: visibleSessions.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
+                                  final session = visibleSessions[index];
+                                  final status = session.session.status
+                                      .toLowerCase();
+                                  final canDisconnect =
+                                      status != 'closed' &&
+                                      status != 'killed' &&
+                                      status != 'exited' &&
+                                      status != 'disconnected' &&
+                                      status != 'error';
+                                  return _TerminalSessionRow(
+                                    session: session,
+                                    isActive:
+                                        session.session.id == _activeSessionId,
+                                    onSelect: () {
+                                      Navigator.of(sheetContext).pop();
+                                      _setActiveSession(session.session.id);
+                                    },
+                                    onClose: canDisconnect
+                                        ? () {
+                                            Navigator.of(sheetContext).pop();
+                                            unawaited(
+                                              _closeSession(session.session.id),
+                                            );
+                                          }
+                                        : null,
+                                    onDelete: () {
+                                      Navigator.of(sheetContext).pop();
+                                      unawaited(
+                                        _deleteSession(session.session.id),
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: _sessions.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final session = _sessions[index];
-                        final status = session.session.status.toLowerCase();
-                        final canDisconnect =
-                            status != 'closed' &&
-                            status != 'killed' &&
-                            status != 'exited' &&
-                            status != 'disconnected' &&
-                            status != 'error';
-                        return _TerminalSessionRow(
-                          session: session,
-                          isActive: session.session.id == _activeSessionId,
-                          onSelect: () {
-                            Navigator.of(sheetContext).pop();
-                            _setActiveSession(session.session.id);
-                          },
-                          onClose: canDisconnect
-                              ? () {
-                                  Navigator.of(sheetContext).pop();
-                                  unawaited(_closeSession(session.session.id));
-                                }
-                              : null,
-                          onDelete: () {
-                            Navigator.of(sheetContext).pop();
-                            unawaited(_deleteSession(session.session.id));
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -959,7 +1225,12 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
           sessionId: sessionId,
         );
       } on AgentCommandFailure catch (error) {
-        if ((error.code ?? '').toLowerCase() != 'session_not_found') {
+        final code = (error.code ?? '').toLowerCase();
+        final canDeleteLocallyOnly =
+            code == 'session_not_found' ||
+            code == 'unsupported_action' ||
+            code == 'not_supported';
+        if (!canDeleteLocallyOnly) {
           final presentation = _presentAgentFailure(
             error,
             fallbackMessage: 'Failed to delete session.',
@@ -967,6 +1238,11 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
           _logErrorDetails('terminal_delete', presentation);
           _showSessionLabelError(_formatErrorMessage(presentation));
           return;
+        }
+        if (code == 'unsupported_action' || code == 'not_supported') {
+          _setTerminalStatusMessage(
+            'Desktop agent does not support remote delete yet. Removed local session only.',
+          );
         }
       } catch (error) {
         final presentation = _presentUnexpectedFailure(
@@ -1614,6 +1890,7 @@ extension _TerminalWorkspaceStream on _TerminalWorkspaceScreenState {
       _statusMessage = 'Reconnecting...';
       _statusIsError = false;
     });
+    await _syncRemoteSessionIndex();
     await _pollActiveSession(force: true);
     unawaited(_connectTerminalStream());
   }

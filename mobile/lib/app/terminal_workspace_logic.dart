@@ -25,6 +25,7 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
     if (client == null) {
       return _RemoteTerminalFetchResult.failure(
         'Connect to the desktop agent to load sessions.',
+        shouldRetry: false,
       );
     }
     try {
@@ -36,8 +37,16 @@ extension _TerminalWorkspaceLogic on _TerminalWorkspaceScreenState {
         fallbackMessage: 'Unable to load terminal sessions.',
       );
       _logErrorDetails('terminal_sessions', presentation);
+      final code = (error.code ?? '').trim().toLowerCase();
+      final shouldRetry =
+          code != 'unsupported_action' &&
+          code != 'not_supported' &&
+          code != 'unauthorized' &&
+          code != 'forbidden' &&
+          code != 'invalid_token';
       return _RemoteTerminalFetchResult.failure(
         _formatErrorMessage(presentation),
+        shouldRetry: shouldRetry,
       );
     } catch (_) {
       return _RemoteTerminalFetchResult.failure(

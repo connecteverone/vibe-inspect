@@ -26,33 +26,59 @@
           </div>
         </div>
         <div class="top-actions">
-          <div class="status" id="status">Waiting for mobile confirmation.</div>
+          <div class="status" id="status" role="status" aria-live="polite">Waiting for mobile confirmation.</div>
           <button class="secondary mini hidden" id="topRestartTerminal" type="button">Restart terminal</button>
           <button class="primary" id="generate">New handshake</button>
         </div>
       </header>
 
-      <div class="view-tabs">
-        <button class="tab active" data-view="overview">Overview</button>
-        <button class="tab" data-view="settings">Settings</button>
+      <div class="view-tabs" role="tablist" aria-label="Main views">
+        <button
+          class="tab active"
+          data-view="overview"
+          id="tabOverview"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="overviewView"
+        >
+          Overview
+        </button>
+        <button
+          class="tab"
+          data-view="settings"
+          id="tabSettings"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="settingsView"
+          tabindex="-1"
+        >
+          Settings
+        </button>
       </div>
-      <div class="bridge-alert hidden" id="bridgeAlert">
+      <div class="bridge-alert hidden" id="bridgeAlert" role="alert">
         <div>
-          桌面桥接不可用，当前页面无法连接 Agent。
+          Desktop bridge is unavailable, so this page cannot control the Agent.
           <div class="meta">
-            请使用桌面应用打开此界面（不要用浏览器窗口），然后重新打开。
+            Open this screen in the desktop app (not a regular browser tab), then retry.
           </div>
         </div>
       </div>
-      <div class="location-alert hidden" id="locationAlert">
+      <div class="location-alert hidden" id="locationAlert" role="alert">
         <div>
-          需要定位权限以读取 Wi-Fi SSID
-          <div class="meta">请在系统设置中允许 Vibe Inspect Agent 使用定位服务。</div>
+          Location permission is required to read Wi-Fi SSID.
+          <div class="meta">Allow location access for Vibe Inspect Agent in system settings.</div>
         </div>
-        <button class="secondary mini" id="openLocationSettings">打开设置</button>
+        <div class="actions">
+          <button class="secondary mini hidden" id="requestLocationPermission" type="button">
+            Request permission
+          </button>
+          <button class="secondary mini hidden" id="openLocationSettings" type="button">Open settings</button>
+        </div>
       </div>
 
-      <section class="grid" id="overviewView">
+      <section class="grid" id="overviewView" role="tabpanel" aria-labelledby="tabOverview" aria-hidden="false">
         <aside class="sidebar">
           <div class="card">
             <div class="card-header">
@@ -233,8 +259,15 @@
 
           <div class="card">
             <div class="card-header">
-              <h2 class="card-title">Terminal sessions</h2>
-              <div class="hint">Live activity</div>
+              <div>
+                <h2 class="card-title">Terminal sessions</h2>
+                <div class="hint">Live activity</div>
+              </div>
+              <div class="actions">
+                <button class="secondary mini" id="refreshTerminalSessions" type="button">
+                  Refresh
+                </button>
+              </div>
             </div>
             <div class="device-list" id="terminalSessions">
               <div class="device-item">--</div>
@@ -251,9 +284,10 @@
               </div>
               <div class="terminal-actions">
                 <button class="secondary mini" id="terminalStop">Disconnect</button>
+                <button class="danger mini hidden" id="terminalDelete" type="button">Delete</button>
               </div>
             </div>
-            <div class="terminal-status hidden" id="terminalDetailStatus"></div>
+            <div class="terminal-status hidden" id="terminalDetailStatus" role="status" aria-live="polite"></div>
             <div class="terminal-restart-prompt hidden" id="terminalRestartPrompt">
               <div class="copy">
                 <strong>Terminal service update detected</strong>
@@ -264,12 +298,14 @@
                 <button class="primary mini" id="terminalRestartNow" type="button">Restart now</button>
               </div>
             </div>
-            <div class="terminal-screen" id="terminalOutput">
+            <div class="terminal-screen" id="terminalOutput" role="log" aria-live="polite" aria-atomic="false">
               Select a terminal session to stream output.
             </div>
             <div class="terminal-controls">
+              <label class="sr-only" for="terminalInput">Terminal command input</label>
               <textarea
                 id="terminalInput"
+                aria-label="Terminal command input"
                 rows="2"
                 placeholder="Type command… Enter sends · Shift+Enter newline"
                 autocomplete="off"
@@ -306,10 +342,45 @@
               <button class="secondary mini" id="terminalResize">Resize</button>
             </div>
           </div>
+
+          <div class="card upload-card" id="imageUploadCard">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">Image uploads</h2>
+                <div class="hint">Drag and drop or pick files from disk</div>
+              </div>
+              <button class="secondary mini" id="imageUploadClear" type="button">Clear all</button>
+            </div>
+            <div
+              class="upload-dropzone"
+              id="imageUploadDropzone"
+              role="button"
+              tabindex="0"
+              aria-label="Upload images"
+            >
+              <input
+                type="file"
+                id="imageUploadInput"
+                class="sr-only"
+                accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
+                multiple
+              />
+              <div class="upload-dropzone-copy">
+                <strong>Drop images here</strong>
+                <span>or click to browse from your device</span>
+              </div>
+              <button class="primary mini" id="imageUploadBrowse" type="button">Upload images</button>
+            </div>
+            <div class="hint upload-meta" id="imageUploadMeta">0 / 8 selected</div>
+            <div class="alert hidden" id="imageUploadError" role="alert"></div>
+            <div class="upload-list" id="imageUploadList">
+              <div class="device-item">No images selected.</div>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="settings-view hidden" id="settingsView">
+      <section class="settings-view hidden" id="settingsView" role="tabpanel" aria-labelledby="tabSettings" aria-hidden="true">
         <div class="card">
           <div class="card-header">
             <div>
@@ -319,15 +390,19 @@
             <button class="secondary" id="generateLongToken">Generate access token</button>
           </div>
           <div class="token-controls">
+            <label class="sr-only" for="customTokenInput">Access token value</label>
             <input
               type="text"
               id="customTokenInput"
+              aria-label="Access token value"
               placeholder="Paste 64-char token"
               autocomplete="off"
             />
+            <label class="sr-only" for="customTokenLabel">Access token label</label>
             <input
               type="text"
               id="customTokenLabel"
+              aria-label="Access token label"
               placeholder="Label (optional)"
               autocomplete="off"
             />
@@ -345,9 +420,11 @@
             </div>
           </div>
           <div class="token-controls">
+            <label class="sr-only" for="frpUrlInput">FRP public URL</label>
             <input
               type="text"
               id="frpUrlInput"
+              aria-label="FRP public URL"
               placeholder="https://your-frp.example.com"
               autocomplete="off"
             />
@@ -362,9 +439,11 @@
             </div>
           </div>
           <div class="token-controls">
+            <label class="sr-only" for="listenPortInput">Local server port</label>
             <input
               type="number"
               id="listenPortInput"
+              aria-label="Local server port"
               placeholder="58888"
               min="1"
               max="65535"
@@ -381,9 +460,11 @@
             </div>
           </div>
           <div class="token-controls">
+            <label class="sr-only" for="roiQuicPortInput">ROI QUIC port</label>
             <input
               type="number"
               id="roiQuicPortInput"
+              aria-label="ROI QUIC port"
               placeholder="5000"
               min="1"
               max="65535"

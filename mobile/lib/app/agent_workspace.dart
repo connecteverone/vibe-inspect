@@ -25,7 +25,10 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
   List<TimelineEvent> _events = [];
   bool _isLoading = true;
   String? _errorMessage;
+  String? _remoteFetchError;
   late ConnectionRecord _activeAgent;
+  bool _showEndedTerminalSessions = false;
+  int _workspaceLoadRequestId = 0;
 
   @override
   void initState() {
@@ -35,34 +38,86 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
   }
 
   Future<void> _loadWorkspace() async {
+    final requestId = ++_workspaceLoadRequestId;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _remoteFetchError = null;
     });
     try {
       final sessions = await widget.storage.fetchToolSessions();
+      final mergedSessions = <String, ToolSession>{
+        for (final session in sessions) session.id: session,
+      };
+      final remoteFetch = await _fetchRemoteTerminalSessions();
+      for (final remote in remoteFetch.sessions) {
+        final existing = mergedSessions[remote.id];
+        if (existing != null) {
+          if (existing.type.toLowerCase() != 'terminal') {
+            continue;
+          }
+          final nextLabel = remote.label.trim().isNotEmpty
+              ? remote.label
+              : existing.label;
+          final nextStatus = remote.status.trim().isNotEmpty
+              ? remote.status
+              : existing.status;
+          final nextAgentId = existing.agentId ?? _activeAgent.id;
+          if (nextLabel != existing.label ||
+              nextStatus != existing.status ||
+              nextAgentId != existing.agentId) {
+            final updated = ToolSession(
+              id: existing.id,
+              type: existing.type,
+              label: nextLabel,
+              status: nextStatus,
+              agentId: nextAgentId,
+              createdAt: existing.createdAt,
+            );
+            await widget.storage.insertToolSession(updated);
+            mergedSessions[updated.id] = updated;
+          }
+          continue;
+        }
+        final created = ToolSession(
+          id: remote.id,
+          type: 'terminal',
+          label: _fallbackRemoteTerminalLabel(remote.id, remote.label),
+          status: remote.status,
+          agentId: _activeAgent.id,
+          createdAt: remote.createdAt,
+        );
+        await widget.storage.insertToolSession(created);
+        mergedSessions[created.id] = created;
+      }
       final events = await widget.storage.fetchTimelineEvents();
-      final agentSessions = sessions
+      final agentSessions = mergedSessions.values
           .where((session) => session.agentId == _activeAgent.id)
           .toList();
+      agentSessions.sort(
+        (left, right) => right.createdAt.compareTo(left.createdAt),
+      );
       final sessionIds = agentSessions.map((session) => session.id).toSet();
-      final agentEvents =
-          events.where((event) => sessionIds.contains(event.sessionId)).toList();
-      if (!mounted) {
+      final agentEvents = events
+          .where((event) => sessionIds.contains(event.sessionId))
+          .toList();
+      if (!mounted || requestId != _workspaceLoadRequestId) {
         return;
       }
       setState(() {
         _sessions = agentSessions;
         _events = agentEvents;
         _isLoading = false;
+        _remoteFetchError = remoteFetch.errorMessage;
       });
     } catch (error) {
-      if (!mounted) {
+      if (!mounted || requestId != _workspaceLoadRequestId) {
         return;
       }
       setState(() {
         _isLoading = false;
         _errorMessage = 'Unable to load workspace.';
+        _remoteFetchError = null;
       });
     }
   }
@@ -72,10 +127,58 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
     return url == null || url.isEmpty ? null : url;
   }
 
+  String _fallbackRemoteTerminalLabel(String id, String label) {
+    final trimmed = label.trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+    return 'Terminal ${_truncate(id, 6)}';
+  }
+
+  Future<_AgentRemoteTerminalFetchResult> _fetchRemoteTerminalSessions() async {
+    final baseUrl = _agentBaseUrl;
+    if (baseUrl == null) {
+      return _AgentRemoteTerminalFetchResult.success(<RemoteTerminalSession>[]);
+    }
+    final client = http.Client();
+    final commandClient = AgentCommandClient(
+      baseUrl: baseUrl,
+      client: client,
+      authToken: _activeAgent.token,
+      clientId: widget.clientId,
+      clientName: widget.clientName,
+    );
+    try {
+      final sessions = await commandClient.fetchTerminalSessions();
+      return _AgentRemoteTerminalFetchResult.success(sessions);
+    } on AgentCommandFailure catch (error) {
+      final presentation = _presentAgentFailure(
+        error,
+        fallbackMessage: 'Unable to load terminal sessions.',
+      );
+      _logErrorDetails('agent_workspace_terminal_sessions', presentation);
+      return _AgentRemoteTerminalFetchResult.failure(
+        _formatErrorMessage(presentation),
+      );
+    } catch (error) {
+      final presentation = _presentUnexpectedFailure(
+        error,
+        fallbackMessage: 'Unable to load terminal sessions.',
+      );
+      _logErrorDetails('agent_workspace_terminal_sessions', presentation);
+      return _AgentRemoteTerminalFetchResult.failure(
+        _formatErrorMessage(presentation),
+      );
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _openTerminalSession() async {
     final now = DateTime.now();
-    final terminalCount =
-        _sessions.where((session) => session.type == 'terminal').length;
+    final terminalCount = _sessions
+        .where((session) => session.type == 'terminal')
+        .length;
     final session = ToolSession(
       id: createStorageId(),
       type: 'terminal',
@@ -147,9 +250,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to create API session: ${error.toString()}',
-          ),
+          content: Text('Failed to create API session: ${error.toString()}'),
         ),
       );
       return;
@@ -218,9 +319,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Failed to create VNC session: ${error.toString()}',
-            ),
+            content: Text('Failed to create VNC session: ${error.toString()}'),
           ),
         );
         return;
@@ -231,10 +330,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
       sessionId: session.id,
       type: 'vnc',
       title: 'VNC: ${_agentLabel(_activeAgent)}',
-      payload: {
-        'target': _agentLabel(_activeAgent),
-        'status': 'queued',
-      },
+      payload: {'target': _agentLabel(_activeAgent), 'status': 'queued'},
       createdAt: now,
     );
     try {
@@ -244,9 +340,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to start VNC: ${error.toString()}'),
-        ),
+        SnackBar(content: Text('Failed to start VNC: ${error.toString()}')),
       );
       return;
     }
@@ -326,10 +420,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
       sessionId: session.id,
       type: 'remote',
       title: 'Remote: ${_agentLabel(_activeAgent)}',
-      payload: {
-        'target': _agentLabel(_activeAgent),
-        'status': 'queued',
-      },
+      payload: {'target': _agentLabel(_activeAgent), 'status': 'queued'},
       createdAt: now,
     );
     try {
@@ -339,9 +430,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to start remote: ${error.toString()}'),
-        ),
+        SnackBar(content: Text('Failed to start remote: ${error.toString()}')),
       );
       return;
     }
@@ -398,9 +487,7 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to remove agent: ${error.toString()}'),
-        ),
+        SnackBar(content: Text('Failed to remove agent: ${error.toString()}')),
       );
       return;
     }
@@ -469,10 +556,8 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
       await Navigator.of(context)
           .push(
             MaterialPageRoute(
-              builder: (_) => AiInsightScreen(
-                event: latestEvent,
-                session: session,
-              ),
+              builder: (_) =>
+                  AiInsightScreen(event: latestEvent, session: session),
             ),
           )
           .then((_) => _loadWorkspace());
@@ -486,7 +571,8 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
           .push(
             MaterialPageRoute(
               builder: (_) => RemoteSessionScreen(
-                event: latestEvent ??
+                event:
+                    latestEvent ??
                     TimelineEvent(
                       id: createStorageId(),
                       sessionId: session.id,
@@ -510,13 +596,115 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
     _showMissingContext('This session type is not supported yet.');
   }
 
+  Future<void> _deleteSession(ToolSession session) async {
+    final status = session.status.toLowerCase();
+    final isRunning =
+        status != 'closed' &&
+        status != 'killed' &&
+        status != 'exited' &&
+        status != 'disconnected' &&
+        status != 'error';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            isRunning ? 'Delete running session?' : 'Delete session?',
+          ),
+          content: Text(
+            isRunning
+                ? 'Deleting ${session.label} will remove it from mobile and request desktop cleanup.'
+                : 'Delete ${session.label} from mobile session history?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    String? localOnlyDeleteHint;
+    if (session.type.toLowerCase() == 'terminal') {
+      final baseUrl = _agentBaseUrl;
+      if (baseUrl != null) {
+        final client = http.Client();
+        final commandClient = AgentCommandClient(
+          baseUrl: baseUrl,
+          client: client,
+          authToken: _activeAgent.token,
+          clientId: widget.clientId,
+          clientName: widget.clientName,
+        );
+        try {
+          await commandClient.sendTerminalAction(
+            action: 'delete',
+            sessionId: session.id,
+          );
+        } on AgentCommandFailure catch (error) {
+          final code = (error.code ?? '').toLowerCase();
+          final canDeleteLocallyOnly =
+              code == 'session_not_found' ||
+              code == 'unsupported_action' ||
+              code == 'not_supported';
+          if (!canDeleteLocallyOnly) {
+            final presentation = _presentAgentFailure(
+              error,
+              fallbackMessage: 'Failed to delete terminal session.',
+            );
+            _logErrorDetails('agent_workspace_terminal_delete', presentation);
+            _showMissingContext(_formatErrorMessage(presentation));
+            return;
+          }
+          if (code == 'unsupported_action' || code == 'not_supported') {
+            localOnlyDeleteHint =
+                'Desktop agent does not support remote delete yet. Removed locally.';
+          }
+        } catch (error) {
+          final presentation = _presentUnexpectedFailure(
+            error,
+            fallbackMessage: 'Failed to delete terminal session.',
+          );
+          _logErrorDetails('agent_workspace_terminal_delete', presentation);
+          _showMissingContext(_formatErrorMessage(presentation));
+          return;
+        } finally {
+          client.close();
+        }
+      }
+    }
+    try {
+      await widget.storage.deleteToolSession(session.id);
+    } catch (error) {
+      _showMissingContext('Failed to delete session: ${error.toString()}');
+      return;
+    }
+    await _loadWorkspace();
+    if (!mounted) {
+      return;
+    }
+    if (localOnlyDeleteHint != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(localOnlyDeleteHint)));
+    }
+  }
+
   void _showMissingContext(String message) {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   TimelineEvent? _latestEventForSession(
@@ -538,11 +726,21 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
 
   List<ToolSession> _visibleSessions() {
     return _sessions
-        .where((session) =>
-            session.type != 'pairing' &&
-            session.type != 'vnc' &&
-            session.type != 'remote')
+        .where(
+          (session) =>
+              session.type != 'pairing' &&
+              session.type != 'vnc' &&
+              session.type != 'remote',
+        )
         .toList();
+  }
+
+  bool _isEndedTerminalSession(ToolSession session) {
+    if (session.type.toLowerCase() != 'terminal') {
+      return false;
+    }
+    final status = session.status.toLowerCase();
+    return status == 'closed' || status == 'killed' || status == 'exited';
   }
 
   @override
@@ -563,6 +761,14 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
       );
     }
     final sessions = _visibleSessions();
+    final activeSessions = sessions
+        .where((session) => !_isEndedTerminalSession(session))
+        .toList();
+    final endedTerminalSessions = sessions
+        .where((session) => _isEndedTerminalSession(session))
+        .toList();
+    final hasVisibleSessions =
+        activeSessions.isNotEmpty || endedTerminalSessions.isNotEmpty;
     final baseUrl = _agentBaseUrl;
     final hasAgentUrl = baseUrl != null && baseUrl.isNotEmpty;
     return _TimelineDetailScaffold(
@@ -650,6 +856,11 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
                     icon: const Icon(Icons.http),
                     label: const Text('New API request'),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: _loadWorkspace,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh sessions'),
+                  ),
                   if (kEnableRemoteControl)
                     OutlinedButton.icon(
                       onPressed: hasAgentUrl ? _openRemoteView : null,
@@ -669,24 +880,87 @@ class _AgentWorkspaceScreenState extends State<AgentWorkspaceScreen> {
             _ContextSectionCard(
               title: 'Sessions',
               subtitle: 'Tap a session to open its tool view.',
-              child: sessions.isEmpty
-                  ? const _EmptyHint(text: 'No sessions yet.')
-                  : Column(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_remoteFetchError case final remoteFetchError?) ...[
+                    _InlineStatus(message: remoteFetchError, isError: true),
+                    const SizedBox(height: 12),
+                  ],
+                  if (!hasVisibleSessions)
+                    const _EmptyHint(text: 'No sessions yet.')
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final session in sessions) ...[
+                        for (
+                          var index = 0;
+                          index < activeSessions.length;
+                          index++
+                        ) ...[
                           _AgentSessionRow(
-                            session: session,
+                            session: activeSessions[index],
                             event: _latestEventForSession(
-                              session.id,
-                              sessionType: session.type,
+                              activeSessions[index].id,
+                              sessionType: activeSessions[index].type,
                             ),
-                            onTap: () => _openSession(session),
+                            onTap: () => _openSession(activeSessions[index]),
+                            onDelete: () =>
+                                _deleteSession(activeSessions[index]),
                           ),
-                          if (session != sessions.last)
+                          if (index != activeSessions.length - 1)
                             const SizedBox(height: 10),
+                        ],
+                        if (endedTerminalSessions.isNotEmpty) ...[
+                          if (activeSessions.isNotEmpty)
+                            const SizedBox(height: 12),
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _showEndedTerminalSessions =
+                                    !_showEndedTerminalSessions;
+                              });
+                            },
+                            icon: Icon(
+                              _showEndedTerminalSessions
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                            ),
+                            label: Text(
+                              _showEndedTerminalSessions
+                                  ? 'Hide ended terminal sessions (${endedTerminalSessions.length})'
+                                  : 'Show ended terminal sessions (${endedTerminalSessions.length})',
+                            ),
+                          ),
+                          if (_showEndedTerminalSessions)
+                            for (
+                              var index = 0;
+                              index < endedTerminalSessions.length;
+                              index++
+                            ) ...[
+                              if (index == 0)
+                                const SizedBox(height: 4)
+                              else
+                                const SizedBox(height: 10),
+                              _AgentSessionRow(
+                                session: endedTerminalSessions[index],
+                                event: _latestEventForSession(
+                                  endedTerminalSessions[index].id,
+                                  sessionType:
+                                      endedTerminalSessions[index].type,
+                                ),
+                                onTap: () =>
+                                    _openSession(endedTerminalSessions[index]),
+                                onDelete: () => _deleteSession(
+                                  endedTerminalSessions[index],
+                                ),
+                              ),
+                            ],
                         ],
                       ],
                     ),
+                ],
+              ),
             ),
           ],
         ),
@@ -714,10 +988,12 @@ class _AgentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final statusStyle = _agentStatusStyle(agent.status);
-    final borderColor =
-        isActive ? const Color(0xFF38BDF8) : const Color(0xFFE2E8F0);
-    final background =
-        isActive ? const Color(0xFFF0F9FF) : const Color(0xFFF8FAFC);
+    final borderColor = isActive
+        ? const Color(0xFF38BDF8)
+        : const Color(0xFFE2E8F0);
+    final background = isActive
+        ? const Color(0xFFF0F9FF)
+        : const Color(0xFFF8FAFC);
     final agentUrl = agent.agentUrl;
     final subtitle = agentUrl == null || agentUrl.trim().isEmpty
         ? 'Agent URL missing'
@@ -785,8 +1061,10 @@ class _AgentCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: statusStyle.background,
                       borderRadius: BorderRadius.circular(999),
@@ -822,11 +1100,13 @@ class _AgentSessionRow extends StatelessWidget {
     required this.session,
     required this.event,
     required this.onTap,
+    this.onDelete,
   });
 
   final ToolSession session;
   final TimelineEvent? event;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
   String _previewText() {
     if (event == null) {
@@ -856,8 +1136,9 @@ class _AgentSessionRow extends StatelessWidget {
     final theme = Theme.of(context);
     final visuals = _eventVisuals(session.type);
     final statusStyle = _sessionStatusStyle(session.status);
-    final timeLabel =
-        event == null ? 'Never run' : _formatTimestamp(event!.createdAt);
+    final timeLabel = event == null
+        ? 'Never run'
+        : _formatTimestamp(event!.createdAt);
     return Material(
       color: const Color(0xFFF8FAFC),
       borderRadius: BorderRadius.circular(14),
@@ -913,8 +1194,10 @@ class _AgentSessionRow extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: statusStyle.background,
                   borderRadius: BorderRadius.circular(999),
@@ -927,10 +1210,58 @@ class _AgentSessionRow extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(width: 4),
+              PopupMenuButton<_SessionAction>(
+                tooltip: 'Manage session',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  if (value == _SessionAction.open) {
+                    onTap();
+                    return;
+                  }
+                  onDelete?.call();
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem<_SessionAction>(
+                    value: _SessionAction.open,
+                    child: Text('Open'),
+                  ),
+                  if (onDelete != null)
+                    const PopupMenuItem<_SessionAction>(
+                      value: _SessionAction.delete,
+                      child: Text('Delete'),
+                    ),
+                ],
+              ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+enum _SessionAction { open, delete }
+
+class _AgentRemoteTerminalFetchResult {
+  const _AgentRemoteTerminalFetchResult({
+    required this.sessions,
+    this.errorMessage,
+  });
+
+  final List<RemoteTerminalSession> sessions;
+  final String? errorMessage;
+
+  factory _AgentRemoteTerminalFetchResult.success(
+    List<RemoteTerminalSession> sessions,
+  ) {
+    return _AgentRemoteTerminalFetchResult(sessions: sessions);
+  }
+
+  factory _AgentRemoteTerminalFetchResult.failure(String message) {
+    return _AgentRemoteTerminalFetchResult(
+      sessions: const <RemoteTerminalSession>[],
+      errorMessage: message,
     );
   }
 }
@@ -947,35 +1278,20 @@ _SessionStatusStyle _sessionStatusStyle(String status) {
     case 'running':
     case 'complete':
     case 'success':
-      return const _SessionStatusStyle(
-        Color(0xFFDCFCE7),
-        Color(0xFF166534),
-      );
+      return const _SessionStatusStyle(Color(0xFFDCFCE7), Color(0xFF166534));
     case 'queued':
     case 'idle':
-      return const _SessionStatusStyle(
-        Color(0xFFFEF3C7),
-        Color(0xFF92400E),
-      );
+      return const _SessionStatusStyle(Color(0xFFFEF3C7), Color(0xFF92400E));
     case 'disconnected':
     case 'error':
     case 'failed':
-      return const _SessionStatusStyle(
-        Color(0xFFFEE2E2),
-        Color(0xFFB91C1C),
-      );
+      return const _SessionStatusStyle(Color(0xFFFEE2E2), Color(0xFFB91C1C));
     case 'exited':
     case 'killed':
     case 'closed':
-      return const _SessionStatusStyle(
-        Color(0xFFE2E8F0),
-        Color(0xFF475569),
-      );
+      return const _SessionStatusStyle(Color(0xFFE2E8F0), Color(0xFF475569));
     default:
-      return const _SessionStatusStyle(
-        Color(0xFFE2E8F0),
-        Color(0xFF475569),
-      );
+      return const _SessionStatusStyle(Color(0xFFE2E8F0), Color(0xFF475569));
   }
 }
 
@@ -989,28 +1305,16 @@ class _AgentStatusStyle {
 _AgentStatusStyle _agentStatusStyle(String status) {
   switch (status.toLowerCase()) {
     case 'connected':
-      return const _AgentStatusStyle(
-        Color(0xFFDCFCE7),
-        Color(0xFF166534),
-      );
+      return const _AgentStatusStyle(Color(0xFFDCFCE7), Color(0xFF166534));
     case 'pending':
     case 'connecting':
-      return const _AgentStatusStyle(
-        Color(0xFFFEF3C7),
-        Color(0xFF92400E),
-      );
+      return const _AgentStatusStyle(Color(0xFFFEF3C7), Color(0xFF92400E));
     case 'disconnected':
     case 'offline':
     case 'error':
-      return const _AgentStatusStyle(
-        Color(0xFFFEE2E2),
-        Color(0xFFB91C1C),
-      );
+      return const _AgentStatusStyle(Color(0xFFFEE2E2), Color(0xFFB91C1C));
     default:
-      return const _AgentStatusStyle(
-        Color(0xFFE2E8F0),
-        Color(0xFF475569),
-      );
+      return const _AgentStatusStyle(Color(0xFFE2E8F0), Color(0xFF475569));
   }
 }
 
@@ -1097,11 +1401,7 @@ class _PairingBackground extends StatelessWidget {
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [
-                Color(0xFFF8FAFC),
-                Color(0xFFE2E8F0),
-                Color(0xFFE0F2FE),
-              ],
+              colors: [Color(0xFFF8FAFC), Color(0xFFE2E8F0), Color(0xFFE0F2FE)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -1110,18 +1410,12 @@ class _PairingBackground extends StatelessWidget {
         const Positioned(
           top: -80,
           left: -40,
-          child: _GlowCircle(
-            size: 180,
-            color: Color(0xFFDCFCE7),
-          ),
+          child: _GlowCircle(size: 180, color: Color(0xFFDCFCE7)),
         ),
         const Positioned(
           bottom: -60,
           right: -30,
-          child: _GlowCircle(
-            size: 200,
-            color: Color(0xFFE0F2FE),
-          ),
+          child: _GlowCircle(size: 200, color: Color(0xFFE0F2FE)),
         ),
         const Positioned(
           top: 120,
@@ -1221,16 +1515,16 @@ class _PairingHeader extends StatelessWidget {
         Text(
           'Agents & workspaces',
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF0F172A),
-              ),
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF0F172A),
+          ),
         ),
         const SizedBox(height: 8),
         Text(
           'Connect multiple agents and manage their sessions in dedicated workspaces.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF475569),
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF475569)),
         ),
         const SizedBox(height: 14),
         Wrap(
@@ -1264,9 +1558,9 @@ class _FeatureChip extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: const Color(0xFF166534),
-              fontWeight: FontWeight.w600,
-            ),
+          color: const Color(0xFF166534),
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -1325,16 +1619,16 @@ class PairingStepCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
               description,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF64748B),
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF64748B)),
             ),
             const SizedBox(height: 16),
             child,
@@ -1374,10 +1668,7 @@ class _PairingTokenDetails extends StatelessWidget {
           ],
           if (payload.requiresApproval) ...[
             const SizedBox(height: 8),
-            const _TokenRow(
-              label: 'Desktop approval',
-              value: 'Required',
-            ),
+            const _TokenRow(label: 'Desktop approval', value: 'Required'),
           ],
         ],
       ),
@@ -1398,15 +1689,15 @@ class _TokenRow extends StatelessWidget {
       children: [
         Text(
           label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF64748B),
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: const Color(0xFF64748B)),
         ),
         Text(
           value,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -1421,10 +1712,15 @@ class _InlineStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = isError ? const Color(0xFFFEE2E2) : const Color(0xFFDCFCE7);
-    final textColor = isError ? const Color(0xFF991B1B) : const Color(0xFF166534);
-    final icon =
-        isError ? Icons.error_outline_rounded : Icons.check_circle_outline_rounded;
+    final background = isError
+        ? const Color(0xFFFEE2E2)
+        : const Color(0xFFDCFCE7);
+    final textColor = isError
+        ? const Color(0xFF991B1B)
+        : const Color(0xFF166534);
+    final icon = isError
+        ? Icons.error_outline_rounded
+        : Icons.check_circle_outline_rounded;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -1446,9 +1742,9 @@ class _InlineStatus extends StatelessWidget {
             child: Text(
               message,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: textColor,
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: textColor,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1517,10 +1813,7 @@ _EventVisuals _eventVisuals(String type) {
 }
 
 class _TimelineDetailScaffold extends StatelessWidget {
-  const _TimelineDetailScaffold({
-    required this.title,
-    required this.body,
-  });
+  const _TimelineDetailScaffold({required this.title, required this.body});
 
   final String title;
   final Widget body;
@@ -1600,17 +1893,17 @@ class _ContextSectionCard extends StatelessWidget {
           Text(
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF0F172A),
-                ),
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF0F172A),
+            ),
           ),
           if (subtitle != null) ...[
             const SizedBox(height: 4),
             Text(
               subtitle!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF64748B),
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF64748B)),
             ),
           ],
           const SizedBox(height: 12),
@@ -1639,18 +1932,18 @@ class _KeyValueRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF64748B),
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           Expanded(
             child: Text(
               value,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF0F172A),
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: const Color(0xFF0F172A),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1686,10 +1979,7 @@ class _CodeBlock extends StatelessWidget {
 }
 
 class _JsonTreeView extends StatelessWidget {
-  const _JsonTreeView({
-    required this.data,
-    required this.changedPaths,
-  });
+  const _JsonTreeView({required this.data, required this.changedPaths});
 
   final dynamic data;
   final Set<String> changedPaths;
@@ -1736,11 +2026,7 @@ class _JsonTreeNode extends StatelessWidget {
         final keys = map.keys.toList()..sort();
         for (final key in keys) {
           entries.add(
-            _JsonTreeEntry(
-              label: key,
-              pathKey: key,
-              value: map[key],
-            ),
+            _JsonTreeEntry(label: key, pathKey: key, value: map[key]),
           );
         }
       } else if (value is List) {
@@ -1755,8 +2041,9 @@ class _JsonTreeNode extends StatelessWidget {
           );
         }
       }
-      final countLabel =
-          value is List ? '${entries.length} items' : '${entries.length} fields';
+      final countLabel = value is List
+          ? '${entries.length} items'
+          : '${entries.length} fields';
       return Padding(
         padding: EdgeInsets.only(left: depth * 12),
         child: Theme(
@@ -1784,8 +2071,10 @@ class _JsonTreeNode extends StatelessWidget {
                 if (hasChanges) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFEDD5),
                       borderRadius: BorderRadius.circular(999),
@@ -1825,7 +2114,9 @@ class _JsonTreeNode extends StatelessWidget {
           color: isChanged ? const Color(0xFFFFF7ED) : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isChanged ? const Color(0xFFF59E0B) : const Color(0xFFE2E8F0),
+            color: isChanged
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFFE2E8F0),
           ),
         ),
         child: RichText(
@@ -1870,9 +2161,7 @@ bool _hasChanges(String path, Set<String> changes) {
   if (path.isEmpty) {
     return true;
   }
-  return changes.any(
-    (entry) => entry == path || entry.startsWith('$path/'),
-  );
+  return changes.any((entry) => entry == path || entry.startsWith('$path/'));
 }
 
 bool _isChangedPath(String path, Set<String> changes) {
@@ -1917,9 +2206,9 @@ class _InfoPill extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: FontWeight.w700,
-            ),
+          color: textColor,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -1943,10 +2232,7 @@ class _AiInsightSummaryCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (isUnavailable)
-            _InlineStatus(
-              message: summary,
-              isError: true,
-            )
+            _InlineStatus(message: summary, isError: true)
           else
             Text(
               summary,
@@ -1995,9 +2281,9 @@ class _MissingFieldChip extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: const Color(0xFFB91C1C),
-              fontWeight: FontWeight.w700,
-            ),
+          color: const Color(0xFFB91C1C),
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -2043,10 +2329,7 @@ class AiInsightSummary {
   }
 
   static AiInsightSummary unavailable(String message) {
-    return AiInsightSummary(
-      status: 'unavailable',
-      summary: message,
-    );
+    return AiInsightSummary(status: 'unavailable', summary: message);
   }
 }
 
@@ -2121,7 +2404,8 @@ AiInsightSummary? _buildTerminalInsight({
       .map((entry) => entry.text.trim())
       .where((line) => line.isNotEmpty)
       .toList();
-  final hasError = stderrLines.isNotEmpty ||
+  final hasError =
+      stderrLines.isNotEmpty ||
       errorMessage != null ||
       (exitCode != null && exitCode != 0) ||
       loweredStatus == 'disconnected' ||
@@ -2221,7 +2505,8 @@ List<String> _extractMissingFields(String? errorText, dynamic body) {
   }
 
   if (body is Map) {
-    final missingValues = body['missing'] ??
+    final missingValues =
+        body['missing'] ??
         body['missing_fields'] ??
         body['missingFields'] ??
         body['required_fields'] ??
@@ -2275,8 +2560,7 @@ List<String> _extractMissingFieldsFromText(String text) {
       if (raw == null) {
         continue;
       }
-      final trimmed =
-          raw.replaceAll(RegExp(r'''^['"]|['"]$'''), '').trim();
+      final trimmed = raw.replaceAll(RegExp(r'''^['"]|['"]$'''), '').trim();
       if (trimmed.contains(',')) {
         results.addAll(
           trimmed

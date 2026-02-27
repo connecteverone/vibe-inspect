@@ -39,7 +39,7 @@
     auth_token: randomToken(64),
     auth_tokens: [],
     wifi_ssid: "MockWiFi",
-    location_permission: "granted",
+    location_permission: "authorized",
     bundle_id: "com.vibeinspect.agent.mock",
     bundle_path: "/mock/path/VibeInspect.app",
     location_usage_key: true,
@@ -296,7 +296,7 @@
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     if (command === "request_location_permission") {
-      state.location_permission = "granted";
+      state.location_permission = "authorized";
       return { granted: true };
     }
 

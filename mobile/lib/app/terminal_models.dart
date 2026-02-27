@@ -60,9 +60,7 @@ class _TerminalGrid {
 
   @override
   bool operator ==(Object other) {
-    return other is _TerminalGrid &&
-        other.cols == cols &&
-        other.rows == rows;
+    return other is _TerminalGrid && other.cols == cols && other.rows == rows;
   }
 
   @override
@@ -104,10 +102,7 @@ class _TerminalSearchMatch {
 }
 
 class _TerminalThemeSpec {
-  const _TerminalThemeSpec({
-    required this.label,
-    required this.theme,
-  });
+  const _TerminalThemeSpec({required this.label, required this.theme});
 
   final String label;
   final TerminalTheme theme;
@@ -174,20 +169,20 @@ class _TerminalKeyButtonState extends State<_TerminalKeyButton> {
     final baseColor = isLocked
         ? const Color(0xFF7DD3FC)
         : (isActive
-            ? const Color(0xFF34D399)
-            : (spec.isEmphasis
-                ? const Color(0xFFF8FAFC)
-                : const Color(0xFFCBD5F5)));
+              ? const Color(0xFF34D399)
+              : (spec.isEmphasis
+                    ? const Color(0xFFF8FAFC)
+                    : const Color(0xFFCBD5F5)));
     final background = isLocked
         ? const Color(0xFF0B1F33)
         : (isActive ? const Color(0xFF0B3B2E) : const Color(0xFF111827));
     final borderColor = isLocked
         ? const Color(0xFF38BDF8)
         : (isActive
-            ? const Color(0xFF34D399)
-            : (spec.isEmphasis
-                ? const Color(0xFF475569)
-                : const Color(0xFF1F2937)));
+              ? const Color(0xFF34D399)
+              : (spec.isEmphasis
+                    ? const Color(0xFF475569)
+                    : const Color(0xFF1F2937)));
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
@@ -222,10 +217,10 @@ class _TerminalKeyButtonState extends State<_TerminalKeyButton> {
         child: Text(
           spec.label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: baseColor,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.2,
-              ),
+            color: baseColor,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+          ),
         ),
       ),
     );
@@ -270,9 +265,9 @@ class _TerminalToolButton extends StatelessWidget {
               Text(
                 action.label,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: foreground,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: foreground,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -287,11 +282,13 @@ class _RemoteTerminalFetchResult {
     required this.sessions,
     required this.isSuccess,
     this.errorMessage,
+    this.shouldRetry = true,
   });
 
   final List<RemoteTerminalSession> sessions;
   final bool isSuccess;
   final String? errorMessage;
+  final bool shouldRetry;
 
   factory _RemoteTerminalFetchResult.success(
     List<RemoteTerminalSession> sessions,
@@ -299,15 +296,19 @@ class _RemoteTerminalFetchResult {
     return _RemoteTerminalFetchResult(
       sessions: sessions,
       isSuccess: true,
+      shouldRetry: false,
     );
   }
 
-  factory _RemoteTerminalFetchResult.failure(String message) {
+  factory _RemoteTerminalFetchResult.failure(
+    String message, {
+    bool shouldRetry = true,
+  }) {
     return _RemoteTerminalFetchResult(
       sessions: const [],
       isSuccess: false,
       errorMessage: message,
+      shouldRetry: shouldRetry,
     );
   }
 }
-

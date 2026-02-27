@@ -478,6 +478,169 @@ void main() {
     expect(find.byType(TerminalView), findsOneWidget);
   });
 
+  testWidgets('Workspace supports deleting killed terminal sessions', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    const agentId = 'agent-killed-delete';
+    const sessionId = 'killed-session-1';
+    final initializer = _SeededStorageInitializer((storage) async {
+      await storage.insertConnection(
+        ConnectionRecord(
+          id: agentId,
+          token: 'TOKEN-KILLED',
+          status: 'connected',
+          connectedAt: now,
+          hostName: 'killed.agent',
+          lastSeenAt: now,
+        ),
+      );
+      await storage.insertToolSession(
+        ToolSession(
+          id: sessionId,
+          type: 'terminal',
+          label: 'Killed shell',
+          status: 'killed',
+          agentId: agentId,
+          createdAt: now,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      VibeInspectApp(
+        storageInitializer: initializer,
+        enableConnectivityRefresh: false,
+        enableNetworkHints: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final agentFinder = find.text('killed.agent');
+    await tester.ensureVisible(agentFinder);
+    await tester.tap(agentFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Killed shell'), findsNothing);
+
+    final showEndedFinder = find.textContaining('Show ended terminal sessions');
+    await tester.ensureVisible(showEndedFinder);
+    await tester.tap(showEndedFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Killed shell'), findsOneWidget);
+
+    final manageFinder = find.byTooltip('Manage session');
+    await tester.ensureVisible(manageFinder.first);
+    await tester.tap(manageFinder.first);
+    await tester.pumpAndSettle();
+
+    final deleteActionFinder = find.text('Delete');
+    await tester.tap(deleteActionFinder.last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete session?'), findsOneWidget);
+
+    final confirmDeleteFinder = find.widgetWithText(FilledButton, 'Delete');
+    await tester.tap(confirmDeleteFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Killed shell'), findsNothing);
+    expect(find.text('No sessions yet.'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Terminal picker keeps ended sessions collapsed by default and allows delete',
+    (tester) async {
+      final now = DateTime.now();
+      const agentId = 'agent-terminal-picker-delete';
+      const runningSessionId = 'running-session-1';
+      const endedSessionId = 'ended-session-1';
+      final initializer = _SeededStorageInitializer((storage) async {
+        await storage.insertConnection(
+          ConnectionRecord(
+            id: agentId,
+            token: 'TOKEN-TERMINAL-PICKER',
+            status: 'connected',
+            connectedAt: now,
+            hostName: 'picker.agent',
+            lastSeenAt: now,
+          ),
+        );
+        await storage.insertToolSession(
+          ToolSession(
+            id: runningSessionId,
+            type: 'terminal',
+            label: 'Active shell',
+            status: 'running',
+            agentId: agentId,
+            createdAt: now,
+          ),
+        );
+        await storage.insertToolSession(
+          ToolSession(
+            id: endedSessionId,
+            type: 'terminal',
+            label: 'Ended shell',
+            status: 'killed',
+            agentId: agentId,
+            createdAt: now.subtract(const Duration(minutes: 1)),
+          ),
+        );
+      });
+
+      await tester.pumpWidget(
+        VibeInspectApp(
+          storageInitializer: initializer,
+          enableConnectivityRefresh: false,
+          enableNetworkHints: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final agentFinder = find.text('picker.agent');
+      await tester.ensureVisible(agentFinder);
+      await tester.tap(agentFinder);
+      await tester.pumpAndSettle();
+
+      final activeSessionFinder = find.text('Active shell');
+      await tester.ensureVisible(activeSessionFinder);
+      await tester.tap(activeSessionFinder);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Switch session'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ended shell'), findsNothing);
+
+      final showEndedFinder = find.textContaining('Show ended sessions');
+      await tester.ensureVisible(showEndedFinder);
+      await tester.tap(showEndedFinder);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ended shell'), findsOneWidget);
+
+      final deleteSessionFinder = find.byTooltip('Delete session');
+      await tester.ensureVisible(deleteSessionFinder.last);
+      await tester.tap(deleteSessionFinder.last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete terminal session?'), findsOneWidget);
+
+      final confirmDeleteFinder = find.widgetWithText(FilledButton, 'Delete');
+      await tester.tap(confirmDeleteFinder);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ended shell'), findsNothing);
+
+      await tester.tap(find.byTooltip('Switch session'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ended shell'), findsNothing);
+      expect(find.text('Active shell'), findsOneWidget);
+    },
+  );
+
   testWidgets('API Explorer blocks invalid JSON body', (tester) async {
     final now = DateTime.now();
     const agentId = 'agent-3';
@@ -594,46 +757,49 @@ void main() {
     expect(find.textContaining('API context is missing'), findsOneWidget);
   });
 
-  test('Agent terminal action prefers input_b64 for multibyte payload', () async {
-    final requests = <Map<String, dynamic>>[];
-    final mockClient = MockClient((request) async {
-      final body = jsonDecode(request.body) as Map<String, dynamic>;
-      requests.add(body);
-      return http.Response(
-        jsonEncode({
-          'request_id': body['request_id'] ?? 'req-1',
-          'status': 'ok',
-          'payload': {
-            'type': 'terminal',
-            'action': 'input',
-            'status': 'running',
-          },
-        }),
-        200,
+  test(
+    'Agent terminal action prefers input_b64 for multibyte payload',
+    () async {
+      final requests = <Map<String, dynamic>>[];
+      final mockClient = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        requests.add(body);
+        return http.Response(
+          jsonEncode({
+            'request_id': body['request_id'] ?? 'req-1',
+            'status': 'ok',
+            'payload': {
+              'type': 'terminal',
+              'action': 'input',
+              'status': 'running',
+            },
+          }),
+          200,
+        );
+      });
+
+      final client = AgentCommandClient(
+        baseUrl: 'https://terminal.agent',
+        client: mockClient,
+        authToken: 'TOKEN',
       );
-    });
 
-    final client = AgentCommandClient(
-      baseUrl: 'https://terminal.agent',
-      client: mockClient,
-      authToken: 'TOKEN',
-    );
+      final bytes = utf8.encode('中文输入✓🚀');
+      await client.sendTerminalAction(
+        action: 'input',
+        sessionId: 'session-1',
+        input: 'ignored',
+        inputBytes: bytes,
+      );
 
-    final bytes = utf8.encode('中文输入✓🚀');
-    await client.sendTerminalAction(
-      action: 'input',
-      sessionId: 'session-1',
-      input: 'ignored',
-      inputBytes: bytes,
-    );
-
-    expect(requests, isNotEmpty);
-    final payload = requests.single['payload'] as Map<String, dynamic>;
-    expect(payload['action'], 'input');
-    expect(payload['session_id'], 'session-1');
-    expect(payload.containsKey('input'), isFalse);
-    expect(payload['input_b64'], base64Encode(bytes));
-  });
+      expect(requests, isNotEmpty);
+      final payload = requests.single['payload'] as Map<String, dynamic>;
+      expect(payload['action'], 'input');
+      expect(payload['session_id'], 'session-1');
+      expect(payload.containsKey('input'), isFalse);
+      expect(payload['input_b64'], base64Encode(bytes));
+    },
+  );
 }
 
 class _FailingStorageInitializer extends StorageInitializer {

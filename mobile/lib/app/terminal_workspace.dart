@@ -69,6 +69,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   AgentCommandClient? _agentClient;
   Timer? _pollTimer;
   bool _isPolling = false;
+  Future<bool>? _remoteSessionSyncInFlight;
   WebSocketChannel? _terminalChannel;
   StreamSubscription<dynamic>? _terminalChannelSub;
   String? _terminalChannelSessionId;
@@ -78,6 +79,7 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
   DateTime? _lastNotificationToastAt;
   Timer? _terminalReconnectTimer;
   Timer? _terminalKeepaliveTimer;
+  Timer? _remoteSessionSyncRetryTimer;
   int _terminalReconnectAttempts = 0;
   bool _ctrlModifier = false;
   bool _ctrlLocked = false;
@@ -134,6 +136,8 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
     _disconnectTerminalStream();
     _terminalReconnectTimer?.cancel();
     _terminalKeepaliveTimer?.cancel();
+    _remoteSessionSyncRetryTimer?.cancel();
+    _remoteSessionSyncInFlight = null;
     _terminalSearchRefreshTimer?.cancel();
     _httpClient?.close();
     super.dispose();
@@ -572,6 +576,12 @@ class _TerminalWorkspaceScreenState extends State<TerminalWorkspaceScreen> {
           label: 'Sessions',
           icon: Icons.layers_outlined,
           onTap: _openSessionPicker,
+        ),
+      if (widget.agentBaseUrl?.trim().isNotEmpty == true)
+        _TerminalToolAction(
+          label: 'Refresh',
+          icon: Icons.refresh,
+          onTap: () => unawaited(_syncRemoteSessionIndex()),
         ),
       if (active != null)
         _TerminalToolAction(
