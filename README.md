@@ -83,6 +83,31 @@ cd mobile && flutter build web
 cd mobile/build/web && python3 -m http.server 8030 --bind 127.0.0.1
 ```
 
+## Desktop Quickstart (Headless)
+
+For local API/transport testing without Tauri UI:
+
+```bash
+cd desktop
+cargo run --bin vnc_headless -- --port 58888 --quic-port 58889
+```
+
+Then in another shell:
+
+```bash
+export AGENT_URL="http://127.0.0.1:58888"
+export AUTH_TOKEN="<AUTH_TOKEN_FROM_VNC_HEADLESS_OUTPUT>"
+curl -sS "$AGENT_URL/health"
+```
+
+Terminal daemon tools:
+
+```bash
+cd desktop
+cargo run --bin terminald
+cargo run --bin vibe-ctl -- ls
+```
+
 ## Usage Examples (Safe Placeholders)
 
 Never paste real production credentials into examples. Use placeholders only.
@@ -189,6 +214,7 @@ Reference: `docs/remote_rustdesk_integration.md` section `iOS FFI symbol retenti
 Start here:
 - [`docs/README.md`](docs/README.md)
 - [`docs/developer_guide.md`](docs/developer_guide.md)
+- [`desktop/README.md`](desktop/README.md)
 
 Architecture and integration:
 - [`docs/remote_arch_v2.md`](docs/remote_arch_v2.md)
@@ -199,3 +225,6 @@ Operations and validation:
 - [`docs/terminald_service_management.md`](docs/terminald_service_management.md)
 - [`docs/terminal_compatibility_matrix.md`](docs/terminal_compatibility_matrix.md)
 - [`docs/vnc_sop.md`](docs/vnc_sop.md)
+
+Contributing:
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)

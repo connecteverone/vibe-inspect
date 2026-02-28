@@ -7,6 +7,8 @@ Use this page as the entry point for project docs.
 - [Developer Guide](developer_guide.md)
 - [Agent Connection Spec v1.1](agent-connection-v1.1-spec.md)
 - [Remote v2 (QUIC-only) Architecture](remote_arch_v2.md)
+- [Desktop Agent README](../desktop/README.md)
+- [Contributing Guide](../CONTRIBUTING.md)
 
 ## Remote Control And Transport
 
