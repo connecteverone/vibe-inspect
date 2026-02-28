@@ -214,6 +214,7 @@ Reference: `docs/remote_rustdesk_integration.md` section `iOS FFI symbol retenti
 Start here:
 - [`docs/README.md`](docs/README.md)
 - [`docs/developer_guide.md`](docs/developer_guide.md)
+- [`docs/api_reference.md`](docs/api_reference.md)
 - [`desktop/README.md`](desktop/README.md)
 
 Architecture and integration:

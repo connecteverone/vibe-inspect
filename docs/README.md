@@ -5,6 +5,7 @@ Use this page as the entry point for project docs.
 ## Start Here
 
 - [Developer Guide](developer_guide.md)
+- [Agent API Reference](api_reference.md)
 - [Agent Connection Spec v1.1](agent-connection-v1.1-spec.md)
 - [Remote v2 (QUIC-only) Architecture](remote_arch_v2.md)
 - [Desktop Agent README](../desktop/README.md)

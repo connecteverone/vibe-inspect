@@ -64,6 +64,9 @@ Vibe Inspect provides a mobile-first remote operations workspace:
 4. Desktop agent routes command to terminal/VNC/remote/ROI handlers.
 5. For realtime streams, mobile upgrades to WebSocket/QUIC paths using token or short-lived `ws_ticket`.
 
+Detailed payload examples:
+- `api_reference.md`
+
 ## Command Envelope Shape
 
 Every command request uses the same shape:

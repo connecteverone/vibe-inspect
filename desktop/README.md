@@ -77,6 +77,7 @@ Command envelope includes:
 ## Related Docs
 
 - [Developer Guide](../docs/developer_guide.md)
+- [Agent API Reference](../docs/api_reference.md)
 - [Agent Connection Spec v1.1](../docs/agent-connection-v1.1-spec.md)
 - [terminald Service Management](../docs/terminald_service_management.md)
 - [RustDesk Integration Context](../docs/remote_rustdesk_integration.md)
