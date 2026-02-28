@@ -17,6 +17,8 @@ const double _rustdeskKeyboardPanelMinHeight = 220;
 const double _rustdeskKeyboardPanelMaxHeight = 340;
 const double _rustdeskKeyboardPanelHeightFactor = 0.34;
 
+enum RemoteReconnectTrigger { manual, appResume }
+
 class RemoteSessionScreen extends StatefulWidget {
   const RemoteSessionScreen({
     super.key,
@@ -60,32 +62,75 @@ class RemoteSessionController extends ChangeNotifier {
   bool _isStarting = false;
   bool _isStopping = false;
   bool _isQuicConnecting = false;
+  bool _isReconnecting = false;
   String? _error;
   String? _quicError;
+  String? _reconnectHint;
+  bool _reconnectHintIsError = false;
   RemoteSessionInfo? _sessionInfo;
   RemoteQuicHandshake? _quicHandshake;
   RemoteQuicStats _quicStats = RemoteQuicStats.empty;
   int? _quicPort;
   String? _rustdeskSessionId;
   Timer? _firstFrameTimer;
+  Timer? _reconnectHintTimer;
   bool _hasFrame = false;
 
   bool get isStarting => _isStarting;
   bool get isStopping => _isStopping;
   bool get isQuicConnecting => _isQuicConnecting;
+  bool get isReconnecting => _isReconnecting;
   String? get error => _error;
   String? get quicError => _quicError;
+  String? get reconnectHint => _reconnectHint;
+  bool get reconnectHintIsError => _reconnectHintIsError;
   RemoteSessionInfo? get sessionInfo => _sessionInfo;
   RemoteQuicHandshake? get quicHandshake => _quicHandshake;
   RemoteQuicStats get quicStats => _quicStats;
   int? get quicPort => _quicPort;
   String? get rustdeskSessionId => _rustdeskSessionId;
+  bool get canReconnect =>
+      _sessionInfo != null &&
+      !_isStarting &&
+      !_isStopping &&
+      !_isQuicConnecting &&
+      !_isReconnecting;
 
   void _update(VoidCallback fn) {
     if (_disposed) return;
     fn();
     if (_disposed) return;
     notifyListeners();
+  }
+
+  void _setReconnectHint(
+    String? message, {
+    bool isError = false,
+    Duration? autoClear,
+  }) {
+    _reconnectHintTimer?.cancel();
+    _reconnectHintTimer = null;
+    if (_disposed) {
+      return;
+    }
+    _update(() {
+      _reconnectHint = message;
+      _reconnectHintIsError = message != null && isError;
+    });
+    if (message == null || autoClear == null) {
+      return;
+    }
+    _reconnectHintTimer = Timer(autoClear, () {
+      if (_disposed) {
+        return;
+      }
+      _update(() {
+        if (_reconnectHint == message) {
+          _reconnectHint = null;
+          _reconnectHintIsError = false;
+        }
+      });
+    });
   }
 
   Future<void> bootstrap() async {
@@ -114,6 +159,7 @@ class RemoteSessionController extends ChangeNotifier {
       _isStarting = true;
       _error = null;
     });
+    _setReconnectHint(null);
     try {
       final info = await client.sendRemoteCommand(action: 'start');
       if (_disposed) {
@@ -148,6 +194,7 @@ class RemoteSessionController extends ChangeNotifier {
       _isStopping = true;
       _error = null;
     });
+    _setReconnectHint(null);
     try {
       await disconnectQuic(notify: false);
       await client.sendRemoteCommand(
@@ -176,34 +223,105 @@ class RemoteSessionController extends ChangeNotifier {
     }
   }
 
-  Future<void> connectQuic(RemoteSessionInfo info) async {
+  Future<void> reconnectStream({
+    RemoteReconnectTrigger trigger = RemoteReconnectTrigger.manual,
+  }) async {
+    if (_disposed || !canReconnect) {
+      return;
+    }
+    final current = _sessionInfo;
+    if (current == null) {
+      return;
+    }
+    final triggerHint = switch (trigger) {
+      RemoteReconnectTrigger.manual => 'Reconnecting stream...',
+      RemoteReconnectTrigger.appResume => 'App resumed. Reconnecting stream...',
+    };
+    _update(() {
+      _isReconnecting = true;
+      _error = null;
+    });
+    _setReconnectHint(triggerHint);
+    try {
+      final client = _agentClient;
+      var refreshed = current;
+      if (client != null) {
+        refreshed = await client.sendRemoteCommand(
+          action: 'start',
+          displayIndex: current.displayIndex,
+          width: current.width,
+          height: current.height,
+        );
+        if (_disposed) {
+          return;
+        }
+        _update(() {
+          _sessionInfo = refreshed;
+        });
+      }
+      final success = await connectQuic(refreshed);
+      if (_disposed) {
+        return;
+      }
+      if (success) {
+        _setReconnectHint(
+          'Remote control reconnected.',
+          autoClear: const Duration(seconds: 3),
+        );
+      } else {
+        _setReconnectHint(
+          'Reconnect failed. Tap reconnect to retry.',
+          isError: true,
+        );
+      }
+    } catch (error) {
+      if (_disposed) {
+        return;
+      }
+      _update(() {
+        _quicError = error.toString();
+      });
+      _setReconnectHint(
+        'Reconnect failed. Tap reconnect to retry.',
+        isError: true,
+      );
+    } finally {
+      if (!_disposed) {
+        _update(() {
+          _isReconnecting = false;
+        });
+      }
+    }
+  }
+
+  Future<bool> connectQuic(RemoteSessionInfo info) async {
     final client = _agentClient;
     if (client == null || _disposed) {
-      return;
+      return false;
     }
     await disconnectQuic(notify: false);
     if (_disposed) {
-      return;
+      return false;
     }
     final token = info.token;
     if (token == null || token.isEmpty) {
       _update(() {
         _quicError = 'Remote token missing. Reconnect to refresh session.';
       });
-      return;
+      return false;
     }
     if (info.hwcodecEnabled == false) {
       _update(() {
         _quicError = 'Hardware encoding is disabled on the host.';
       });
-      return;
+      return false;
     }
     final caps = info.capabilities;
     if (caps != null && !(caps.h264 || caps.h265)) {
       _update(() {
         _quicError = 'Host does not advertise H264/H265 support.';
       });
-      return;
+      return false;
     }
     _update(() {
       _isQuicConnecting = true;
@@ -213,6 +331,7 @@ class RemoteSessionController extends ChangeNotifier {
       _hasFrame = false;
     });
     String? rustdeskSessionId;
+    var connected = false;
     try {
       var port = info.quicPort;
       final portFromSession = port != null && port > 0;
@@ -238,7 +357,7 @@ class RemoteSessionController extends ChangeNotifier {
       }
       final rustdesk = RustdeskBridge.instance;
       rustdesk.ensureInitialized();
-      final connected = rustdesk.connectQuic(
+      final quicConnected = rustdesk.connectQuic(
         host: host,
         port: port,
         remoteSessionId: info.sessionId,
@@ -247,7 +366,7 @@ class RemoteSessionController extends ChangeNotifier {
         clientId: clientId,
         clientName: clientName,
       );
-      if (!connected) {
+      if (!quicConnected) {
         throw StateError('RustDesk QUIC connect failed.');
       }
       final peerId = _extractRustdeskId(info.connectUri);
@@ -278,7 +397,7 @@ class RemoteSessionController extends ChangeNotifier {
       if (_disposed) {
         rustdesk.sessionClose(rustdeskSessionId);
         rustdesk.disconnectQuic();
-        return;
+        return false;
       }
       _update(() {
         _rustdeskSessionId = rustdeskSessionId;
@@ -286,13 +405,14 @@ class RemoteSessionController extends ChangeNotifier {
         _quicPort = port;
       });
       _armFirstFrameTimer();
+      connected = true;
     } catch (error) {
       if (rustdeskSessionId != null) {
         RustdeskBridge.instance.sessionClose(rustdeskSessionId);
       }
       RustdeskBridge.instance.disconnectQuic();
       if (_disposed) {
-        return;
+        return false;
       }
       if (kDebugMode) {
         debugPrint('[remote] QUIC connect failed: $error');
@@ -307,6 +427,7 @@ class RemoteSessionController extends ChangeNotifier {
         });
       }
     }
+    return connected;
   }
 
   Future<void> stopRemoteSilently() async {
@@ -389,6 +510,10 @@ class RemoteSessionController extends ChangeNotifier {
       _update(() {
         _quicError = 'No frames received. Try reconnecting.';
       });
+      _setReconnectHint(
+        'No frames received. Tap reconnect to restore control.',
+        isError: true,
+      );
     });
   }
 
@@ -397,6 +522,12 @@ class RemoteSessionController extends ChangeNotifier {
     _hasFrame = true;
     _firstFrameTimer?.cancel();
     _firstFrameTimer = null;
+    if (_reconnectHintIsError) {
+      _setReconnectHint(
+        'Stream recovered.',
+        autoClear: const Duration(seconds: 2),
+      );
+    }
   }
 
   @override
@@ -405,16 +536,21 @@ class RemoteSessionController extends ChangeNotifier {
     unawaited(stopRemoteSilently());
     _firstFrameTimer?.cancel();
     _firstFrameTimer = null;
+    _reconnectHintTimer?.cancel();
+    _reconnectHintTimer = null;
     super.dispose();
   }
 }
 
-class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
+class _RemoteSessionScreenState extends State<RemoteSessionScreen>
+    with WidgetsBindingObserver {
   late final RemoteSessionController _controller;
   late final RustdeskInputController _inputController;
+  final RemoteReconnectPolicy _resumeReconnectPolicy = RemoteReconnectPolicy();
   bool _isFullscreen = false;
   bool _trackpadInteracting = false;
   bool _overlayOnDarkBackground = true;
+  bool _resumeReconnectInFlight = false;
   double _zoomValue = _rustdeskZoomDefault;
   Size _displaySize = Size.zero;
   bool? _hostNaturalScroll;
@@ -424,6 +560,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = RemoteSessionController(
       agentBaseUrl: widget.agentBaseUrl,
       authToken: widget.authToken,
@@ -443,8 +580,57 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
 
   Future<void> _stopRemote() => _controller.stopRemote();
 
-  Future<void> _connectQuic(RemoteSessionInfo info) =>
-      _controller.connectQuic(info);
+  Future<void> _reconnectStream({
+    RemoteReconnectTrigger trigger = RemoteReconnectTrigger.manual,
+  }) async {
+    await _controller.reconnectStream(trigger: trigger);
+  }
+
+  void _onReconnectPressed() {
+    unawaited(_reconnectStream());
+  }
+
+  Future<void> _handleResumeReconnect() async {
+    if (_resumeReconnectInFlight) {
+      return;
+    }
+    _resumeReconnectInFlight = true;
+    try {
+      await _reconnectStream(trigger: RemoteReconnectTrigger.appResume);
+    } finally {
+      _resumeReconnectInFlight = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final now = DateTime.now();
+    switch (state) {
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+        _resumeReconnectPolicy.markBackgrounded(now);
+        break;
+      case AppLifecycleState.resumed:
+        final backgroundDuration = _resumeReconnectPolicy
+            .consumeBackgroundDuration(now);
+        if (backgroundDuration == null) {
+          return;
+        }
+        if (!_resumeReconnectPolicy.shouldReconnectOnResume(
+          backgroundDuration: backgroundDuration,
+          now: now,
+        )) {
+          return;
+        }
+        _resumeReconnectPolicy.markReconnectAttempt(now);
+        unawaited(_handleResumeReconnect());
+        break;
+      case AppLifecycleState.detached:
+        break;
+    }
+  }
 
   void _syncTrackpadScrollBehavior() {
     final hostNaturalScroll =
@@ -590,6 +776,7 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_isFullscreen) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
@@ -673,12 +860,19 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
                         label: const Text('Stop session'),
                       ),
                       OutlinedButton.icon(
-                        onPressed:
-                            _controller.isQuicConnecting || sessionInfo == null
-                            ? null
-                            : () => _connectQuic(sessionInfo),
-                        icon: const Icon(Icons.bolt),
-                        label: const Text('Reconnect stream'),
+                        onPressed: _controller.canReconnect
+                            ? _onReconnectPressed
+                            : null,
+                        icon: Icon(
+                          _controller.isReconnecting
+                              ? Icons.sync
+                              : Icons.refresh_rounded,
+                        ),
+                        label: Text(
+                          _controller.isReconnecting
+                              ? 'Reconnecting...'
+                              : 'Reconnect stream',
+                        ),
                       ),
                     ],
                   ),
@@ -698,6 +892,192 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen> {
 }
 
 extension on _RemoteSessionScreenState {
+  Widget _buildReconnectIconButton({
+    required bool glassStyle,
+    required bool darkBackground,
+  }) {
+    final busy = _controller.isReconnecting || _controller.isQuicConnecting;
+    final button = RustdeskIconButton(
+      icon: busy ? Icons.sync : Icons.refresh_rounded,
+      onPressed: _controller.canReconnect ? _onReconnectPressed : () {},
+      tooltip: busy ? 'Reconnecting stream...' : 'Reconnect stream',
+      glassStyle: glassStyle,
+      darkBackground: darkBackground,
+    );
+    if (_controller.canReconnect) {
+      return button;
+    }
+    return Opacity(
+      opacity: 0.42,
+      child: IgnorePointer(child: button),
+    );
+  }
+
+  Widget _buildReconnectBanner({
+    required bool glassStyle,
+    required bool darkBackground,
+  }) {
+    final busy = _controller.isReconnecting || _controller.isQuicConnecting;
+    final hasError =
+        _controller.reconnectHintIsError || _controller.quicError != null;
+    final hint = _controller.reconnectHint;
+    final message = busy
+        ? 'Reconnecting remote control...'
+        : (hint ??
+              (hasError
+                  ? 'Remote control may be stale. Reconnect to continue.'
+                  : ''));
+    if (message.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final useDarkGlass = glassStyle && darkBackground;
+    final backgroundColor = useDarkGlass
+        ? Colors.black.withValues(alpha: hasError ? 0.62 : 0.42)
+        : (glassStyle
+              ? Colors.white.withValues(alpha: 0.9)
+              : (hasError ? const Color(0xFFFEE2E2) : const Color(0xFFE2E8F0)));
+    final borderColor = useDarkGlass
+        ? Colors.white.withValues(alpha: 0.24)
+        : (hasError ? const Color(0xFFFCA5A5) : const Color(0xFFCBD5E1));
+    final textColor = useDarkGlass
+        ? Colors.white
+        : (hasError ? const Color(0xFF7F1D1D) : const Color(0xFF0F172A));
+    final iconColor = useDarkGlass
+        ? Colors.white
+        : (hasError ? const Color(0xFFB91C1C) : const Color(0xFF0F172A));
+    final icon = busy
+        ? Icons.sync
+        : (hasError ? Icons.warning_amber_rounded : Icons.check_circle_outline);
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor),
+          boxShadow: useDarkGlass
+              ? null
+              : const [
+                  BoxShadow(
+                    color: Color(0x14000000),
+                    blurRadius: 14,
+                    offset: Offset(0, 6),
+                  ),
+                ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: textColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (!busy && _controller.canReconnect) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _onReconnectPressed,
+                borderRadius: BorderRadius.circular(999),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    'Reconnect',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: textColor,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDisconnectedPlaceholder({required bool fullscreen}) {
+    final message = _controller.quicError ?? 'RustDesk stream not connected.';
+    final cardColor = fullscreen
+        ? Colors.black.withValues(alpha: 0.62)
+        : const Color(0xFFFFFFFF);
+    final borderColor = fullscreen
+        ? Colors.white.withValues(alpha: 0.2)
+        : const Color(0xFFE2E8F0);
+    final textColor = fullscreen ? Colors.white : const Color(0xFF0F172A);
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.link_off_rounded, color: textColor, size: 28),
+            const SizedBox(height: 10),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: textColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _controller.canReconnect
+                      ? _onReconnectPressed
+                      : null,
+                  icon: Icon(
+                    _controller.isReconnecting
+                        ? Icons.sync
+                        : Icons.refresh_rounded,
+                  ),
+                  label: Text(
+                    _controller.isReconnecting
+                        ? 'Reconnecting...'
+                        : 'Reconnect',
+                  ),
+                ),
+                if (fullscreen)
+                  OutlinedButton.icon(
+                    onPressed: _toggleFullscreen,
+                    icon: const Icon(Icons.fullscreen_exit),
+                    label: const Text('Exit fullscreen'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFullscreenView(RemoteSessionInfo? sessionInfo) {
     final orientation = MediaQuery.of(context).orientation;
     if (orientation == Orientation.landscape) {
@@ -742,11 +1122,9 @@ extension on _RemoteSessionScreenState {
             unawaited(_setFullscreen(false));
           }
         },
-        child: const Scaffold(
+        child: Scaffold(
           backgroundColor: Colors.black,
-          body: Center(
-            child: _InlineStatus(message: 'RustDesk stream not connected.'),
-          ),
+          body: Center(child: _buildDisconnectedPlaceholder(fullscreen: true)),
         ),
       );
     }
@@ -907,10 +1285,22 @@ extension on _RemoteSessionScreenState {
                           ],
                         ),
                         Align(
+                          alignment: Alignment.topLeft,
+                          child: _buildReconnectBanner(
+                            glassStyle: true,
+                            darkBackground: _overlayOnDarkBackground,
+                          ),
+                        ),
+                        Align(
                           alignment: Alignment.topRight,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              _buildReconnectIconButton(
+                                glassStyle: true,
+                                darkBackground: _overlayOnDarkBackground,
+                              ),
+                              const SizedBox(width: 8),
                               RustdeskIconButton(
                                 icon: _showKeyboardPanel
                                     ? Icons.keyboard_hide
@@ -955,7 +1345,7 @@ extension on _RemoteSessionScreenState {
   }) {
     final rustdeskSessionId = _controller.rustdeskSessionId;
     if (rustdeskSessionId == null) {
-      return const _InlineStatus(message: 'RustDesk stream not connected.');
+      return _buildDisconnectedPlaceholder(fullscreen: fullscreen);
     }
     _inputController.attachSession(rustdeskSessionId);
     final token = sessionInfo?.token ?? '';
@@ -1030,10 +1420,24 @@ extension on _RemoteSessionScreenState {
                 ),
                 Positioned(
                   top: 12,
+                  left: 12,
+                  right: 152,
+                  child: _buildReconnectBanner(
+                    glassStyle: fullscreen,
+                    darkBackground: _overlayOnDarkBackground,
+                  ),
+                ),
+                Positioned(
+                  top: 12,
                   right: 12,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      _buildReconnectIconButton(
+                        glassStyle: fullscreen,
+                        darkBackground: _overlayOnDarkBackground,
+                      ),
+                      const SizedBox(width: 8),
                       RustdeskIconButton(
                         icon: _showKeyboardPanel
                             ? Icons.keyboard_hide
