@@ -859,21 +859,23 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen>
                         icon: const Icon(Icons.stop),
                         label: const Text('Stop session'),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: _controller.canReconnect
-                            ? _onReconnectPressed
-                            : null,
-                        icon: Icon(
-                          _controller.isReconnecting
-                              ? Icons.sync
-                              : Icons.refresh_rounded,
+                      if (_controller.isReconnecting)
+                        _buildReconnectingIndicator(
+                          glassStyle: false,
+                          darkBackground: false,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 9,
+                          ),
+                        )
+                      else
+                        OutlinedButton.icon(
+                          onPressed: _controller.canReconnect
+                              ? _onReconnectPressed
+                              : null,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Reconnect stream'),
                         ),
-                        label: Text(
-                          _controller.isReconnecting
-                              ? 'Reconnecting...'
-                              : 'Reconnect stream',
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -892,32 +894,79 @@ class _RemoteSessionScreenState extends State<RemoteSessionScreen>
 }
 
 extension on _RemoteSessionScreenState {
+  Widget _buildReconnectingIndicator({
+    required bool glassStyle,
+    required bool darkBackground,
+    EdgeInsetsGeometry padding = const EdgeInsets.symmetric(
+      horizontal: 12,
+      vertical: 8,
+    ),
+  }) {
+    final useDarkGlass = glassStyle && darkBackground;
+    final backgroundColor = useDarkGlass
+        ? Colors.black.withValues(alpha: 0.42)
+        : (glassStyle
+              ? Colors.white.withValues(alpha: 0.9)
+              : const Color(0xFFE2E8F0));
+    final borderColor = useDarkGlass
+        ? Colors.white.withValues(alpha: 0.24)
+        : const Color(0xFFCBD5E1);
+    final textColor = useDarkGlass ? Colors.white : const Color(0xFF0F172A);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: borderColor),
+      ),
+      child: Padding(
+        padding: padding,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(textColor),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Reconnecting...',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: textColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildReconnectIconButton({
     required bool glassStyle,
     required bool darkBackground,
   }) {
-    final busy = _controller.isReconnecting || _controller.isQuicConnecting;
     final button = RustdeskIconButton(
-      icon: busy ? Icons.sync : Icons.refresh_rounded,
+      icon: Icons.refresh_rounded,
       onPressed: _controller.canReconnect ? _onReconnectPressed : () {},
-      tooltip: busy ? 'Reconnecting stream...' : 'Reconnect stream',
+      tooltip: 'Reconnect stream',
       glassStyle: glassStyle,
       darkBackground: darkBackground,
     );
     if (_controller.canReconnect) {
       return button;
     }
-    return Opacity(
-      opacity: 0.42,
-      child: IgnorePointer(child: button),
-    );
+    return Opacity(opacity: 0.42, child: IgnorePointer(child: button));
   }
 
   Widget _buildReconnectBanner({
     required bool glassStyle,
     required bool darkBackground,
   }) {
-    final busy = _controller.isReconnecting || _controller.isQuicConnecting;
+    final busy = _controller.isReconnecting;
     final hasError =
         _controller.reconnectHintIsError || _controller.quicError != null;
     final hint = _controller.reconnectHint;
@@ -1049,21 +1098,23 @@ extension on _RemoteSessionScreenState {
               spacing: 10,
               runSpacing: 8,
               children: [
-                FilledButton.icon(
-                  onPressed: _controller.canReconnect
-                      ? _onReconnectPressed
-                      : null,
-                  icon: Icon(
-                    _controller.isReconnecting
-                        ? Icons.sync
-                        : Icons.refresh_rounded,
+                if (_controller.isReconnecting)
+                  _buildReconnectingIndicator(
+                    glassStyle: fullscreen,
+                    darkBackground: fullscreen,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 9,
+                    ),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: _controller.canReconnect
+                        ? _onReconnectPressed
+                        : null,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Reconnect'),
                   ),
-                  label: Text(
-                    _controller.isReconnecting
-                        ? 'Reconnecting...'
-                        : 'Reconnect',
-                  ),
-                ),
                 if (fullscreen)
                   OutlinedButton.icon(
                     onPressed: _toggleFullscreen,
@@ -1296,10 +1347,16 @@ extension on _RemoteSessionScreenState {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              _buildReconnectIconButton(
-                                glassStyle: true,
-                                darkBackground: _overlayOnDarkBackground,
-                              ),
+                              if (_controller.isReconnecting)
+                                _buildReconnectingIndicator(
+                                  glassStyle: true,
+                                  darkBackground: _overlayOnDarkBackground,
+                                )
+                              else
+                                _buildReconnectIconButton(
+                                  glassStyle: true,
+                                  darkBackground: _overlayOnDarkBackground,
+                                ),
                               const SizedBox(width: 8),
                               RustdeskIconButton(
                                 icon: _showKeyboardPanel
@@ -1433,10 +1490,16 @@ extension on _RemoteSessionScreenState {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildReconnectIconButton(
-                        glassStyle: fullscreen,
-                        darkBackground: _overlayOnDarkBackground,
-                      ),
+                      if (_controller.isReconnecting)
+                        _buildReconnectingIndicator(
+                          glassStyle: fullscreen,
+                          darkBackground: _overlayOnDarkBackground,
+                        )
+                      else
+                        _buildReconnectIconButton(
+                          glassStyle: fullscreen,
+                          darkBackground: _overlayOnDarkBackground,
+                        ),
                       const SizedBox(width: 8),
                       RustdeskIconButton(
                         icon: _showKeyboardPanel
